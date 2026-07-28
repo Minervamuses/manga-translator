@@ -14,12 +14,16 @@ from typing import Self
 
 from ..domain.models import ArtifactRef, PageDocument
 from ..domain.serialization import canonical_document_bytes, parse_document
-from .artifact_store import ArtifactStore, require_local_storage
+from .artifact_store import ArtifactIntegrityError, ArtifactStore, require_local_storage
 
 SCHEMA_VERSION = 2
 
 
 class NewerDatabaseSchemaError(RuntimeError):
+    pass
+
+
+class MissingArtifactError(RuntimeError):
     pass
 
 
@@ -137,7 +141,7 @@ class JobStore:
         owner_id: str,
     ) -> ArtifactRef:
         artifact = self.artifacts.put_bytes(data, media_type=media_type)
-        if not self.artifacts.exists(artifact.sha256):
+        if not self.artifacts.exists(artifact.sha256, expected_size=artifact.size_bytes):
             raise RuntimeError("artifact did not become durable")
         with self.transaction() as connection:
             self._insert_artifact(connection, artifact)
@@ -150,13 +154,59 @@ class JobStore:
             )
         return artifact
 
+    @staticmethod
+    def _page_document_members(document: PageDocument) -> dict[str, int | None]:
+        members: dict[str, int | None] = {}
+        references = (
+            document.source.original_artifact,
+            *(ref for revision in document.region_revisions for ref in revision.mask_refs),
+            *(record.raw_response_ref for record in document.translations),
+            *(plan.font_ref for plan in document.layout_plans),
+            *(plan.alpha_mask_ref for plan in document.layout_plans),
+        )
+        for reference in references:
+            prior_size = members.setdefault(reference.sha256, reference.size_bytes)
+            if prior_size != reference.size_bytes:
+                raise ArtifactIntegrityError(
+                    f"PageDocument has conflicting sizes for artifact {reference.sha256}"
+                )
+        for stage in document.stages:
+            for sha256 in stage.output_hashes:
+                members.setdefault(sha256, None)
+        return members
+
+    def _require_page_document_members(
+        self, connection: sqlite3.Connection, document: PageDocument
+    ) -> tuple[str, ...]:
+        members = self._page_document_members(document)
+        for sha256, expected_size in sorted(members.items()):
+            row = connection.execute(
+                "SELECT size_bytes FROM artifacts WHERE sha256=?", (sha256,)
+            ).fetchone()
+            if row is None:
+                raise MissingArtifactError(
+                    f"PageDocument member artifact {sha256} is not registered"
+                )
+            registered_size = int(row[0])
+            if expected_size is not None and expected_size != registered_size:
+                raise ArtifactIntegrityError(
+                    f"PageDocument member artifact {sha256} records size "
+                    f"{expected_size}, database has {registered_size}"
+                )
+            if not self.artifacts.exists(sha256, expected_size=registered_size):
+                raise MissingArtifactError(
+                    f"PageDocument member artifact {sha256} has no durable bytes"
+                )
+        return tuple(sorted(members))
+
     def store_page_document(self, job_id: str, document: PageDocument) -> ArtifactRef:
         data = canonical_document_bytes(document)
         artifact = self.artifacts.put_bytes(data, media_type="application/json")
-        if not self.artifacts.exists(artifact.sha256):
+        if not self.artifacts.exists(artifact.sha256, expected_size=artifact.size_bytes):
             raise RuntimeError("PageDocument artifact did not become durable")
         owner_id = f"{job_id}:{document.source.page_id}:document"
         with self.transaction() as connection:
+            member_hashes = self._require_page_document_members(connection, document)
             self._insert_artifact(connection, artifact)
             connection.execute(
                 "DELETE FROM artifact_references WHERE owner_type='page_document' AND owner_id=?",
@@ -183,19 +233,11 @@ class JobStore:
                 "INSERT INTO artifact_references(owner_type, owner_id, sha256) VALUES (?, ?, ?)",
                 ("page_document", owner_id, artifact.sha256),
             )
-            member_hashes = {
-                document.source.original_artifact.sha256,
-                *(ref.sha256 for revision in document.region_revisions for ref in revision.mask_refs),
-                *(record.raw_response_ref.sha256 for record in document.translations),
-                *(plan.font_ref.sha256 for plan in document.layout_plans),
-                *(plan.alpha_mask_ref.sha256 for plan in document.layout_plans),
-                *(sha256 for stage in document.stages for sha256 in stage.output_hashes),
-            }
-            for member_hash in sorted(member_hashes):
+            for member_hash in member_hashes:
                 connection.execute(
                     """
-                    INSERT OR IGNORE INTO artifact_references(owner_type, owner_id, sha256)
-                    SELECT 'page_document_member', ?, sha256 FROM artifacts WHERE sha256=?
+                    INSERT INTO artifact_references(owner_type, owner_id, sha256)
+                    VALUES ('page_document_member', ?, ?)
                     """,
                     (owner_id, member_hash),
                 )

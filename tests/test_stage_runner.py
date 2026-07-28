@@ -22,7 +22,7 @@ from manga_translator.stages.runner import STAGE_DAG, StageRunner
 from manga_translator.storage import ArtifactStore, JobStore
 
 
-def _document() -> PageDocument:
+def _document(original_artifact: ArtifactRef | None = None) -> PageDocument:
     page_id = page_id_from_bytes(b"source")
     return PageDocument(
         source=SourcePage(
@@ -32,9 +32,8 @@ def _document() -> PageDocument:
             width=10,
             height=10,
             mode="RGB",
-            original_artifact=ArtifactRef(
-                sha256=page_id, media_type="image/png", size_bytes=6
-            ),
+            original_artifact=original_artifact
+            or ArtifactRef(sha256=page_id, media_type="image/png", size_bytes=6),
         )
     )
 
@@ -77,8 +76,11 @@ def _specs(calls: Counter[StageName]) -> dict[StageName, StageSpec]:
 def persisted_job(tmp_path: Path):
     artifacts = ArtifactStore(tmp_path / "artifacts")
     store = JobStore(tmp_path / "jobs.sqlite3", artifacts)
-    document = _document()
     store.create_job("job")
+    original_artifact = store.store_artifact(
+        b"source", media_type="image/png", owner_type="source", owner_id="page"
+    )
+    document = _document(original_artifact)
     store.store_page_document("job", document)
     try:
         yield store, document.source.page_id

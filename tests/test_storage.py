@@ -14,10 +14,14 @@ from manga_translator.storage.artifact_store import (
     assess_storage_path,
     require_local_storage,
 )
-from manga_translator.storage.job_store import JobStore, NewerDatabaseSchemaError
+from manga_translator.storage.job_store import (
+    JobStore,
+    MissingArtifactError,
+    NewerDatabaseSchemaError,
+)
 
 
-def _document() -> PageDocument:
+def _document(original_artifact: ArtifactRef | None = None) -> PageDocument:
     page_id = page_id_from_bytes(b"source")
     return PageDocument(
         source=SourcePage(
@@ -27,12 +31,15 @@ def _document() -> PageDocument:
             width=10,
             height=10,
             mode="RGB",
-            original_artifact=ArtifactRef(
-                sha256=page_id,
-                media_type="image/png",
-                size_bytes=6,
-            ),
+            original_artifact=original_artifact
+            or ArtifactRef(sha256=page_id, media_type="image/png", size_bytes=6),
         )
+    )
+
+
+def _store_source(jobs: JobStore) -> ArtifactRef:
+    return jobs.store_artifact(
+        b"source", media_type="image/png", owner_type="source", owner_id="page"
     )
 
 
@@ -106,7 +113,7 @@ def test_page_reference_is_committed_only_after_artifact_is_durable(tmp_path: Pa
     artifacts = ArtifactStore(tmp_path / "artifacts")
     with JobStore(tmp_path / "jobs.sqlite3", artifacts) as jobs:
         jobs.create_job("job-1")
-        artifact = jobs.store_page_document("job-1", _document())
+        artifact = jobs.store_page_document("job-1", _document(_store_source(jobs)))
         row = jobs.connection.execute(
             "SELECT document_artifact_sha256 FROM pages WHERE job_id='job-1'"
         ).fetchone()
@@ -126,18 +133,43 @@ def test_artifact_write_failure_cannot_create_database_reference(
     artifacts = ArtifactStore(tmp_path / "artifacts")
     with JobStore(tmp_path / "jobs.sqlite3", artifacts) as jobs:
         jobs.create_job("job-1")
+        source = _store_source(jobs)
 
         def fail_write(*_args: object, **_kwargs: object) -> ArtifactRef:
             raise OSError("simulated interruption")
 
         monkeypatch.setattr(artifacts, "put_bytes", fail_write)
         with pytest.raises(OSError, match="simulated interruption"):
-            jobs.store_page_document("job-1", _document())
+            jobs.store_page_document("job-1", _document(source))
         assert jobs.connection.execute("SELECT count(*) FROM pages").fetchone()[0] == 0
         assert (
             jobs.connection.execute("SELECT count(*) FROM artifact_references").fetchone()[0]
-            == 0
+            == 1
         )
+
+
+def test_page_document_rejects_unregistered_member_artifact(tmp_path: Path) -> None:
+    artifacts = ArtifactStore(tmp_path / "artifacts")
+    with JobStore(tmp_path / "jobs.sqlite3", artifacts) as jobs:
+        jobs.create_job("job-1")
+
+        with pytest.raises(MissingArtifactError, match="is not registered"):
+            jobs.store_page_document("job-1", _document())
+
+        assert jobs.connection.execute("SELECT count(*) FROM pages").fetchone()[0] == 0
+
+
+def test_page_document_rejects_corrupt_member_artifact(tmp_path: Path) -> None:
+    artifacts = ArtifactStore(tmp_path / "artifacts")
+    with JobStore(tmp_path / "jobs.sqlite3", artifacts) as jobs:
+        jobs.create_job("job-1")
+        source = _store_source(jobs)
+        artifacts.path_for(source.sha256).write_bytes(b"bad")
+
+        with pytest.raises(ArtifactIntegrityError, match="has size 3, expected 6"):
+            jobs.store_page_document("job-1", _document(source))
+
+        assert jobs.connection.execute("SELECT count(*) FROM pages").fetchone()[0] == 0
 
 
 def test_gc_removes_unreferenced_records_and_orphan_files(tmp_path: Path) -> None:

@@ -219,7 +219,7 @@ class OCRCandidate(DomainModel):
     normalized_text: str
     token_scores: tuple[Score, ...] = ()
     confidence: Score
-    confidence_kind: Literal["model", "heuristic", "ensemble", "unknown"]
+    confidence_kind: Literal["model", "calibrated", "heuristic", "ensemble", "unknown"]
     source_view: str = Field(min_length=1)
     token_ids: tuple[TokenId, ...] = ()
     token_logprobs: tuple[LogProbability, ...] = ()

@@ -1048,8 +1048,10 @@ def process_single_page(
     dump_json: bool = False,
     save_intermediate: bool = False,
     prep_manual: bool = False,
+    *,
+    page_id: str | None = None,
 ) -> PageResult:
-    page_id = _page_id_for_path(image_path)
+    page_id = page_id or _page_id_for_path(image_path)
     with profile_page(page_id, str(image_path)):
         return _process_single_page_impl(
             image_path,
@@ -1395,6 +1397,7 @@ def run_pipeline(
                         dump_json=dump_json,
                         save_intermediate=save_intermediate,
                         prep_manual=prep_manual,
+                        page_id=page_id,
                     )
                 except OCRInitializationError as error:
                     page = _failed_page_result(

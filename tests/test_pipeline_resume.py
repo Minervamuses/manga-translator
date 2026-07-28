@@ -13,6 +13,8 @@ from manga_translator import cli as cli_module
 from manga_translator import pipeline as pipeline_module
 from manga_translator.config import AppConfig, OpenRouterConfig, PathsConfig
 from manga_translator.contracts.mapping import (
+    MappingContractError,
+    MappingIssue,
     RawResponseRef,
     ResponseItem,
     bind_validated_responses,
@@ -328,6 +330,56 @@ def test_crash_after_provider_bundle_does_not_fetch_again(
     assert first.status == "failed"
     assert second.status == "succeeded"
     assert calls["provider"] == 1
+
+
+def test_rejected_provider_response_is_replayed_and_blocks_downstream(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    _source(config)
+    state = tmp_path / "state"
+    calls, _provider_payloads = _install_component_fakes(monkeypatch, config)
+    raw = b'{"provider":"malformed mapped response"}'
+    raw_sha256 = hashlib.sha256(raw).hexdigest()
+
+    def rejected(groups, page_id, _config, _glossary):
+        calls["provider"] += 1
+        _ordered, _texts, request_map = pipeline_module._build_translation_request(
+            groups, page_id
+        )
+        relative = Path("translation-responses") / f"{raw_sha256}.json"
+        path = config.paths.output_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        reference = RawResponseRef.from_bytes(
+            raw,
+            media_type="application/json",
+            relative_path=relative.as_posix(),
+        )
+        raise MappingContractError(
+            [MappingIssue("missing_id", {"ids": [request_map.items[0].item_id]})],
+            raw_response_refs=[reference],
+        )
+
+    monkeypatch.setattr(pipeline_module, "_request_translations", rejected)
+    first = pipeline_module.run_pipeline(
+        config, job_id="job-1", state_dir=state, resume=True
+    )
+    second = pipeline_module.run_pipeline(
+        config, job_id="job-1", state_dir=state, resume=True
+    )
+
+    assert first.status == second.status == "failed"
+    assert calls["provider"] == 1
+    assert calls["layout"] == calls["inpaint"] == calls["render"] == 0
+    assert ArtifactStore(state / "artifacts").read_bytes(raw_sha256) == raw
+    page_id = first.pages[0].page_id
+    with JobStore(state / "jobs.sqlite3", ArtifactStore(state / "artifacts")) as store:
+        statuses = {
+            row[0]: row[2]
+            for row in store.list_stage_runs(job_id="job-1", page_id=page_id)
+        }
+    assert statuses["translate"] == "failed"
 
 
 def test_inspect_and_replay_need_only_durable_state(tmp_path: Path, monkeypatch) -> None:

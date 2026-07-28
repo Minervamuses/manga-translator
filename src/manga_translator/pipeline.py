@@ -19,6 +19,7 @@ from .artifacts import dump_debug_artifacts, dump_page_document
 from .config import AppConfig, PostprocessConfig
 from .contracts.mapping import (
     MappingContractError,
+    MappingIssue,
     RawResponseRef,
     RequestItem,
     RequestMap,
@@ -100,7 +101,25 @@ from .typesetter import (
 
 console = Console()
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-TRANSLATION_BUNDLE_SCHEMA = "translation_response_bundle.v1"
+TRANSLATION_BUNDLE_SCHEMA_V1 = "translation_response_bundle.v1"
+TRANSLATION_BUNDLE_SCHEMA = "translation_response_bundle.v2"
+
+
+class TranslationBundleReplayError(RuntimeError):
+    """A provider response was durable, but its semantic outcome was rejection."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_type: str,
+        mapping_issues: tuple[MappingIssue, ...],
+        raw_artifacts: dict[str, tuple[RawResponseRef, bytes]],
+    ) -> None:
+        super().__init__(message)
+        self.error_type = error_type
+        self.mapping_issues = mapping_issues
+        self.raw_artifacts = raw_artifacts
 
 
 def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
@@ -136,29 +155,67 @@ def _raw_response_payload(reference: RawResponseRef, artifact_root: Path) -> byt
     return payload
 
 
+def _request_bundle_payload(request: RequestMap) -> dict[str, object]:
+    return {
+        "items": [
+            {
+                "item_id": item.item_id,
+                "region_key": item.region_key,
+                "source_sha256": item.source_sha256,
+                "source_text": item.source_text,
+            }
+            for item in request.items
+        ],
+        "page_id": request.page_id,
+        "request_id": request.request_id,
+    }
+
+
+def _raw_bundle_entries(
+    references: tuple[RawResponseRef, ...],
+    *,
+    artifact_root: Path,
+) -> list[dict[str, object]]:
+    entries: dict[str, dict[str, object]] = {}
+    for reference in references:
+        raw = _raw_response_payload(reference, artifact_root)
+        existing = entries.get(reference.sha256)
+        entry = {
+            **reference.to_dict(),
+            "payload_base64": base64.b64encode(raw).decode("ascii"),
+        }
+        if existing is not None:
+            if (
+                existing["media_type"] != entry["media_type"]
+                or existing["size_bytes"] != entry["size_bytes"]
+                or existing["payload_base64"] != entry["payload_base64"]
+            ):
+                raise ValueError("conflicting provider responses share one SHA-256 identity")
+            continue
+        entries[reference.sha256] = entry
+    return [entries[key] for key in sorted(entries)]
+
+
 def _serialize_translation_bundle(
     batch: ValidatedTranslationBatch,
     *,
     artifact_root: Path,
 ) -> bytes:
+    if any(response.raw_response_ref is None for response in batch.responses):
+        raise ValueError("durable translation responses require exact provider artifacts")
+    raw_references = tuple(
+        response.raw_response_ref
+        for response in batch.responses
+        if response.raw_response_ref is not None
+    )
     responses: list[dict[str, object]] = []
     for response in batch.responses:
         raw_reference = response.raw_response_ref
-        raw_payload = (
-            _raw_response_payload(raw_reference, artifact_root)
-            if raw_reference is not None
-            else None
-        )
         responses.append(
             {
                 "item_id": response.item_id,
-                "raw_response": (
-                    {
-                        **raw_reference.to_dict(),
-                        "payload_base64": base64.b64encode(raw_payload).decode("ascii"),
-                    }
-                    if raw_reference is not None and raw_payload is not None
-                    else None
+                "raw_response_sha256": (
+                    raw_reference.sha256 if raw_reference is not None else None
                 ),
                 "response_index": response.response_index,
                 "source_sha256": response.source_sha256,
@@ -167,23 +224,143 @@ def _serialize_translation_bundle(
         )
     return _canonical_json_bytes(
         {
-            "request": {
-                "items": [
-                    {
-                        "item_id": item.item_id,
-                        "region_key": item.region_key,
-                        "source_sha256": item.source_sha256,
-                        "source_text": item.source_text,
-                    }
-                    for item in batch.request.items
-                ],
-                "page_id": batch.request.page_id,
-                "request_id": batch.request.request_id,
-            },
+            "outcome": {"status": "succeeded"},
+            "raw_responses": _raw_bundle_entries(
+                raw_references,
+                artifact_root=artifact_root,
+            ),
+            "request": _request_bundle_payload(batch.request),
             "responses": responses,
             "schema_version": TRANSLATION_BUNDLE_SCHEMA,
         }
     )
+
+
+def _serialize_translation_failure_bundle(
+    request: RequestMap,
+    error: Exception,
+    *,
+    artifact_root: Path,
+) -> bytes:
+    raw_references = tuple(getattr(error, "raw_response_refs", ()))
+    if not raw_references:
+        raise ValueError("cannot persist a provider failure without raw response bytes")
+    mapping_issues = (
+        tuple(error.issues) if isinstance(error, MappingContractError) else ()
+    )
+    return _canonical_json_bytes(
+        {
+            "outcome": {
+                "error_type": type(error).__name__,
+                "mapping_issues": [
+                    {"code": issue.code, "details": dict(issue.details)}
+                    for issue in mapping_issues
+                ],
+                "message": str(error),
+                "status": "failed",
+            },
+            "raw_responses": _raw_bundle_entries(
+                raw_references,
+                artifact_root=artifact_root,
+            ),
+            "request": _request_bundle_payload(request),
+            "responses": [],
+            "schema_version": TRANSLATION_BUNDLE_SCHEMA,
+        }
+    )
+
+
+def _request_from_bundle(payload: object) -> RequestMap:
+    if not isinstance(payload, dict):
+        raise TypeError("translation response bundle request must be an object")
+    item_payloads = payload.get("items")
+    if not isinstance(item_payloads, list):
+        raise TypeError("translation response bundle request items must be an array")
+    items: list[RequestItem] = []
+    for item in item_payloads:
+        if not isinstance(item, dict):
+            raise TypeError("translation response bundle request items must be objects")
+        items.append(
+            RequestItem(
+                item_id=str(item["item_id"]),
+                region_key=str(item["region_key"]),
+                source_text=str(item["source_text"]),
+                source_sha256=str(item["source_sha256"]),
+            )
+        )
+    return RequestMap(
+        request_id=str(payload["request_id"]),
+        page_id=str(payload["page_id"]),
+        items=tuple(items),
+    )
+
+
+def _decode_raw_bundle_entries(
+    payloads: object,
+) -> dict[str, tuple[RawResponseRef, bytes]]:
+    if not isinstance(payloads, list):
+        raise TypeError("translation raw responses must be an array")
+    raw_artifacts: dict[str, tuple[RawResponseRef, bytes]] = {}
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            raise TypeError("translation raw response entries must be objects")
+        try:
+            content = base64.b64decode(str(payload["payload_base64"]), validate=True)
+        except (KeyError, ValueError) as error:
+            raise ValueError("translation raw response payload is not valid base64") from error
+        reference = RawResponseRef(
+            sha256=str(payload["sha256"]),
+            media_type=str(payload["media_type"]),
+            size_bytes=int(payload["size_bytes"]),
+            relative_path=(
+                str(payload["relative_path"])
+                if payload.get("relative_path") is not None
+                else None
+            ),
+        )
+        if len(content) != reference.size_bytes:
+            raise ValueError("bundled provider response size mismatch")
+        if hashlib.sha256(content).hexdigest() != reference.sha256:
+            raise ValueError("bundled provider response hash mismatch")
+        existing = raw_artifacts.get(reference.sha256)
+        if existing is not None and (
+            existing[0].media_type != reference.media_type
+            or existing[0].size_bytes != reference.size_bytes
+            or existing[1] != content
+        ):
+            raise ValueError("conflicting provider responses share one SHA-256 identity")
+        raw_artifacts[reference.sha256] = (reference, content)
+    return raw_artifacts
+
+
+def _deserialize_translation_bundle_v1(
+    request: RequestMap,
+    response_payloads: list[object],
+) -> tuple[ValidatedTranslationBatch, dict[str, tuple[RawResponseRef, bytes]]]:
+    raw_artifacts: dict[str, tuple[RawResponseRef, bytes]] = {}
+    responses: list[ResponseItem] = []
+    for item in response_payloads:
+        if not isinstance(item, dict):
+            raise TypeError("translation response bundle items must be objects")
+        raw_payload = item.get("raw_response")
+        reference = None
+        if raw_payload is not None:
+            decoded = _decode_raw_bundle_entries([raw_payload])
+            reference, _content = next(iter(decoded.values()))
+            existing = raw_artifacts.get(reference.sha256)
+            if existing is not None and existing != decoded[reference.sha256]:
+                raise ValueError("conflicting provider responses share one SHA-256 identity")
+            raw_artifacts.update(decoded)
+        responses.append(
+            ResponseItem(
+                item_id=str(item["item_id"]),
+                source_sha256=str(item["source_sha256"]),
+                translation=str(item["translation"]),
+                response_index=int(item["response_index"]),
+                raw_response_ref=reference,
+            )
+        )
+    return bind_validated_responses(request, responses), raw_artifacts
 
 
 def _deserialize_translation_bundle(
@@ -193,60 +370,49 @@ def _deserialize_translation_bundle(
         payload = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("translation response bundle is not valid JSON") from error
-    if not isinstance(payload, dict) or payload.get("schema_version") != TRANSLATION_BUNDLE_SCHEMA:
+    if not isinstance(payload, dict) or payload.get("schema_version") not in {
+        TRANSLATION_BUNDLE_SCHEMA_V1,
+        TRANSLATION_BUNDLE_SCHEMA,
+    }:
         raise ValueError("unsupported translation response bundle schema")
-    request_payload = payload.get("request")
+    request = _request_from_bundle(payload.get("request"))
     response_payloads = payload.get("responses")
-    if not isinstance(request_payload, dict) or not isinstance(response_payloads, list):
-        raise TypeError("translation response bundle request/responses have invalid types")
-    item_payloads = request_payload.get("items")
-    if not isinstance(item_payloads, list):
-        raise TypeError("translation response bundle request items must be an array")
-    request = RequestMap(
-        request_id=str(request_payload["request_id"]),
-        page_id=str(request_payload["page_id"]),
-        items=tuple(
-            RequestItem(
-                item_id=str(item["item_id"]),
-                region_key=str(item["region_key"]),
-                source_text=str(item["source_text"]),
-                source_sha256=str(item["source_sha256"]),
-            )
-            for item in item_payloads
-        ),
-    )
-    raw_artifacts: dict[str, tuple[RawResponseRef, bytes]] = {}
+    if not isinstance(response_payloads, list):
+        raise TypeError("translation response bundle responses must be an array")
+    if payload["schema_version"] == TRANSLATION_BUNDLE_SCHEMA_V1:
+        return _deserialize_translation_bundle_v1(request, response_payloads)
+
+    raw_artifacts = _decode_raw_bundle_entries(payload.get("raw_responses"))
+    outcome = payload.get("outcome")
+    if not isinstance(outcome, dict):
+        raise TypeError("translation response bundle outcome must be an object")
+    status = outcome.get("status")
+    if status == "failed":
+        issue_payloads = outcome.get("mapping_issues", [])
+        if not isinstance(issue_payloads, list):
+            raise TypeError("translation failure mapping issues must be an array")
+        issues: list[MappingIssue] = []
+        for item in issue_payloads:
+            if not isinstance(item, dict) or not isinstance(item.get("details"), dict):
+                raise TypeError("translation failure mapping issues must be objects")
+            issues.append(MappingIssue(str(item["code"]), dict(item["details"])))
+        raise TranslationBundleReplayError(
+            str(outcome.get("message", "provider response was rejected")),
+            error_type=str(outcome.get("error_type", "ProviderResponseError")),
+            mapping_issues=tuple(issues),
+            raw_artifacts=raw_artifacts,
+        )
+    if status != "succeeded":
+        raise ValueError("translation response bundle has an unsupported outcome")
+
     responses: list[ResponseItem] = []
     for item in response_payloads:
         if not isinstance(item, dict):
             raise TypeError("translation response bundle items must be objects")
-        raw_payload = item.get("raw_response")
-        reference = None
-        if raw_payload is not None:
-            if not isinstance(raw_payload, dict):
-                raise TypeError("translation raw response bundle entry must be an object")
-            try:
-                content = base64.b64decode(str(raw_payload["payload_base64"]), validate=True)
-            except (KeyError, ValueError) as error:
-                raise ValueError("translation raw response payload is not valid base64") from error
-            reference = RawResponseRef(
-                sha256=str(raw_payload["sha256"]),
-                media_type=str(raw_payload["media_type"]),
-                size_bytes=int(raw_payload["size_bytes"]),
-                relative_path=(
-                    str(raw_payload["relative_path"])
-                    if raw_payload.get("relative_path") is not None
-                    else None
-                ),
-            )
-            if len(content) != reference.size_bytes:
-                raise ValueError("bundled provider response size mismatch")
-            if hashlib.sha256(content).hexdigest() != reference.sha256:
-                raise ValueError("bundled provider response hash mismatch")
-            existing = raw_artifacts.get(reference.sha256)
-            if existing is not None and existing != (reference, content):
-                raise ValueError("conflicting provider responses share one SHA-256 identity")
-            raw_artifacts[reference.sha256] = (reference, content)
+        raw_sha256 = item.get("raw_response_sha256")
+        reference = (
+            raw_artifacts[str(raw_sha256)][0] if raw_sha256 is not None else None
+        )
         responses.append(
             ResponseItem(
                 item_id=str(item["item_id"]),
@@ -1368,6 +1534,32 @@ def _layout_plan_from_payload(payload: object) -> TextLayoutPlan:
     )
 
 
+def _persist_provider_raw_artifacts(
+    raw_artifacts: dict[str, tuple[RawResponseRef, bytes]],
+    *,
+    store: JobStore,
+    context: StageContext,
+) -> list[dict[str, object]]:
+    persisted: list[dict[str, object]] = []
+    for reference, raw in raw_artifacts.values():
+        artifact = store.store_artifact(
+            raw,
+            media_type=reference.media_type,
+            owner_type="provider_raw_response",
+            owner_id=(
+                f"{context.job_id}:{context.page_id}:{context.fingerprint}:"
+                f"{reference.sha256}"
+            ),
+        )
+        if (
+            artifact.sha256 != reference.sha256
+            or artifact.size_bytes != reference.size_bytes
+        ):
+            raise ValueError("persisted provider response does not match its bundle")
+        persisted.append(artifact.model_dump(mode="json"))
+    return persisted
+
+
 def _build_pipeline_stage_runners(
     *,
     image_path: Path,
@@ -1528,44 +1720,49 @@ def _build_pipeline_stage_runners(
                 ].item_id
 
             def fetch() -> bytes:
-                batch = _request_translations(translatable, page_id, config, glossary)
-                if any(item.raw_response_ref is None for item in batch.responses):
-                    raise ValueError(
-                        "durable translation requires exact raw provider response references"
+                try:
+                    batch = _request_translations(
+                        translatable, page_id, config, glossary
                     )
+                except Exception as error:
+                    if getattr(error, "raw_response_refs", ()):
+                        return _serialize_translation_failure_bundle(
+                            request,
+                            error,
+                            artifact_root=config.paths.output_dir,
+                        )
+                    raise
                 return _serialize_translation_bundle(
                     batch,
                     artifact_root=config.paths.output_dir,
                 )
 
             bundle = context.get_or_fetch_raw_response(request.request_id, fetch)
-            translations, raw_artifacts = _deserialize_translation_bundle(bundle)
+            try:
+                translations, raw_artifacts = _deserialize_translation_bundle(bundle)
+            except TranslationBundleReplayError as error:
+                raw_artifacts = error.raw_artifacts
+                _persist_provider_raw_artifacts(
+                    raw_artifacts,
+                    store=store,
+                    context=context,
+                )
+                raw_references = tuple(
+                    reference for reference, _raw in raw_artifacts.values()
+                )
+                if error.mapping_issues:
+                    raise MappingContractError(
+                        error.mapping_issues,
+                        raw_response_refs=raw_references,
+                    ) from error
+                raise RuntimeError(f"{error.error_type}: {error}") from error
             if translations.request != request:
-                raise MappingContractError(
-                    [],
-                    raw_response_refs=(
-                        item.raw_response_ref
-                        for item in translations.responses
-                        if item.raw_response_ref is not None
-                    ),
-                )
-            persisted: list[dict[str, object]] = []
-            for reference, raw in raw_artifacts.values():
-                artifact = store.store_artifact(
-                    raw,
-                    media_type=reference.media_type,
-                    owner_type="provider_raw_response",
-                    owner_id=(
-                        f"{context.job_id}:{context.page_id}:{context.fingerprint}:"
-                        f"{reference.sha256}"
-                    ),
-                )
-                if (
-                    artifact.sha256 != reference.sha256
-                    or artifact.size_bytes != reference.size_bytes
-                ):
-                    raise ValueError("persisted provider response does not match its bundle")
-                persisted.append(artifact.model_dump(mode="json"))
+                raise ValueError("replayed translation request does not match this stage")
+            persisted = _persist_provider_raw_artifacts(
+                raw_artifacts,
+                store=store,
+                context=context,
+            )
             _apply_translation_batch(translatable, translations, config)
         else:
             persisted = []

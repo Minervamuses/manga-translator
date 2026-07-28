@@ -1,16 +1,32 @@
 {
   "gate": "G1",
   "name": "PageDocument replay/resume gate",
-  "date": "2026-07-28",
+  "date": "2026-07-29",
   "branch": "reapir_p1",
-  "implementation_head": "4a29410",
+  "implementation_head": "7fb4504",
   "status": "passed",
   "assertions": {
     "content_page_id_and_persistent_region_identity": "tests/test_region_identity.py",
-    "canonical_replay_hash_identical": "tests/test_pipeline_resume.py::test_staged_pipeline_preserves_feature_parity_and_resume_skips_legacy_runtime",
-    "restart_skips_successful_unchanged_stages": "tests/test_pipeline_resume.py::test_staged_pipeline_preserves_feature_parity_and_resume_skips_legacy_runtime",
-    "no_legacy_page_manifest_dual_write": "src/manga_translator/artifacts.py::dump_page_document",
-    "replay_requires_no_model_or_network": "tests/test_pipeline_resume.py::test_inspect_and_replay_use_only_durable_state"
+    "ambiguous_identity_fails_closed": "tests/test_region_identity.py::test_strong_content_winner_conflict_is_ambiguous_even_below_delta_margin",
+    "canonical_replay_hash_identical": "tests/test_pipeline_resume.py::test_component_stages_resume_without_reloading_models_or_provider",
+    "accepted_and_rejected_group_parity": "tests/test_pipeline_resume.py::test_component_stages_resume_without_reloading_models_or_provider",
+    "restart_skips_successful_unchanged_stages": "tests/test_pipeline_resume.py::test_component_stages_resume_without_reloading_models_or_provider",
+    "all_production_entrypoints_are_durable": "tests/test_pipeline_resume.py::test_default_batch_and_single_page_entrypoints_persist_page_documents",
+    "inspect_reports_active_revisions_and_cache_hits": "tests/test_pipeline_resume.py::test_inspect_and_replay_need_only_durable_state",
+    "replay_requires_no_model_or_network": "tests/test_pipeline_resume.py::test_inspect_and_replay_need_only_durable_state",
+    "concurrent_page_runs_are_fenced": "tests/test_stage_runner.py::test_expired_page_runner_is_fenced_from_replacement_stage_and_artifacts",
+    "raw_provider_response_is_replayed": "tests/test_stage_runner.py::test_raw_provider_response_is_replayed_after_interrupted_stage",
+    "ocr_model_revision_is_immutable": "tests/test_manga_ocr_runtime.py::test_runtime_rejects_moving_or_invalid_revisions",
+    "no_legacy_page_manifest_dual_write": "src/manga_translator/artifacts.py::dump_page_document"
+  },
+  "verification": {
+    "environment_manager": "conda:manga",
+    "python_package_manager": "poetry",
+    "network_or_paid_api_calls": false,
+    "targeted_suite": "83 passed",
+    "full_suite": "279 passed, 1 deselected",
+    "ruff": "passed",
+    "poetry_lock": "passed"
   },
   "deferred_validation": [
     "real target-GPU restart run",

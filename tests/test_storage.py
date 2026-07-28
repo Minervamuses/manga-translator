@@ -97,9 +97,10 @@ def test_database_migration_is_idempotent_and_enables_foreign_keys(tmp_path: Pat
             "issues",
             "entities",
             "provider_response_claims",
+            "page_run_claims",
         } <= tables
         assert first.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert first.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert first.connection.execute("PRAGMA user_version").fetchone()[0] == 4
 
     with JobStore(database, artifacts) as reopened:
         assert reopened.connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
@@ -117,8 +118,8 @@ def test_migration_retries_committed_ddl_without_user_version_bump(tmp_path: Pat
         columns = {
             row[1] for row in recovered.connection.execute("PRAGMA table_info(stage_runs)")
         }
-        assert {"cache_hits", "last_cache_hit_at"} <= columns
-        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert {"cache_hits", "last_cache_hit_at", "run_token"} <= columns
+        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 def test_migration_ddl_and_version_bump_are_atomic(
@@ -144,7 +145,7 @@ def test_migration_ddl_and_version_bump_are_atomic(
 
     monkeypatch.undo()
     with JobStore(database, ArtifactStore(tmp_path / "artifacts")) as recovered:
-        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 def test_provider_response_claim_is_cross_connection_exclusive_and_recoverable(

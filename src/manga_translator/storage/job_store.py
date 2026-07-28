@@ -18,7 +18,7 @@ from ..domain.models import ArtifactRef, PageDocument
 from ..domain.serialization import canonical_document_bytes, parse_document
 from .artifact_store import ArtifactIntegrityError, ArtifactStore, require_local_storage
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class NewerDatabaseSchemaError(RuntimeError):
@@ -33,6 +33,10 @@ class ProviderResponseClaimLostError(RuntimeError):
     pass
 
 
+class PageRunClaimLostError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class GarbageCollectionResult:
     database_records: int
@@ -42,6 +46,14 @@ class GarbageCollectionResult:
 @dataclass(frozen=True)
 class ProviderResponseClaim:
     owner_id: str
+    claim_token: str
+    lease_expires_at_ms: int
+
+
+@dataclass(frozen=True)
+class PageRunClaim:
+    job_id: str
+    page_id: str
     claim_token: str
     lease_expires_at_ms: int
 
@@ -110,22 +122,33 @@ class JobStore:
     def _migration_already_applied(
         connection: sqlite3.Connection, target: int
     ) -> bool:
-        if target != 2:
-            return False
         columns = {
             str(row[1]): row for row in connection.execute("PRAGMA table_info(stage_runs)")
         }
-        cache_hits = columns.get("cache_hits")
-        last_cache_hit_at = columns.get("last_cache_hit_at")
-        return bool(
-            cache_hits is not None
-            and str(cache_hits[2]).upper() == "INTEGER"
-            and int(cache_hits[3]) == 1
-            and str(cache_hits[4]) == "0"
-            and last_cache_hit_at is not None
-            and str(last_cache_hit_at[2]).upper() == "TEXT"
-            and int(last_cache_hit_at[3]) == 0
-        )
+        if target == 2:
+            cache_hits = columns.get("cache_hits")
+            last_cache_hit_at = columns.get("last_cache_hit_at")
+            return bool(
+                cache_hits is not None
+                and str(cache_hits[2]).upper() == "INTEGER"
+                and int(cache_hits[3]) == 1
+                and str(cache_hits[4]) == "0"
+                and last_cache_hit_at is not None
+                and str(last_cache_hit_at[2]).upper() == "TEXT"
+                and int(last_cache_hit_at[3]) == 0
+            )
+        if target == 4:
+            claim_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(page_run_claims)")
+            }
+            return "run_token" in columns and {
+                "job_id",
+                "page_id",
+                "claim_token",
+                "lease_expires_at_ms",
+            } <= claim_columns
+        return False
 
     @staticmethod
     def _set_user_version(connection: sqlite3.Connection, target: int) -> None:
@@ -393,6 +416,115 @@ class JobStore:
             raise ValueError("lease_seconds must be positive")
         return time_ns() // 1_000_000 + max(1, int(lease_seconds * 1_000))
 
+    @staticmethod
+    def _page_run_claim_is_current(
+        connection: sqlite3.Connection, claim: PageRunClaim
+    ) -> bool:
+        row = connection.execute(
+            """
+            SELECT 1 FROM page_run_claims
+            WHERE job_id=? AND page_id=? AND claim_token=?
+            """,
+            (claim.job_id, claim.page_id, claim.claim_token),
+        ).fetchone()
+        return row is not None
+
+    @classmethod
+    def _require_page_run_claim(
+        cls, connection: sqlite3.Connection, claim: PageRunClaim
+    ) -> None:
+        if not cls._page_run_claim_is_current(connection, claim):
+            raise PageRunClaimLostError(
+                f"page run claim was lost for {claim.job_id}:{claim.page_id}"
+            )
+
+    @staticmethod
+    def _require_claim_scope(
+        claim: PageRunClaim, *, job_id: str, page_id: str
+    ) -> None:
+        if (claim.job_id, claim.page_id) != (job_id, page_id):
+            raise ValueError("page run claim does not match the requested job and page")
+
+    def acquire_page_run_claim(
+        self, *, job_id: str, page_id: str, lease_seconds: float
+    ) -> PageRunClaim | None:
+        """Atomically serialize durable execution for one job page."""
+
+        if not job_id or not page_id:
+            raise ValueError("job_id and page_id must not be empty")
+        now_ms = time_ns() // 1_000_000
+        lease_expires_at_ms = self._lease_deadline_ms(lease_seconds)
+        claim_token = uuid4().hex
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO page_run_claims(
+                    job_id, page_id, claim_token, lease_expires_at_ms, updated_at
+                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(job_id, page_id) DO UPDATE SET
+                    claim_token=excluded.claim_token,
+                    lease_expires_at_ms=excluded.lease_expires_at_ms,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE page_run_claims.lease_expires_at_ms <= ?
+                """,
+                (job_id, page_id, claim_token, lease_expires_at_ms, now_ms),
+            )
+            row = connection.execute(
+                """
+                SELECT claim_token, lease_expires_at_ms
+                FROM page_run_claims WHERE job_id=? AND page_id=?
+                """,
+                (job_id, page_id),
+            ).fetchone()
+        if row is None or str(row[0]) != claim_token:
+            return None
+        return PageRunClaim(
+            job_id=job_id,
+            page_id=page_id,
+            claim_token=claim_token,
+            lease_expires_at_ms=int(row[1]),
+        )
+
+    def renew_page_run_claim(
+        self, claim: PageRunClaim, *, lease_seconds: float
+    ) -> PageRunClaim:
+        lease_expires_at_ms = self._lease_deadline_ms(lease_seconds)
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE page_run_claims
+                SET lease_expires_at_ms=?, updated_at=CURRENT_TIMESTAMP
+                WHERE job_id=? AND page_id=? AND claim_token=?
+                """,
+                (
+                    lease_expires_at_ms,
+                    claim.job_id,
+                    claim.page_id,
+                    claim.claim_token,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PageRunClaimLostError(
+                    f"page run claim was lost for {claim.job_id}:{claim.page_id}"
+                )
+        return PageRunClaim(
+            job_id=claim.job_id,
+            page_id=claim.page_id,
+            claim_token=claim.claim_token,
+            lease_expires_at_ms=lease_expires_at_ms,
+        )
+
+    def release_page_run_claim(self, claim: PageRunClaim) -> bool:
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM page_run_claims
+                WHERE job_id=? AND page_id=? AND claim_token=?
+                """,
+                (claim.job_id, claim.page_id, claim.claim_token),
+            )
+        return cursor.rowcount == 1
+
     def acquire_provider_response_claim(
         self, *, owner_id: str, lease_seconds: float
     ) -> ProviderResponseClaim | None:
@@ -526,30 +658,80 @@ class JobStore:
                 )
         return artifact
 
-    def interrupt_stale_stage_runs(self, *, job_id: str, page_id: str) -> int:
+    @staticmethod
+    def _stage_output_prefix(
+        *,
+        job_id: str,
+        page_id: str,
+        stage: str,
+        fingerprint: str,
+        run_token: str | None = None,
+    ) -> str:
+        prefix = f"{job_id}:{page_id}:{stage}:{fingerprint}:"
+        return f"{prefix}{run_token}:" if run_token is not None else prefix
+
+    @staticmethod
+    def _delete_stage_output_references(
+        connection: sqlite3.Connection, *, prefix: str
+    ) -> int:
+        cursor = connection.execute(
+            """
+            DELETE FROM artifact_references
+            WHERE owner_type='stage_output' AND substr(owner_id, 1, ?) = ?
+            """,
+            (len(prefix), prefix),
+        )
+        return cursor.rowcount
+
+    def interrupt_stale_stage_runs(self, *, claim: PageRunClaim) -> int:
+        """Interrupt only attempts fenced out by the caller's current page lease."""
+
         with self.transaction() as connection:
+            self._require_page_run_claim(connection, claim)
+            stale = list(
+                connection.execute(
+                    """
+                    SELECT stage, fingerprint, run_token FROM stage_runs
+                    WHERE job_id=? AND page_id=? AND status='running'
+                      AND (run_token IS NULL OR run_token<>?)
+                    """,
+                    (claim.job_id, claim.page_id, claim.claim_token),
+                )
+            )
             cursor = connection.execute(
                 """
                 UPDATE stage_runs
                 SET status='interrupted', finished_at=CURRENT_TIMESTAMP
                 WHERE job_id=? AND page_id=? AND status='running'
+                  AND (run_token IS NULL OR run_token<>?)
                 """,
-                (job_id, page_id),
+                (claim.job_id, claim.page_id, claim.claim_token),
             )
+            for stage, fingerprint, run_token in stale:
+                prefix = self._stage_output_prefix(
+                    job_id=claim.job_id,
+                    page_id=claim.page_id,
+                    stage=str(stage),
+                    fingerprint=str(fingerprint),
+                    run_token=str(run_token) if run_token is not None else None,
+                )
+                self._delete_stage_output_references(connection, prefix=prefix)
         return cursor.rowcount
 
-    def invalidate_stages(self, *, job_id: str, page_id: str, stages: set[str]) -> int:
+    def invalidate_stages(self, *, claim: PageRunClaim, stages: set[str]) -> int:
         if not stages:
             return 0
         placeholders = ",".join("?" for _ in stages)
+        ordered_stages = sorted(stages)
         with self.transaction() as connection:
+            self._require_page_run_claim(connection, claim)
             stale = list(
                 connection.execute(
                     f"""
                     SELECT stage, fingerprint FROM stage_runs
                     WHERE job_id=? AND page_id=? AND stage IN ({placeholders})
                     """,
-                    (job_id, page_id, *sorted(stages)),
+                    (claim.job_id, claim.page_id, *ordered_stages),
                 )
             )
             cursor = connection.execute(
@@ -557,28 +739,31 @@ class JobStore:
                 UPDATE stage_runs SET status='invalidated', finished_at=CURRENT_TIMESTAMP
                 WHERE job_id=? AND page_id=? AND stage IN ({placeholders})
                 """,
-                (job_id, page_id, *sorted(stages)),
+                (claim.job_id, claim.page_id, *ordered_stages),
             )
             for stage, fingerprint in stale:
-                prefix = f"{job_id}:{page_id}:{stage}:{fingerprint}:"
-                connection.execute(
-                    """
-                    DELETE FROM artifact_references
-                    WHERE owner_type='stage_output' AND substr(owner_id, 1, ?) = ?
-                    """,
-                    (len(prefix), prefix),
+                prefix = self._stage_output_prefix(
+                    job_id=claim.job_id,
+                    page_id=claim.page_id,
+                    stage=str(stage),
+                    fingerprint=str(fingerprint),
                 )
+                self._delete_stage_output_references(connection, prefix=prefix)
         return cursor.rowcount
 
     def cached_stage_outputs(
-        self, *, job_id: str, page_id: str, stage: str, fingerprint: str
+        self,
+        *,
+        claim: PageRunClaim,
+        stage: str,
+        fingerprint: str,
     ) -> tuple[ArtifactRef, ...] | None:
         row = self.connection.execute(
             """
             SELECT output_hashes_json FROM stage_runs
             WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=? AND status='succeeded'
             """,
-            (job_id, page_id, stage, fingerprint),
+            (claim.job_id, claim.page_id, stage, fingerprint),
         ).fetchone()
         if row is None:
             return None
@@ -592,12 +777,14 @@ class JobStore:
                 sha256, expected_size=int(artifact_row[1])
             ):
                 with self.transaction() as connection:
+                    self._require_page_run_claim(connection, claim)
                     connection.execute(
                         """
                         UPDATE stage_runs SET status='invalidated', finished_at=CURRENT_TIMESTAMP
                         WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=?
+                          AND status='succeeded'
                         """,
-                        (job_id, page_id, stage, fingerprint),
+                        (claim.job_id, claim.page_id, stage, fingerprint),
                     )
                 return None
             outputs.append(
@@ -608,13 +795,15 @@ class JobStore:
                 )
             )
         with self.transaction() as connection:
+            self._require_page_run_claim(connection, claim)
             connection.execute(
                 """
                 UPDATE stage_runs
                 SET cache_hits=cache_hits + 1, last_cache_hit_at=CURRENT_TIMESTAMP
                 WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=?
+                  AND status='succeeded'
                 """,
-                (job_id, page_id, stage, fingerprint),
+                (claim.job_id, claim.page_id, stage, fingerprint),
             )
         return tuple(outputs)
 
@@ -626,29 +815,41 @@ class JobStore:
         stage: str,
         fingerprint: str,
         input_hashes: tuple[str, ...],
+        claim: PageRunClaim,
     ) -> None:
+        self._require_claim_scope(claim, job_id=job_id, page_id=page_id)
         with self.transaction() as connection:
-            prefix = f"{job_id}:{page_id}:{stage}:{fingerprint}:"
-            connection.execute(
-                """
-                DELETE FROM artifact_references
-                WHERE owner_type='stage_output' AND substr(owner_id, 1, ?) = ?
-                """,
-                (len(prefix), prefix),
+            self._require_page_run_claim(connection, claim)
+            prefix = self._stage_output_prefix(
+                job_id=job_id,
+                page_id=page_id,
+                stage=stage,
+                fingerprint=fingerprint,
+                run_token=claim.claim_token,
             )
+            self._delete_stage_output_references(connection, prefix=prefix)
             connection.execute(
                 """
                 INSERT INTO stage_runs(
-                    job_id, page_id, stage, fingerprint, status, input_hashes_json, started_at
-                ) VALUES (?, ?, ?, ?, 'running', ?, CURRENT_TIMESTAMP)
+                    job_id, page_id, stage, fingerprint, status, input_hashes_json,
+                    started_at, run_token
+                ) VALUES (?, ?, ?, ?, 'running', ?, CURRENT_TIMESTAMP, ?)
                 ON CONFLICT(job_id, page_id, stage, fingerprint) DO UPDATE SET
                     status='running',
                     input_hashes_json=excluded.input_hashes_json,
                     output_hashes_json='[]',
                     started_at=CURRENT_TIMESTAMP,
-                    finished_at=NULL
+                    finished_at=NULL,
+                    run_token=excluded.run_token
                 """,
-                (job_id, page_id, stage, fingerprint, json.dumps(input_hashes)),
+                (
+                    job_id,
+                    page_id,
+                    stage,
+                    fingerprint,
+                    json.dumps(input_hashes),
+                    claim.claim_token,
+                ),
             )
 
     def finish_stage(
@@ -659,30 +860,74 @@ class JobStore:
         stage: str,
         fingerprint: str,
         output_hashes: tuple[str, ...],
+        claim: PageRunClaim,
     ) -> None:
+        self._require_claim_scope(claim, job_id=job_id, page_id=page_id)
         with self.transaction() as connection:
+            self._require_page_run_claim(connection, claim)
             cursor = connection.execute(
                 """
                 UPDATE stage_runs
                 SET status='succeeded', output_hashes_json=?, finished_at=CURRENT_TIMESTAMP
-                WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=? AND status='running'
+                WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=?
+                  AND status='running' AND run_token=?
                 """,
-                (json.dumps(output_hashes), job_id, page_id, stage, fingerprint),
+                (
+                    json.dumps(output_hashes),
+                    job_id,
+                    page_id,
+                    stage,
+                    fingerprint,
+                    claim.claim_token,
+                ),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("running stage record disappeared before completion")
 
     def fail_stage(
-        self, *, job_id: str, page_id: str, stage: str, fingerprint: str
-    ) -> None:
+        self,
+        *,
+        job_id: str,
+        page_id: str,
+        stage: str,
+        fingerprint: str,
+        claim: PageRunClaim,
+    ) -> bool:
+        self._require_claim_scope(claim, job_id=job_id, page_id=page_id)
         with self.transaction() as connection:
-            connection.execute(
+            if not self._page_run_claim_is_current(connection, claim):
+                return False
+            cursor = connection.execute(
                 """
                 UPDATE stage_runs SET status='failed', finished_at=CURRENT_TIMESTAMP
                 WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=?
+                  AND status='running' AND run_token=?
                 """,
-                (job_id, page_id, stage, fingerprint),
+                (job_id, page_id, stage, fingerprint, claim.claim_token),
             )
+        return cursor.rowcount == 1
+
+    def discard_stage_attempt_outputs(
+        self,
+        *,
+        job_id: str,
+        page_id: str,
+        stage: str,
+        fingerprint: str,
+        claim: PageRunClaim,
+    ) -> int:
+        """Remove only artifact references written by one fenced attempt."""
+
+        self._require_claim_scope(claim, job_id=job_id, page_id=page_id)
+        prefix = self._stage_output_prefix(
+            job_id=job_id,
+            page_id=page_id,
+            stage=stage,
+            fingerprint=fingerprint,
+            run_token=claim.claim_token,
+        )
+        with self.transaction() as connection:
+            return self._delete_stage_output_references(connection, prefix=prefix)
 
     def gc(self) -> GarbageCollectionResult:
         removed_files = 0

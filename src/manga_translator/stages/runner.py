@@ -14,6 +14,8 @@ from ..domain.issues import StageName
 from ..domain.models import ArtifactRef
 from ..storage.job_store import (
     JobStore,
+    PageRunClaim,
+    PageRunClaimLostError,
     ProviderResponseClaim,
     ProviderResponseClaimLostError,
 )
@@ -41,6 +43,8 @@ STAGE_DAG: dict[StageName, tuple[StageName, ...]] = {
 TOPOLOGICAL_ORDER = tuple(STAGE_DAG)
 DEFAULT_PROVIDER_RESPONSE_LEASE_SECONDS = 30.0
 DEFAULT_PROVIDER_RESPONSE_POLL_SECONDS = 0.05
+DEFAULT_PAGE_RUN_LEASE_SECONDS = 30.0
+DEFAULT_PAGE_RUN_POLL_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,8 @@ class StageRunner:
         config: Mapping[str, Any],
         provider_response_lease_seconds: float = DEFAULT_PROVIDER_RESPONSE_LEASE_SECONDS,
         provider_response_poll_seconds: float = DEFAULT_PROVIDER_RESPONSE_POLL_SECONDS,
+        page_run_lease_seconds: float = DEFAULT_PAGE_RUN_LEASE_SECONDS,
+        page_run_poll_seconds: float = DEFAULT_PAGE_RUN_POLL_SECONDS,
     ) -> None:
         missing = set(STAGE_DAG) - set(specs)
         if missing:
@@ -108,8 +114,87 @@ class StageRunner:
             raise ValueError("provider_response_lease_seconds must be positive")
         if provider_response_poll_seconds <= 0:
             raise ValueError("provider_response_poll_seconds must be positive")
+        if page_run_lease_seconds <= 0:
+            raise ValueError("page_run_lease_seconds must be positive")
+        if page_run_poll_seconds <= 0:
+            raise ValueError("page_run_poll_seconds must be positive")
         self.provider_response_lease_seconds = provider_response_lease_seconds
         self.provider_response_poll_seconds = provider_response_poll_seconds
+        self.page_run_lease_seconds = page_run_lease_seconds
+        self.page_run_poll_seconds = page_run_poll_seconds
+
+    def _acquire_page_run_claim(self) -> PageRunClaim:
+        while True:
+            claim = self.store.acquire_page_run_claim(
+                job_id=self.job_id,
+                page_id=self.page_id,
+                lease_seconds=self.page_run_lease_seconds,
+            )
+            if claim is not None:
+                return claim
+            sleep(self.page_run_poll_seconds)
+
+    @contextmanager
+    def _maintain_page_run_claim(self, claim: PageRunClaim) -> Iterator[None]:
+        stopped = Event()
+        ready = Event()
+        failures: list[Exception] = []
+        interval = min(5.0, self.page_run_lease_seconds / 3)
+
+        def heartbeat() -> None:
+            try:
+                with JobStore(self.store.database, self.store.artifacts) as lease_store:
+                    lease_store.renew_page_run_claim(
+                        claim, lease_seconds=self.page_run_lease_seconds
+                    )
+                    ready.set()
+                    while not stopped.wait(interval):
+                        lease_store.renew_page_run_claim(
+                            claim, lease_seconds=self.page_run_lease_seconds
+                        )
+            except (OSError, RuntimeError, sqlite3.Error, ValueError) as error:
+                failures.append(error)
+                ready.set()
+
+        thread = Thread(
+            target=heartbeat,
+            name=f"page-run-lease-{claim.claim_token[:8]}",
+            daemon=True,
+        )
+        thread.start()
+        if not ready.wait(timeout=5):
+            stopped.set()
+            thread.join(timeout=5)
+            raise PageRunClaimLostError(
+                f"page run lease heartbeat did not start for {claim.job_id}:{claim.page_id}"
+            )
+        if failures:
+            stopped.set()
+            thread.join(timeout=5)
+            raise PageRunClaimLostError(
+                f"page run lease heartbeat failed for {claim.job_id}:{claim.page_id}"
+            ) from failures[0]
+
+        try:
+            yield
+        except BaseException:
+            stopped.set()
+            thread.join(timeout=5)
+            raise
+        else:
+            stopped.set()
+            thread.join(timeout=5)
+            if thread.is_alive():
+                raise PageRunClaimLostError(
+                    f"page run lease heartbeat did not stop for {claim.job_id}:{claim.page_id}"
+                )
+            if failures:
+                raise PageRunClaimLostError(
+                    f"page run lease was lost for {claim.job_id}:{claim.page_id}"
+                ) from failures[0]
+            self.store.renew_page_run_claim(
+                claim, lease_seconds=self.page_run_lease_seconds
+            )
 
     def _cached_raw_response(self, owner_id: str) -> bytes | None:
         cached = self.store.find_artifact(
@@ -133,6 +218,10 @@ class StageRunner:
         def heartbeat() -> None:
             try:
                 with JobStore(self.store.database, self.store.artifacts) as lease_store:
+                    lease_store.renew_provider_response_claim(
+                        claim,
+                        lease_seconds=self.provider_response_lease_seconds,
+                    )
                     ready.set()
                     while not stopped.wait(interval):
                         lease_store.renew_provider_response_claim(
@@ -229,12 +318,31 @@ class StageRunner:
         resume: bool = True,
         force_stage: StageName | None = None,
     ) -> dict[StageName, StageOutcome]:
-        self.store.interrupt_stale_stage_runs(job_id=self.job_id, page_id=self.page_id)
+        claim = self._acquire_page_run_claim()
+        try:
+            with self._maintain_page_run_claim(claim):
+                return self._run_claimed(
+                    claim=claim,
+                    target=target,
+                    resume=resume,
+                    force_stage=force_stage,
+                )
+        finally:
+            self.store.release_page_run_claim(claim)
+
+    def _run_claimed(
+        self,
+        *,
+        claim: PageRunClaim,
+        target: StageName,
+        resume: bool,
+        force_stage: StageName | None,
+    ) -> dict[StageName, StageOutcome]:
+        self.store.interrupt_stale_stage_runs(claim=claim)
         forced = downstream_of(force_stage) if force_stage is not None else set()
         if forced:
             self.store.invalidate_stages(
-                job_id=self.job_id,
-                page_id=self.page_id,
+                claim=claim,
                 stages={item.value for item in forced},
             )
         required = ancestors_of(target)
@@ -260,8 +368,7 @@ class StageRunner:
             cached = None
             if resume and name not in forced:
                 cached = self.store.cached_stage_outputs(
-                    job_id=self.job_id,
-                    page_id=self.page_id,
+                    claim=claim,
                     stage=name.value,
                     fingerprint=fingerprint,
                 )
@@ -274,6 +381,7 @@ class StageRunner:
                 stage=name.value,
                 fingerprint=fingerprint,
                 input_hashes=upstream_hashes,
+                claim=claim,
             )
             context = StageContext(
                 job_id=self.job_id,
@@ -303,7 +411,7 @@ class StageRunner:
                         owner_type="stage_output",
                         owner_id=(
                             f"{self.job_id}:{self.page_id}:{name.value}:"
-                            f"{fingerprint}:{index}:{payload.role}"
+                            f"{fingerprint}:{claim.claim_token}:{index}:{payload.role}"
                         ),
                     )
                     for index, payload in enumerate(produced.artifacts)
@@ -314,6 +422,7 @@ class StageRunner:
                     stage=name.value,
                     fingerprint=fingerprint,
                     output_hashes=tuple(item.sha256 for item in artifacts),
+                    claim=claim,
                 )
             except Exception as error:
                 self.store.fail_stage(
@@ -321,6 +430,14 @@ class StageRunner:
                     page_id=self.page_id,
                     stage=name.value,
                     fingerprint=fingerprint,
+                    claim=claim,
+                )
+                self.store.discard_stage_attempt_outputs(
+                    job_id=self.job_id,
+                    page_id=self.page_id,
+                    stage=name.value,
+                    fingerprint=fingerprint,
+                    claim=claim,
                 )
                 error.stage_failure_context = StageFailureContext(  # type: ignore[attr-defined]
                     stage=name,

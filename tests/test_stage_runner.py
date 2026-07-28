@@ -23,6 +23,7 @@ from manga_translator.stages.base import (
 from manga_translator.stages.fingerprint import select_relevant_config, stage_fingerprint
 from manga_translator.stages.runner import STAGE_DAG, StageRunner
 from manga_translator.storage import ArtifactStore, JobStore
+from manga_translator.storage.job_store import PageRunClaimLostError
 
 
 def _provider_claim_process_worker(
@@ -200,18 +201,251 @@ def test_force_stage_invalidates_it_and_every_downstream(persisted_job) -> None:
 
 def test_stale_running_stage_becomes_interrupted(persisted_job) -> None:
     store, page_id = persisted_job
+    stale_claim = store.acquire_page_run_claim(
+        job_id="job", page_id=page_id, lease_seconds=60
+    )
+    assert stale_claim is not None
     store.start_stage(
         job_id="job",
         page_id=page_id,
         stage=StageName.SOURCE.value,
         fingerprint="f" * 64,
         input_hashes=(),
+        claim=stale_claim,
     )
-    _runner(store, page_id, _specs(Counter()), {}).run(target=StageName.SOURCE)
+    store.connection.execute(
+        """
+        UPDATE page_run_claims SET lease_expires_at_ms=1
+        WHERE job_id=? AND page_id=?
+        """,
+        ("job", page_id),
+    )
+    _runner(
+        store,
+        page_id,
+        _specs(Counter()),
+        {},
+        page_run_lease_seconds=0.12,
+        page_run_poll_seconds=0.01,
+    ).run(target=StageName.SOURCE)
     status = store.connection.execute(
         "SELECT status FROM stage_runs WHERE fingerprint=?", ("f" * 64,)
     ).fetchone()[0]
     assert status == "interrupted"
+    assert not store.release_page_run_claim(stale_claim)
+
+
+def test_full_runners_serialize_one_page_and_second_runner_uses_cache(
+    persisted_job, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store, page_id = persisted_job
+    first_calls: Counter[StageName] = Counter()
+    second_calls: Counter[StageName] = Counter()
+    first_specs = _specs(first_calls)
+    second_specs = _specs(second_calls)
+    source_started = Event()
+    allow_source_to_finish = Event()
+    first_finished = Event()
+    second_finished = Event()
+    initial_renewal_finished = Event()
+    failures: list[Exception] = []
+    results: dict[str, dict[StageName, object]] = {}
+
+    original_renew = JobStore.renew_page_run_claim
+
+    def tracked_renew(self, claim, *, lease_seconds):
+        renewed = original_renew(self, claim, lease_seconds=lease_seconds)
+        initial_renewal_finished.set()
+        return renewed
+
+    monkeypatch.setattr(JobStore, "renew_page_run_claim", tracked_renew)
+    original_source = first_specs[StageName.SOURCE].run
+
+    def blocked_source(context, inputs):
+        assert initial_renewal_finished.is_set()
+        source_started.set()
+        if not allow_source_to_finish.wait(timeout=5):
+            raise TimeoutError("test did not release the source stage")
+        return original_source(context, inputs)
+
+    first_specs[StageName.SOURCE] = replace(
+        first_specs[StageName.SOURCE], run=blocked_source
+    )
+
+    def worker(label: str, specs, finished: Event) -> None:
+        try:
+            with JobStore(store.database, ArtifactStore(store.artifacts.root)) as isolated:
+                results[label] = _runner(
+                    isolated,
+                    page_id,
+                    specs,
+                    {},
+                    page_run_lease_seconds=0.12,
+                    page_run_poll_seconds=0.01,
+                ).run(target=StageName.SOURCE)
+        except (OSError, RuntimeError, sqlite3.Error, ValueError) as error:
+            failures.append(error)
+        finally:
+            finished.set()
+
+    first_thread = Thread(target=worker, args=("first", first_specs, first_finished))
+    first_thread.start()
+    assert source_started.wait(timeout=5)
+
+    second_thread = Thread(target=worker, args=("second", second_specs, second_finished))
+    second_thread.start()
+    assert not second_finished.wait(timeout=0.35)
+    running = store.connection.execute(
+        """
+        SELECT stage_runs.status, stage_runs.run_token, page_run_claims.claim_token
+        FROM stage_runs JOIN page_run_claims USING(job_id, page_id)
+        WHERE stage_runs.job_id='job' AND stage_runs.page_id=?
+          AND stage_runs.stage='source'
+        """,
+        (page_id,),
+    ).fetchone()
+    assert tuple(running) == ("running", running[1], running[1])
+    assert second_calls[StageName.SOURCE] == 0
+
+    allow_source_to_finish.set()
+    assert first_finished.wait(timeout=5)
+    assert second_finished.wait(timeout=5)
+    first_thread.join(timeout=5)
+    second_thread.join(timeout=5)
+
+    assert not failures
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert not results["first"][StageName.SOURCE].cache_hit
+    assert results["second"][StageName.SOURCE].cache_hit
+    assert first_calls[StageName.SOURCE] == 1
+    assert second_calls[StageName.SOURCE] == 0
+    assert store.connection.execute("SELECT count(*) FROM page_run_claims").fetchone()[0] == 0
+
+
+def test_expired_page_runner_is_fenced_from_replacement_stage_and_artifacts(
+    persisted_job,
+) -> None:
+    old_store, page_id = persisted_job
+    fingerprint = "f" * 64
+    old_claim = old_store.acquire_page_run_claim(
+        job_id="job", page_id=page_id, lease_seconds=60
+    )
+    assert old_claim is not None
+    old_store.start_stage(
+        job_id="job",
+        page_id=page_id,
+        stage=StageName.SOURCE.value,
+        fingerprint=fingerprint,
+        input_hashes=(),
+        claim=old_claim,
+    )
+    old_owner = f"job:{page_id}:source:{fingerprint}:{old_claim.claim_token}:0:primary"
+    old_store.store_artifact(
+        b"old-output",
+        media_type="application/test",
+        owner_type="stage_output",
+        owner_id=old_owner,
+    )
+    old_store.connection.execute(
+        """
+        UPDATE page_run_claims SET lease_expires_at_ms=1
+        WHERE job_id=? AND page_id=?
+        """,
+        ("job", page_id),
+    )
+
+    with JobStore(old_store.database, ArtifactStore(old_store.artifacts.root)) as replacement:
+        new_claim = replacement.acquire_page_run_claim(
+            job_id="job", page_id=page_id, lease_seconds=60
+        )
+        assert new_claim is not None
+        assert replacement.interrupt_stale_stage_runs(claim=new_claim) == 1
+        replacement.start_stage(
+            job_id="job",
+            page_id=page_id,
+            stage=StageName.SOURCE.value,
+            fingerprint=fingerprint,
+            input_hashes=(),
+            claim=new_claim,
+        )
+        new_owner = f"job:{page_id}:source:{fingerprint}:{new_claim.claim_token}:0:primary"
+        winner = replacement.store_artifact(
+            b"winner",
+            media_type="application/test",
+            owner_type="stage_output",
+            owner_id=new_owner,
+        )
+        late_owner = f"job:{page_id}:source:{fingerprint}:{old_claim.claim_token}:1:late"
+        late = old_store.store_artifact(
+            b"late-old-output",
+            media_type="application/test",
+            owner_type="stage_output",
+            owner_id=late_owner,
+        )
+
+        with pytest.raises(PageRunClaimLostError, match="page run claim was lost"):
+            old_store.finish_stage(
+                job_id="job",
+                page_id=page_id,
+                stage=StageName.SOURCE.value,
+                fingerprint=fingerprint,
+                output_hashes=(late.sha256,),
+                claim=old_claim,
+            )
+        assert not old_store.fail_stage(
+            job_id="job",
+            page_id=page_id,
+            stage=StageName.SOURCE.value,
+            fingerprint=fingerprint,
+            claim=old_claim,
+        )
+        with pytest.raises(PageRunClaimLostError, match="page run claim was lost"):
+            old_store.invalidate_stages(
+                claim=old_claim, stages={StageName.SOURCE.value}
+            )
+        assert (
+            replacement.connection.execute(
+                """
+                SELECT status FROM stage_runs
+                WHERE job_id='job' AND page_id=? AND stage='source' AND fingerprint=?
+                """,
+                (page_id, fingerprint),
+            ).fetchone()[0]
+            == "running"
+        )
+        assert (
+            old_store.discard_stage_attempt_outputs(
+                job_id="job",
+                page_id=page_id,
+                stage=StageName.SOURCE.value,
+                fingerprint=fingerprint,
+                claim=old_claim,
+            )
+            == 1
+        )
+        replacement.finish_stage(
+            job_id="job",
+            page_id=page_id,
+            stage=StageName.SOURCE.value,
+            fingerprint=fingerprint,
+            output_hashes=(winner.sha256,),
+            claim=new_claim,
+        )
+        row = replacement.connection.execute(
+            """
+            SELECT status, output_hashes_json, run_token FROM stage_runs
+            WHERE job_id='job' AND page_id=? AND stage='source' AND fingerprint=?
+            """,
+            (page_id, fingerprint),
+        ).fetchone()
+        assert tuple(row) == ("succeeded", f'["{winner.sha256}"]', new_claim.claim_token)
+        assert replacement.find_artifact(owner_type="stage_output", owner_id=old_owner) is None
+        assert replacement.find_artifact(owner_type="stage_output", owner_id=late_owner) is None
+        assert replacement.find_artifact(owner_type="stage_output", owner_id=new_owner) == winner
+        assert replacement.release_page_run_claim(new_claim)
+
+    assert not old_store.release_page_run_claim(old_claim)
 
 
 def test_raw_provider_response_is_replayed_after_interrupted_stage(persisted_job) -> None:

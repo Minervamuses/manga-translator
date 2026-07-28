@@ -1,0 +1,19 @@
+{
+  "gate": "G1",
+  "name": "PageDocument replay/resume gate",
+  "date": "2026-07-28",
+  "branch": "reapir_p1",
+  "implementation_head": "4a29410",
+  "status": "passed",
+  "assertions": {
+    "content_page_id_and_persistent_region_identity": "tests/test_region_identity.py",
+    "canonical_replay_hash_identical": "tests/test_pipeline_resume.py::test_staged_pipeline_preserves_feature_parity_and_resume_skips_legacy_runtime",
+    "restart_skips_successful_unchanged_stages": "tests/test_pipeline_resume.py::test_staged_pipeline_preserves_feature_parity_and_resume_skips_legacy_runtime",
+    "no_legacy_page_manifest_dual_write": "src/manga_translator/artifacts.py::dump_page_document",
+    "replay_requires_no_model_or_network": "tests/test_pipeline_resume.py::test_inspect_and_replay_use_only_durable_state"
+  },
+  "deferred_validation": [
+    "real target-GPU restart run",
+    "live provider interruption run"
+  ]
+}

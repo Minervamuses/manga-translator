@@ -184,6 +184,8 @@ def inspect_job(config: str, state_dir: Path | None, job_id: str, page_id: str |
                             "output_hashes": json.loads(str(attempt[4])),
                             "started_at": attempt[5],
                             "finished_at": attempt[6],
+                            "cache_hit_count": attempt[7],
+                            "last_cache_hit_at": attempt[8],
                         }
                         for attempt in store.list_stage_runs(
                             job_id=job_id, page_id=document.source.page_id

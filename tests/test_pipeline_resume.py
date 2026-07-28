@@ -136,8 +136,10 @@ def test_staged_pipeline_preserves_feature_parity_and_resume_skips_legacy_runtim
     assert first.status == second.status == "succeeded"
     assert calls == 1
     assert len(second_document.translations) == 1
-    assert all(stage.cache_hit for stage in second_document.stages)
-    assert first_bytes != canonical_document_bytes(second_document)
+    assert first_bytes == canonical_document_bytes(second_document)
+    with JobStore(state / "jobs.sqlite3", ArtifactStore(state / "artifacts")) as store:
+        attempts = store.list_stage_runs(job_id="job-1", page_id=page_id)
+        assert all(attempt[7] == 1 for attempt in attempts)
     assert (
         config.paths.output_dir / "debug" / "page_page_document.json"
     ).read_bytes() == canonical_document_bytes(second_document)

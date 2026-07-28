@@ -67,7 +67,7 @@ def test_database_migration_is_idempotent_and_enables_foreign_keys(tmp_path: Pat
             "entities",
         } <= tables
         assert first.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert first.connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert first.connection.execute("PRAGMA user_version").fetchone()[0] == 2
 
     with JobStore(database, artifacts) as reopened:
         assert reopened.connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0

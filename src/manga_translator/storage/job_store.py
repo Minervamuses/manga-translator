@@ -16,7 +16,7 @@ from ..domain.models import ArtifactRef, PageDocument
 from ..domain.serialization import canonical_document_bytes, parse_document
 from .artifact_store import ArtifactStore, require_local_storage
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class NewerDatabaseSchemaError(RuntimeError):
@@ -236,7 +236,7 @@ class JobStore:
             self.connection.execute(
                 """
                 SELECT stage, fingerprint, status, input_hashes_json, output_hashes_json,
-                       started_at, finished_at
+                       started_at, finished_at, cache_hits, last_cache_hit_at
                 FROM stage_runs
                 WHERE job_id=? AND page_id=?
                 ORDER BY stage_run_id
@@ -346,6 +346,15 @@ class JobStore:
                     media_type=str(artifact_row[0]),
                     size_bytes=int(artifact_row[1]),
                 )
+            )
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE stage_runs
+                SET cache_hits=cache_hits + 1, last_cache_hit_at=CURRENT_TIMESTAMP
+                WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=?
+                """,
+                (job_id, page_id, stage, fingerprint),
             )
         return tuple(outputs)
 

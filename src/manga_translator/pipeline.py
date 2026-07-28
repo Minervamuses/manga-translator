@@ -1254,7 +1254,7 @@ def process_single_page_staged(
     page = result_holder.get("page")
     if page is None:
         page = _page_result_from_document(previous, outcomes[StageName.ENCODE].outputs[0], store)
-        document = previous.model_copy(update={"stages": _stage_records(outcomes)})
+        document = previous
     else:
         document = _document_from_legacy_result(
             previous=previous,
@@ -1263,7 +1263,7 @@ def process_single_page_staged(
             store=store,
             job_id=job_id,
         )
-    store.store_page_document(job_id, document)
+        store.store_page_document(job_id, document)
     if dump_json or prep_manual:
         dump_page_document(config.paths.output_dir, image_path.name, document)
     return page

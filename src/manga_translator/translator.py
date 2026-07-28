@@ -9,7 +9,6 @@ import random
 import re
 import tempfile
 import time
-import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -30,23 +29,15 @@ from .contracts.mapping import (
 )
 from .contracts.translation import parse_translation_response
 from .profiling import profile_span, record_api_profile
+from .translation.validate import (
+    TranslationInput,
+    normalize_display_text,
+    validate_translation_batch,
+)
 
 console = Console()
 MAX_RETRIES = 5
 INITIAL_DELAY_SEC = 2.0
-_ZERO_WIDTH = {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"}
-_SEPARATOR_CHARS = {"|", "｜", "¦", "‖", "∥", "￤", "丨"}
-_MOJIBAKE_REPLACEMENTS = {
-    "â€¦": "…",
-    "â€”": "—",
-    "â€“": "–",
-    "â€˜": "‘",
-    "â€™": "’",
-    "â€œ": "“",
-    "â€": "”",
-    "Â·": "·",
-    "Â": "",
-}
 
 
 @dataclass(frozen=True)
@@ -150,9 +141,7 @@ def _glossary_block(glossary: dict[str, str] | None, texts: list[str]) -> str:
     return json.dumps(used, ensure_ascii=False, indent=2)
 
 
-def _translation_rules(
-    target_id: str | None = None, *, example_id: str | None = None
-) -> str:
+def _translation_rules(target_id: str | None = None, *, example_id: str | None = None) -> str:
     item_rule = (
         f"只輸出 role=target 的 {target_id}，而且剛好一次；不得輸出 context 項目。"
         if target_id is not None
@@ -307,200 +296,11 @@ def _parse_response(
     return [response.translation for response in batch.responses]
 
 
-def _strip_known_prefix(text: str) -> str:
-    result = text.strip().lstrip(">").strip()
-    result = re.sub(
-        r"^(?:翻譯(?:結果)?|繁體中文|譯文|translation)\s*[:：]\s*",
-        "",
-        result,
-        flags=re.IGNORECASE,
-    )
-    result = re.sub(
-        r"^(?:(?:\[\s*T?\d+\s*\])|(?:【\s*T?\d+\s*】)|"
-        r"(?:\(\s*T?\d+\s*\))|(?:T\d+))\s*[:：\-–—]?\s*",
-        "",
-        result,
-        flags=re.IGNORECASE,
-    )
-    # 只移除明確的「原文 → 譯文」標籤；一般台詞中的箭頭必須保留。
-    arrow_match = re.match(
-        r"^(?:原文|日文|source)\s*[:：]?\s*.{0,40}?→\s*(.+)$",
-        result,
-        flags=re.IGNORECASE,
-    )
-    if arrow_match:
-        result = arrow_match.group(1).strip()
-    return result
-
-
-def _attempt_fix_mojibake(text: str) -> str:
-    fixed = text
-    for bad, good in _MOJIBAKE_REPLACEMENTS.items():
-        fixed = fixed.replace(bad, good)
-
-    suspicious_before = sum(fixed.count(token) for token in ("Ã", "Â", "â€", "ðŸ"))
-    if suspicious_before and all(ord(char) <= 255 for char in fixed):
-        try:
-            candidate = fixed.encode("latin-1").decode("utf-8")
-            suspicious_after = sum(candidate.count(token) for token in ("Ã", "Â", "â€", "ðŸ"))
-            if suspicious_after < suspicious_before:
-                fixed = candidate
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            pass
-    return fixed
-
-
-def _contains_ellipsis(text: str) -> bool:
-    compact = unicodedata.normalize("NFKC", text or "")
-    return any(token in compact for token in ("…", "⋯", "...", "・・・"))
-
-
-def _has_meaningful_character(text: str) -> bool:
-    return any(char.isalnum() or _is_cjk(char) or _is_kana(char) for char in text)
-
-
-_LINE_LIKE_CHARS = "—―─━–－﹘﹣⸺⸻ーｰ︱"
-_REPEAT_SEPARATORS = ("", "，", "、", "；", "：", ",", ";", ":", " ")
-
-
-def _source_has_semantic_dash(source: str | None) -> bool:
-    if not source:
-        return False
-    normalized = unicodedata.normalize("NFKC", source)
-    # Japanese prolonged sound mark ー is phonetic and must not authorize a
-    # Chinese em dash.  Actual Japanese dialogue dashes use ―/—/─ or --.
-    return any(char in normalized for char in "—―─━–－﹘﹣⸺⸻︱") or "--" in normalized
-
-
-def _has_adjacent_long_repeat(text: str, min_length: int = 4) -> bool:
-    compact = re.sub(r"\s+", "", text or "")
-    for span in range(len(compact) // 2, min_length - 1, -1):
-        for start in range(len(compact) - span * 2 + 1):
-            if compact[start : start + span] == compact[start + span : start + span * 2]:
-                return True
-    return False
-
-
-def _collapse_adjacent_long_repeats(text: str, source: str | None) -> str:
-    """Collapse exact long fragments accidentally emitted twice.
-
-    Short expressive repetition such as 「哈哈」 or 「不要不要」 is preserved.
-    When the Japanese source itself contains a long adjacent repetition, no
-    automatic collapse is attempted.
-    """
-    if len(text) < 8 or _has_adjacent_long_repeat(source or "", min_length=2):
-        return text
-
-    result = text
-    changed = True
-    while changed:
-        changed = False
-        for span in range(len(result) // 2, 3, -1):
-            for start in range(len(result) - span * 2 + 1):
-                fragment = result[start : start + span]
-                if not _has_meaningful_character(fragment):
-                    continue
-                second_start = start + span
-                separator = ""
-                for candidate_separator in _REPEAT_SEPARATORS:
-                    if result.startswith(candidate_separator + fragment, second_start):
-                        separator = candidate_separator
-                        break
-                else:
-                    continue
-                duplicate_end = second_start + len(separator) + span
-                result = result[:second_start] + result[duplicate_end:]
-                changed = True
-                break
-            if changed:
-                break
-    return result
-
-
 def sanitize_translation_text(text: str, source: str | None = None) -> str:
-    """清掉控制字元、Markdown、模型分隔符、重複行與常見 mojibake。
+    """Compatibility API: only safe display normalization; ``source`` is never rewritten."""
 
-    ``source`` 有提供時，還會遵守原文標點：原文沒有省略號，就移除模型自行
-    加上的 ``...``／``…``。這可避免模型格式殘留被當成漫畫字幕寫回圖片。
-    """
-    if not text:
-        return ""
-
-    text = _strip_code_fences(str(text))
-    text = _attempt_fix_mojibake(text)
-    text = unicodedata.normalize("NFKC", text)
-
-    cleaned_chars: list[str] = []
-    for char in text:
-        if char in _ZERO_WIDTH or char == "\ufffd":
-            continue
-        category = unicodedata.category(char)
-        if category in {"Cs", "Co", "Cn"}:
-            continue
-        if category == "Cc" and char not in {"\n", "\t"}:
-            continue
-        if char in _SEPARATOR_CHARS:
-            continue
-        cleaned_chars.append(char)
-    text = "".join(cleaned_chars)
-
-    lines: list[str] = []
-    for raw_line in text.splitlines() or [text]:
-        line = _strip_known_prefix(raw_line.strip())
-        line = line.strip("` ")
-        # Markdown 表格／分隔線不是譯文內容。
-        if re.fullmatch(r"[-_=:.·•…⋯。\s]+", line):
-            continue
-        if not line:
-            continue
-        lines.append(line)
-
-    # 模型偶爾把同一個完整答案原封不動輸出兩次；只在所有非空行完全
-    # 相同時折疊，避免誤刪「哈哈／別鬧／哈哈」這類合法重複語氣。
-    normalized_lines = [re.sub(r"\s+", "", line) for line in lines]
-    if len(lines) > 1 and len(set(normalized_lines)) == 1:
-        lines = [lines[0]]
-
-    result = "".join(lines).strip()
-    matching_quotes = (("\"", "\""), ("'", "'"), ("「", "」"), ("『", "』"), ("“", "”"))
-    for left, right in matching_quotes:
-        wrapped = result.startswith(left) and result.endswith(right)
-        if wrapped and len(result) > len(left) + len(right):
-            result = result[len(left) : -len(right)].strip()
-            break
-
-    # 統一省略號，再依原文決定是否保留。OCR 原文沒有停頓符號時，翻譯模型
-    # 不應憑空加入；若結果只剩省略號，直接視為空白讓驗證拒絕。
-    result = re.sub(r"(?:\.{3,}|⋯+)", "…", result)
-    if source is not None and not _contains_ellipsis(source):
-        result = result.replace("…", "")
-
-    # 「ありがとうございましたーッ」中的 ー 是長音，不是破折號。模型若輸出
-    # 「謝謝指導——！」，直排後就會成為使用者看到的額外水平線。只有原文
-    # 真正含有語意破折號時才允許保留這些線條字元。
-    if source is not None and not _source_has_semantic_dash(source):
-        result = re.sub(rf"[{re.escape(_LINE_LIKE_CHARS)}]+", "", result)
-
-    result = _collapse_adjacent_long_repeats(result, source).strip()
-
-    if not result or not _has_meaningful_character(result):
-        return ""
-    return result
-
-
-def _is_kana(char: str) -> bool:
-    code = ord(char)
-    return 0x3040 <= code <= 0x30FF or 0x31F0 <= code <= 0x31FF
-
-
-def _is_cjk(char: str) -> bool:
-    code = ord(char)
-    return (
-        0x3400 <= code <= 0x4DBF
-        or 0x4E00 <= code <= 0x9FFF
-        or 0xF900 <= code <= 0xFAFF
-        or 0x20000 <= code <= 0x323AF
-    )
+    del source
+    return normalize_display_text(text)
 
 
 def validate_translation(
@@ -510,55 +310,12 @@ def validate_translation(
 ) -> TranslationValidation:
     if not cfg.validate_translation:
         return TranslationValidation(valid=bool(translation.strip()))
-
-    issues: list[str] = []
-    text = sanitize_translation_text(translation, source=source)
-    source_clean = "".join(source.split())
-    if not text:
-        issues.append("empty")
-        return TranslationValidation(False, tuple(issues))
-
-    if "\ufffd" in translation or any(token in translation for token in ("Ã", "â€", "ðŸ")):
-        issues.append("mojibake")
-
-    output_chars = [char for char in text if not char.isspace()]
-    source_len = max(1, len(source_clean))
-    max_len = max(24, int(source_len * cfg.max_output_length_ratio + 12))
-    if len(output_chars) > max_len:
-        issues.append("too_long")
-
-    meaningful = sum(
-        char.isalnum() or _is_cjk(char) or _is_kana(char)
-        for char in output_chars
+    result = validate_translation_batch(
+        (TranslationInput("legacy", source, translation),),
+        expected_ids=("legacy",),
+        maximum_length_ratio=cfg.max_output_length_ratio,
     )
-    punctuation = sum(
-        unicodedata.category(char).startswith(("P", "S"))
-        for char in output_chars
-    )
-    if meaningful == 0:
-        issues.append("punctuation_only")
-    elif len(output_chars) >= 4 and punctuation / len(output_chars) > 0.65:
-        issues.append("excessive_punctuation")
-
-    kana = sum(_is_kana(char) for char in output_chars)
-    cjk = sum(_is_cjk(char) for char in output_chars)
-    mostly_kana = kana / len(output_chars) > 0.45
-    little_cjk = cjk / len(output_chars) < 0.35
-    if len(output_chars) >= 4 and mostly_kana and little_cjk:
-        issues.append("mostly_untranslated_japanese")
-
-    unknown = sum(unicodedata.category(char) in {"Co", "Cn", "Cs"} for char in output_chars)
-    if unknown:
-        issues.append("unsupported_unicode")
-
-    # 完整照抄日文通常代表模型沒有翻譯；純漢字短專名則不判錯。
-    source_norm = re.sub(r"\s+", "", unicodedata.normalize("NFKC", source))
-    output_norm = re.sub(r"\s+", "", unicodedata.normalize("NFKC", text))
-    source_has_kana = any(_is_kana(char) for char in source_norm)
-    if source_has_kana and source_norm == output_norm:
-        issues.append("source_copied")
-
-    return TranslationValidation(not issues, tuple(issues))
+    return TranslationValidation(result.valid, tuple(issue.code for issue in result.issues))
 
 
 def _extract_error_message(data: object) -> str:
@@ -744,9 +501,7 @@ async def _request_with_retry(
             last_error = error
             if attempt >= MAX_RETRIES:
                 break
-            console.print(
-                f"[yellow]OpenRouter 連線錯誤，重試 {attempt}/{MAX_RETRIES}：{error}[/]"
-            )
+            console.print(f"[yellow]OpenRouter 連線錯誤，重試 {attempt}/{MAX_RETRIES}：{error}[/]")
             await asyncio.sleep(delay + random.uniform(0.0, min(0.5, delay * 0.1)))
             delay = min(delay * 2, 30.0)
         except httpx.HTTPStatusError as error:
@@ -947,9 +702,7 @@ async def translate_page_mapped_async(
     async with httpx.AsyncClient(timeout=cfg.request_timeout_sec) as client:
         provider_response = await _request_with_retry(
             client,
-            _payload(
-                _build_page_prompt(nonempty_texts, glossary, item_ids=nonempty_ids), cfg
-            ),
+            _payload(_build_page_prompt(nonempty_texts, glossary, item_ids=nonempty_ids), cfg),
             cfg,
             artifact_root=artifact_root,
         )
@@ -1189,7 +942,5 @@ def translate_with_context(
     item_ids: list[str] | None = None,
 ) -> list[str]:
     return asyncio.run(
-        translate_with_context_async(
-            texts, cfg, glossary, context_size, item_ids=item_ids
-        )
+        translate_with_context_async(texts, cfg, glossary, context_size, item_ids=item_ids)
     )

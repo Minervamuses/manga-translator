@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from importlib.resources import files
 from pathlib import Path
 
 import pytest
@@ -99,6 +100,48 @@ def test_database_migration_is_idempotent_and_enables_foreign_keys(tmp_path: Pat
 
     with JobStore(database, artifacts) as reopened:
         assert reopened.connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
+
+
+def test_migration_retries_committed_ddl_without_user_version_bump(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    artifacts = ArtifactStore(tmp_path / "artifacts")
+    with JobStore(database, artifacts):
+        pass
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA user_version=1")
+
+    with JobStore(database, artifacts) as recovered:
+        columns = {
+            row[1] for row in recovered.connection.execute("PRAGMA table_info(stage_runs)")
+        }
+        assert {"cache_hits", "last_cache_hit_at"} <= columns
+        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_migration_ddl_and_version_bump_are_atomic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    initial = files("manga_translator.storage.migrations").joinpath("001_initial.sql")
+    with sqlite3.connect(database) as connection:
+        connection.executescript(initial.read_text(encoding="utf-8"))
+        connection.execute("PRAGMA user_version=1")
+
+    def fail_version_bump(_connection: sqlite3.Connection, _target: int) -> None:
+        raise RuntimeError("simulated crash before version bump")
+
+    monkeypatch.setattr(JobStore, "_set_user_version", staticmethod(fail_version_bump))
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        JobStore(database, ArtifactStore(tmp_path / "artifacts"))
+
+    with sqlite3.connect(database) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(stage_runs)")}
+        assert "cache_hits" not in columns
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+
+    monkeypatch.undo()
+    with JobStore(database, ArtifactStore(tmp_path / "artifacts")) as recovered:
+        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 2
 
 
 def test_newer_database_schema_is_rejected(tmp_path: Path) -> None:

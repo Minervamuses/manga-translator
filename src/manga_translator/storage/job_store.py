@@ -71,8 +71,52 @@ class JobStore:
         migration_root = files("manga_translator.storage.migrations")
         for target in range(version + 1, SCHEMA_VERSION + 1):
             resource = migration_root.joinpath(f"{target:03d}_initial.sql")
-            self.connection.executescript(resource.read_text(encoding="utf-8"))
-            self.connection.execute(f"PRAGMA user_version={target}")
+            script = resource.read_text(encoding="utf-8")
+            with self.transaction() as connection:
+                if not self._migration_already_applied(connection, target):
+                    for statement in self._migration_statements(script):
+                        connection.execute(statement)
+                self._set_user_version(connection, target)
+
+    @staticmethod
+    def _migration_statements(script: str) -> tuple[str, ...]:
+        statements: list[str] = []
+        pending = ""
+        for line in script.splitlines(keepends=True):
+            pending += line
+            if sqlite3.complete_statement(pending):
+                statement = pending.strip()
+                if statement:
+                    statements.append(statement)
+                pending = ""
+        if pending.strip():
+            raise RuntimeError("migration contains an incomplete SQL statement")
+        return tuple(statements)
+
+    @staticmethod
+    def _migration_already_applied(
+        connection: sqlite3.Connection, target: int
+    ) -> bool:
+        if target != 2:
+            return False
+        columns = {
+            str(row[1]): row for row in connection.execute("PRAGMA table_info(stage_runs)")
+        }
+        cache_hits = columns.get("cache_hits")
+        last_cache_hit_at = columns.get("last_cache_hit_at")
+        return bool(
+            cache_hits is not None
+            and str(cache_hits[2]).upper() == "INTEGER"
+            and int(cache_hits[3]) == 1
+            and str(cache_hits[4]) == "0"
+            and last_cache_hit_at is not None
+            and str(last_cache_hit_at[2]).upper() == "TEXT"
+            and int(last_cache_hit_at[3]) == 0
+        )
+
+    @staticmethod
+    def _set_user_version(connection: sqlite3.Connection, target: int) -> None:
+        connection.execute(f"PRAGMA user_version={target}")
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:

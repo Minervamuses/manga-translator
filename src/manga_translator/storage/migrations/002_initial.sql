@@ -1,4 +1,2 @@
-BEGIN;
 ALTER TABLE stage_runs ADD COLUMN cache_hits INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE stage_runs ADD COLUMN last_cache_hit_at TEXT;
-COMMIT;

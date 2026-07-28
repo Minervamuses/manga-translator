@@ -16,17 +16,6 @@ from .config import TypesettingConfig
 from .detector import TextGroup, TextRegion
 from .text import grapheme_clusters, normalize_text
 
-VERTICAL_PUNCT_MAP = {
-    "(": "︵",
-    ")": "︶",
-    "[": "︹",
-    "]": "︺",
-    "{": "︷",
-    "}": "︸",
-    "<": "︿",
-    ">": "﹀",
-}
-
 
 @dataclass(frozen=True)
 class OriginalTextGeometry:
@@ -97,10 +86,6 @@ def _measure_char_advance(font: ImageFont.FreeTypeFont, char: str) -> int:
     except (OSError, TypeError, ValueError):
         bbox = font.getbbox(char)
         return max(1, int(bbox[2] - bbox[0]))
-
-
-def _verticalize_punctuation(text: str) -> str:
-    return "".join(VERTICAL_PUNCT_MAP.get(cluster, cluster) for cluster in grapheme_clusters(text))
 
 
 def _has_glyph(font_path: str, size: int, char: str) -> bool:
@@ -1145,8 +1130,6 @@ def plan_text_layout(
     direction = _decide_direction(group, cfg.direction)
     if direction == "vertical":
         cleaned = cleaned.replace(" ", "")
-        if cfg.vertical_punct_map:
-            cleaned = _verticalize_punctuation(cleaned)
     if not cleaned:
         return TextLayoutPlan(
             bbox=group.bbox,
@@ -1253,8 +1236,6 @@ def render_text_into_patch(
     cleaned = _sanitize_render_text(text)
     if direction == "vertical":
         cleaned = cleaned.replace(" ", "")
-        if cfg.vertical_punct_map:
-            cleaned = _verticalize_punctuation(cleaned)
     if height <= 1 or width <= 1 or not cleaned:
         return np.zeros((height, width, 4), dtype=np.uint8)
 

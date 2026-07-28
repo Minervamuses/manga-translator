@@ -429,6 +429,21 @@ def doctor(config: str, strict_api_key: bool):
     except Exception:  # noqa: BLE001 - optional accelerator failure is non-fatal
         warn("pyclipper 不可用；會自動改用 Shapely，功能正常但幾何後處理稍慢")
 
+    from .runtime.capabilities import pillow_capabilities
+
+    shaping = pillow_capabilities()
+    if shaping.production_shaping:
+        ok(
+            "Pillow shaping 可用："
+            f"FreeType {shaping.freetype_version} / RAQM {shaping.raqm_version} / "
+            f"HarfBuzz {shaping.harfbuzz_version} / FriBiDi {shaping.fribidi_version}"
+        )
+    else:
+        fail(
+            "新排版器缺少 Pillow RAQM/HarfBuzz/FriBiDi，排版將 blocked："
+            f"{shaping}"
+        )
+
     cfg.paths.input_dir.mkdir(parents=True, exist_ok=True)
     ok(f"輸入目錄存在：{cfg.paths.input_dir}")
 

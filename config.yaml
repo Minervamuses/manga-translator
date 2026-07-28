@@ -163,7 +163,6 @@ typesetting:
   outline_color: "auto"
   min_gap_px: 4
   use_font_metrics: true
-  vertical_punct_map: true
   replace_unsupported_glyphs: true
   inner_padding: 2
 

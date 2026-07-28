@@ -12,6 +12,8 @@ from pathlib import Path
 import yaml
 from fontTools.ttLib import TTFont
 
+from ..text import grapheme_clusters
+
 
 class FontRole(StrEnum):
     NEUTRAL_SANS = "neutral_sans"
@@ -178,15 +180,16 @@ class FontResolver:
     def fallback_runs(self, text: str, role: FontRole) -> tuple[FontRun, ...]:
         fonts = self.roles[role]
         runs: list[FontRun] = []
-        for char in text:
-            font = next((candidate for candidate in fonts if candidate.covers(char)), None)
+        for cluster in grapheme_clusters(text):
+            font = next((candidate for candidate in fonts if candidate.covers(cluster)), None)
             if font is None:
                 neutral = self.roles[FontRole.NEUTRAL_SANS]
-                font = next((candidate for candidate in neutral if candidate.covers(char)), None)
+                font = next((candidate for candidate in neutral if candidate.covers(cluster)), None)
             if font is None:
-                raise MissingGlyphError(f"no catalog font covers U+{ord(char):04X}")
+                codepoints = ",".join(f"U+{ord(char):04X}" for char in cluster)
+                raise MissingGlyphError(f"no catalog font covers grapheme {codepoints}")
             if runs and runs[-1].font.sha256 == font.sha256:
-                runs[-1] = FontRun(font, runs[-1].text + char)
+                runs[-1] = FontRun(font, runs[-1].text + cluster)
             else:
-                runs.append(FontRun(font, char))
+                runs.append(FontRun(font, cluster))
         return tuple(runs)

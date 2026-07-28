@@ -178,7 +178,6 @@ class TypesettingConfig(BaseModel):
     outline_color: tuple[int, int, int] | str = "auto"
     min_gap_px: int = Field(default=4, ge=0, le=100)
     use_font_metrics: bool = True
-    vertical_punct_map: bool = True
     inner_padding: int = Field(default=2, ge=0, le=100)
     replace_unsupported_glyphs: bool = True
 

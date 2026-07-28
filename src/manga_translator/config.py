@@ -24,6 +24,8 @@ class OpenRouterConfig(BaseModel):
     content_retries: int = Field(default=2, ge=0, le=5)
     validate_translation: bool = True
     max_output_length_ratio: float = Field(default=4.0, ge=1.5, le=20.0)
+    data_collection: Literal["deny", "allow"] = "deny"
+    zdr: bool = True
 
     @field_validator("api_key", mode="before")
     @classmethod

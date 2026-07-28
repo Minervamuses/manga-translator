@@ -36,9 +36,14 @@ from .domain.models import (
     ArtifactRef,
     BoundingBox,
     EntityRecord,
+    GroupGeometry,
+    MaskLineage,
     OCRCandidate,
     OCRRecord,
     PageDocument,
+    Point,
+    Polygon,
+    RasterTransform,
     RegionRevision,
     SourcePage,
     StageRecord,
@@ -82,6 +87,7 @@ from .stages.base import (
     StageInputs,
     StageOutputs,
 )
+from .stages.detect import detection_geometry_output
 from .stages.runner import StageFailureContext, StageOutcome, StageRunner
 from .stages.state import (
     MASK_MEDIA_TYPE,
@@ -1695,11 +1701,13 @@ def _build_pipeline_stage_runners(
             height=int(image.shape[0]),
             detected_groups=len(detection.groups),
         )
-        return encode_pipeline_state(
+        state_outputs = encode_pipeline_state(
             detection,
             producer_stage=StageName.DETECT,
             extras={"source_artifact": reference.model_dump(mode="json")},
         )
+        geometry_outputs = detection_geometry_output(detection)
+        return StageOutputs((*state_outputs.artifacts, *geometry_outputs.artifacts))
 
     def adapter_state(
         inputs: StageInputs,
@@ -2404,6 +2412,8 @@ def _typed_issue(issue: ResultIssue) -> Issue:
         StageName.INPAINT_RENDER: IssueCode.RENDER_FAILED,
         StageName.ENCODE: IssueCode.ENCODE_FAILED,
     }.get(stage, IssueCode.SOURCE_FAILED if issue.stage == "decode" else IssueCode.PIPELINE_FAILED)
+    if "polygon" in issue.code or "geometry" in issue.code:
+        code = IssueCode.INVALID_GEOMETRY
     if issue.stage == "output":
         code = IssueCode.OUTPUT_FAILED
     return Issue(
@@ -2455,6 +2465,7 @@ def _document_from_page_result(
             revision.bbox,
         )
     observations: list[RegionObservation] = []
+    region_mask_sources = []
     for region in page.regions:
         bbox = BoundingBox(
             x=float(region.x),
@@ -2483,6 +2494,11 @@ def _document_from_page_result(
             RegionObservation(
                 bbox=bbox,
                 detector_score=max(0.0, min(1.0, float(region.confidence))),
+                line_polygons=tuple(
+                    Polygon(points=tuple(Point(x=x, y=y) for x, y in line))
+                    for line in region.line_polygons
+                ),
+                angle_degrees=region.angle_degrees,
                 source=region.source,
                 raw_index=region.raw_index,
                 orientation="vertical" if region.vertical else "horizontal",
@@ -2491,6 +2507,7 @@ def _document_from_page_result(
                 crop_dhash=_source_crop_dhash(page.source_image, bbox),
             )
         )
+        region_mask_sources.append(region.mask_source)
     reconciled = reconcile_regions(
         page_id=page.page_id,
         detector_fingerprint=outcomes[StageName.DETECT].fingerprint,
@@ -2498,6 +2515,47 @@ def _document_from_page_result(
         previous=previous,
         previous_masks=previous_masks,
         previous_crop_dhashes=previous_crop_dhashes,
+    )
+    enriched_current: dict[str, RegionRevision] = {}
+    for region, revision, mask_source in zip(
+        page.regions,
+        reconciled.current_revisions,
+        region_mask_sources,
+        strict=True,
+    ):
+        lineage = ()
+        if revision.mask_refs and mask_source is not None:
+            lineage = (
+                MaskLineage(
+                    artifact=revision.mask_refs[0],
+                    detector_pass=mask_source.detector_pass,
+                    detection_input_size=mask_source.detection_input_size,
+                    raw_index=mask_source.raw_index,
+                    source_revision_id=revision.revision_id,
+                    transform=RasterTransform(
+                        source_space="page",
+                        target_space="region_local",
+                        affine_2x3=mask_source.page_to_local_affine,
+                    ),
+                ),
+            )
+        enriched_current[revision.revision_id] = revision.model_copy(
+            update={
+                "font_size_hint": (
+                    float(region.font_size_hint) if region.font_size_hint > 0 else None
+                ),
+                "mask_lineage": lineage,
+            }
+        )
+    reconciled = reconciled.__class__(
+        reconciled.identities,
+        tuple(
+            enriched_current.get(revision.revision_id, revision)
+            for revision in reconciled.revisions
+        ),
+        reconciled.issues,
+        reconciled.current_region_ids,
+        reconciled.current_revision_ids,
     )
     revision_by_legacy_id = {
         region.id: revision
@@ -2593,6 +2651,77 @@ def _document_from_page_result(
                         },
                     )
                 )
+    group_geometries: list[GroupGeometry] = []
+    source_by_id = {region.id: region.mask_source for region in page.regions}
+    for group in page.groups:
+        member_pairs = tuple(
+            (legacy_id, revision_by_legacy_id[legacy_id])
+            for legacy_id in group.region_ids
+            if legacy_id in revision_by_legacy_id
+        )
+        if not member_pairs:
+            continue
+        union_mask_ref = None
+        if group.mask is not None and np.any(group.mask):
+            group_bbox = BoundingBox(
+                x=float(group.x),
+                y=float(group.y),
+                width=float(group.w),
+                height=float(group.h),
+            )
+            local_group_mask = _validate_local_mask(
+                group.mask,
+                group_bbox,
+                identity=group.id,
+            )
+            encoded, buffer = cv2.imencode(".png", local_group_mask)
+            if not encoded:
+                raise ValueError(f"group mask {group.id} could not be encoded as PNG")
+            union_mask_ref = store.store_artifact(
+                buffer.tobytes(),
+                media_type=MASK_MEDIA_TYPE,
+                owner_type="group_union_mask",
+                owner_id=f"{job_id}:{page.page_id}:{group.id}",
+            )
+        mask_lineage = ()
+        if union_mask_ref is not None:
+            mask_lineage = tuple(
+                MaskLineage(
+                    artifact=union_mask_ref,
+                    detector_pass=source.detector_pass,
+                    detection_input_size=source.detection_input_size,
+                    raw_index=source.raw_index,
+                    source_revision_id=revision.revision_id,
+                    transform=RasterTransform(
+                        source_space="page",
+                        target_space="group_local",
+                        affine_2x3=(
+                            1.0,
+                            0.0,
+                            -float(group.x),
+                            0.0,
+                            1.0,
+                            -float(group.y),
+                        ),
+                    ),
+                )
+                for legacy_id, revision in member_pairs
+                if (source := source_by_id.get(legacy_id)) is not None
+            )
+        group_geometries.append(
+            GroupGeometry(
+                group_id=group.id,
+                member_revision_ids=tuple(revision.revision_id for _, revision in member_pairs),
+                bbox=BoundingBox(
+                    x=float(group.x),
+                    y=float(group.y),
+                    width=float(group.w),
+                    height=float(group.h),
+                ),
+                union_mask_ref=union_mask_ref,
+                mask_lineage=mask_lineage,
+            )
+        )
     stage_records = _stage_records(outcomes)
     retained_entities = tuple(
         entity
@@ -2634,6 +2763,7 @@ def _document_from_page_result(
         source=previous.source,
         region_identities=reconciled.identities,
         region_revisions=reconciled.revisions,
+        group_geometries=tuple(group_geometries),
         ocr_records=tuple(ocr_records),
         translations=tuple(translations),
         stages=stage_records,

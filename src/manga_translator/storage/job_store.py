@@ -242,6 +242,11 @@ class JobStore:
         references = (
             document.source.original_artifact,
             *(ref for revision in document.region_revisions for ref in revision.mask_refs),
+            *(
+                group.union_mask_ref
+                for group in document.group_geometries
+                if group.union_mask_ref is not None
+            ),
             *(record.raw_response_ref for record in document.translations),
             *(plan.font_ref for plan in document.layout_plans),
             *(plan.alpha_mask_ref for plan in document.layout_plans),

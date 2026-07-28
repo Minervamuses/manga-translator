@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,7 +14,9 @@ from rich.console import Console
 from .config import DetectionConfig, PostprocessConfig
 from .geometry import (
     bbox_touch_or_near,
+    canonical_page_polygon,
     center_distance,
+    clipped_raster_bbox,
     containment_ratio,
     iom,
     iou,
@@ -25,6 +27,23 @@ from .reading_order import sort_groups_auto, sort_groups_jp_vertical, sort_regio
 
 console = Console()
 RegionSource = Literal["ctd", "ctd_multiscale", "mask_fallback"]
+
+
+@dataclass(frozen=True)
+class MaskSource:
+    detector_pass: int
+    detection_input_size: int
+    raw_index: int
+    source: str
+    source_region_id: str | None = None
+    page_to_local_affine: tuple[float, float, float, float, float, float] = (
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+    )
 
 
 @dataclass
@@ -40,6 +59,10 @@ class TextRegion:
     raw_index: int = -1
     detection_input_size: int = 0
     font_size_hint: float = -1.0
+    page_bbox: tuple[float, float, float, float] | None = None
+    line_polygons: tuple[tuple[tuple[float, float], ...], ...] = ()
+    angle_degrees: float = 0.0
+    mask_source: MaskSource | None = None
     mask_bbox: tuple[int, int, int, int] | None = None
     # local_mask 的大小固定等於 (h, w)，避免每個 region 保存整頁 mask。
     local_mask: np.ndarray | None = field(default=None, repr=False, compare=False)
@@ -89,6 +112,8 @@ class TextGroup:
     mapping_chain: dict[str, Any] = field(default_factory=dict)
     # group mask 是與 bbox 對齊的局部 mask，避免每個群組複製一張整頁遮罩。
     mask: np.ndarray | None = field(default=None, repr=False, compare=False)
+    geometry_bbox: tuple[float, float, float, float] | None = None
+    mask_sources: tuple[MaskSource, ...] = ()
 
     @property
     def x(self) -> int:
@@ -298,21 +323,50 @@ def _blocks_to_regions(
     *,
     source: RegionSource,
     input_size: int,
+    detector_pass: int = 0,
     raw_index_offset: int = 0,
+    issues: list[DetectorIssue] | None = None,
 ) -> list[TextRegion]:
     regions: list[TextRegion] = []
     for pass_idx, blk in enumerate(blocks):
         xyxy = getattr(blk, "xyxy", None)
         if xyxy is None or len(xyxy) != 4:
             continue
-        x1, y1, x2, y2 = [int(v) for v in xyxy]
-        x1 = max(0, min(x1, img_w - 1))
-        y1 = max(0, min(y1, img_h - 1))
-        x2 = max(0, min(x2, img_w))
-        y2 = max(0, min(y2, img_h))
-        w, h = x2 - x1, y2 - y1
+        float_xyxy = tuple(float(value) for value in xyxy)
+        x1, y1, w, h = clipped_raster_bbox(
+            float_xyxy, page_width=img_w, page_height=img_h
+        )
         if w <= 1 or h <= 1:
             continue
+
+        line_polygons: list[tuple[tuple[float, float], ...]] = []
+        for line_index, line in enumerate(getattr(blk, "lines", ()) or ()):
+            try:
+                line_polygons.append(
+                    canonical_page_polygon(line, page_width=img_w, page_height=img_h)
+                )
+            except (TypeError, ValueError, IndexError) as error:
+                if issues is not None:
+                    issues.append(
+                        DetectorIssue(
+                            code=f"detector_{error}",
+                            message=f"invalid CTD line polygon: {error}",
+                            details={
+                                "detector_pass": detector_pass,
+                                "raw_index": raw_index_offset + pass_idx,
+                                "line_index": line_index,
+                            },
+                        )
+                    )
+
+        raw_x1, raw_y1, raw_x2, raw_y2 = float_xyxy
+        page_bbox = (
+            max(0.0, min(raw_x1, float(img_w))),
+            max(0.0, min(raw_y1, float(img_h))),
+            max(0.0, min(raw_x2, float(img_w))) - max(0.0, min(raw_x1, float(img_w))),
+            max(0.0, min(raw_y2, float(img_h))) - max(0.0, min(raw_y1, float(img_h))),
+        )
+        raw_index = raw_index_offset + pass_idx
 
         regions.append(
             TextRegion(
@@ -324,10 +378,20 @@ def _blocks_to_regions(
                 vertical=bool(getattr(blk, "vertical", False)),
                 confidence=float(getattr(blk, "prob", 1.0) or 1.0),
                 source=source,
-                raw_index=raw_index_offset + pass_idx,
+                raw_index=raw_index,
                 detection_input_size=input_size,
                 font_size_hint=float(getattr(blk, "font_size", -1.0) or -1.0),
+                page_bbox=page_bbox,
+                line_polygons=tuple(line_polygons),
+                angle_degrees=float(getattr(blk, "angle", 0.0) or 0.0),
                 mask_bbox=(x1, y1, w, h),
+                mask_source=MaskSource(
+                    detector_pass=detector_pass,
+                    detection_input_size=input_size,
+                    raw_index=raw_index,
+                    source=source,
+                    page_to_local_affine=(1.0, 0.0, -float(x1), 0.0, 1.0, -float(y1)),
+                ),
             )
         )
     return regions
@@ -484,6 +548,14 @@ def _candidate_from_box(
         font_size_hint=-1.0,
         mask_bbox=(x1, y1, w2, h2),
         local_mask=local_mask,
+        page_bbox=(float(x1), float(y1), float(w2), float(h2)),
+        mask_source=MaskSource(
+            detector_pass=-1,
+            detection_input_size=0,
+            raw_index=-1,
+            source="mask_fallback",
+            page_to_local_affine=(1.0, 0.0, -float(x1), 0.0, 1.0, -float(y1)),
+        ),
     )
 
 
@@ -748,6 +820,8 @@ def _build_groups(
                     bbox=region.bbox,
                     vertical=region.vertical,
                     mask=mask,
+                    geometry_bbox=tuple(float(value) for value in region.bbox),
+                    mask_sources=(region.mask_source,) if region.mask_source is not None else (),
                 )
             )
         return groups
@@ -792,6 +866,12 @@ def _build_groups(
                 bbox=bbox,
                 vertical=vertical,
                 mask=mask,
+                geometry_bbox=tuple(float(value) for value in bbox),
+                mask_sources=tuple(
+                    region.mask_source
+                    for region in component_regions
+                    if region.mask_source is not None
+                ),
             )
         )
 
@@ -829,6 +909,8 @@ def postprocess_regions(
             continue
 
         region.id = f"r{len(filtered):04d}"
+        if region.mask_source is not None:
+            region.mask_source = replace(region.mask_source, source_region_id=region.id)
         if region.local_mask is None and refined_mask is not None:
             x1, y1 = region.x, region.y
             x2, y2 = region.x + region.w, region.y + region.h
@@ -1012,8 +1094,25 @@ def detect_text_regions(
             img_w,
             source=source,
             input_size=input_size,
+            detector_pass=pass_index,
             raw_index_offset=raw_offset,
+            issues=issues,
         )
+        for region in pass_regions:
+            local = safe_mask[region.y : region.y + region.h, region.x : region.x + region.w]
+            if local.shape[:2] == (region.h, region.w) and np.any(local):
+                region.local_mask = local.copy()
+            else:
+                issues.append(
+                    DetectorIssue(
+                        code="detector_empty_mask",
+                        message="detector region has no reliable text mask; no-erase remains active",
+                        details={
+                            "detector_pass": pass_index,
+                            "raw_index": region.raw_index,
+                        },
+                    )
+                )
         raw_offset += len(blocks)
         all_regions.extend(pass_regions)
         all_blocks.extend(blocks)

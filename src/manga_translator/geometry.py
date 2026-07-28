@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from typing import Protocol
+
+from shapely.geometry import Polygon as ShapelyPolygon
 
 
 class HasBbox(Protocol):
@@ -81,3 +84,38 @@ def bbox_touch_or_near(a: HasBbox, b: HasBbox, pad: int = 0) -> bool:
     bx1, by1 = b.x, b.y
     bx2, by2 = b.x + b.w, b.y + b.h
     return not (ax2 < bx1 or bx2 < ax1 or ay2 < by1 or by2 < ay1)
+
+
+def canonical_page_polygon(
+    points: Iterable[Iterable[float]], *, page_width: int, page_height: int
+) -> tuple[tuple[float, float], ...]:
+    """Validate and normalize a detector polygon without quantizing page coordinates."""
+
+    canonical = tuple((float(point[0]), float(point[1])) for point in points)
+    if len(canonical) < 3 or len(set(canonical)) < 3:
+        raise ValueError("degenerate_polygon")
+    if any(not math.isfinite(value) for point in canonical for value in point):
+        raise ValueError("non_finite_polygon")
+    if any(x < 0 or y < 0 or x > page_width or y > page_height for x, y in canonical):
+        raise ValueError("out_of_bounds_polygon")
+    shape = ShapelyPolygon(canonical)
+    if shape.convex_hull.area <= 1e-9:
+        raise ValueError("degenerate_polygon")
+    if not shape.is_valid:
+        raise ValueError("self_intersecting_polygon")
+    if shape.area <= 1e-9:
+        raise ValueError("degenerate_polygon")
+    return canonical
+
+
+def clipped_raster_bbox(
+    xyxy: Iterable[float], *, page_width: int, page_height: int
+) -> tuple[int, int, int, int]:
+    """Preserve legacy integer raster semantics while clipping to the page."""
+
+    x1, y1, x2, y2 = [int(value) for value in xyxy]
+    x1 = max(0, min(x1, page_width - 1))
+    y1 = max(0, min(y1, page_height - 1))
+    x2 = max(0, min(x2, page_width))
+    y2 = max(0, min(y2, page_height))
+    return x1, y1, x2 - x1, y2 - y1

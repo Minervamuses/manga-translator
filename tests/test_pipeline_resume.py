@@ -21,7 +21,7 @@ from manga_translator.contracts.mapping import (
     ResponseItem,
     bind_validated_responses,
 )
-from manga_translator.detector import DetectionResult, TextGroup, TextRegion
+from manga_translator.detector import DetectionResult, MaskSource, TextGroup, TextRegion
 from manga_translator.domain.issues import IssueCode, StageName, StageStatus
 from manga_translator.domain.serialization import canonical_document_bytes
 from manga_translator.manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
@@ -62,7 +62,19 @@ def _detection() -> DetectionResult:
             w=12,
             h=18,
             confidence=0.9,
+            font_size_hint=18.0,
+            page_bbox=(4.0, 5.0, 12.0, 18.0),
+            line_polygons=(((5.0, 6.0), (14.0, 5.0), (15.0, 20.0), (6.0, 21.0)),),
+            angle_degrees=6.5,
             local_mask=np.full((18, 12), 255, dtype=np.uint8),
+            mask_source=MaskSource(
+                detector_pass=0,
+                detection_input_size=1024,
+                raw_index=0,
+                source="ctd",
+                source_region_id="r1",
+                page_to_local_affine=(1.0, 0.0, -4.0, 0.0, 1.0, -5.0),
+            ),
         ),
         TextRegion(
             id="r2",
@@ -71,7 +83,16 @@ def _detection() -> DetectionResult:
             w=12,
             h=18,
             confidence=0.8,
+            page_bbox=(34.0, 5.0, 12.0, 18.0),
             local_mask=np.full((18, 12), 255, dtype=np.uint8),
+            mask_source=MaskSource(
+                detector_pass=0,
+                detection_input_size=1024,
+                raw_index=1,
+                source="ctd",
+                source_region_id="r2",
+                page_to_local_affine=(1.0, 0.0, -34.0, 0.0, 1.0, -5.0),
+            ),
         ),
     ]
     groups = [
@@ -300,6 +321,13 @@ def test_component_stages_resume_without_reloading_models_or_provider(
     first_document = _open_document(state, page_id)
     assert first_document is not None
     first_bytes = canonical_document_bytes(first_document)
+    assert len(first_document.translations) == 1
+    assert first_document.region_revisions[0].angle_degrees == 6.5
+    assert first_document.region_revisions[0].line_polygons
+    assert first_document.region_revisions[0].mask_lineage[0].source_revision_id == (
+        first_document.region_revisions[0].revision_id
+    )
+    assert len(first_document.group_geometries) == 2
 
     second = pipeline_module.run_pipeline(
         config, job_id="job-1", state_dir=state, resume=True, dump_json=True

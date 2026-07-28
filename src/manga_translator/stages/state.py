@@ -11,12 +11,12 @@ from typing import Any
 import cv2
 import numpy as np
 
-from ..detector import DetectionResult, DetectorIssue, TextGroup, TextRegion
+from ..detector import DetectionResult, DetectorIssue, MaskSource, TextGroup, TextRegion
 from ..domain.issues import StageName
 from ..domain.models import ArtifactRef
 from .base import ArtifactPayload, StageOutputs
 
-STATE_SCHEMA = "pipeline_stage_state.v2"
+STATE_SCHEMA = "pipeline_stage_state.v3"
 STATE_MEDIA_TYPE = "application/vnd.manga-translator.pipeline-state+json"
 MASK_MEDIA_TYPE = "image/png"
 
@@ -66,6 +66,7 @@ def _mask_reference(
 
 def _region_payload(region: TextRegion, payloads: dict[str, bytes]) -> dict[str, Any]:
     return {
+        "angle_degrees": region.angle_degrees,
         "candidate_duplicate": region.candidate_duplicate,
         "confidence": region.confidence,
         "detection_input_size": region.detection_input_size,
@@ -74,7 +75,24 @@ def _region_payload(region: TextRegion, payloads: dict[str, bytes]) -> dict[str,
         "h": region.h,
         "id": region.id,
         "local_mask": _mask_reference(region.local_mask, payloads),
+        "line_polygons": [
+            [[float(x), float(y)] for x, y in polygon]
+            for polygon in region.line_polygons
+        ],
         "mask_bbox": list(region.mask_bbox) if region.mask_bbox is not None else None,
+        "mask_source": (
+            {
+                "detection_input_size": region.mask_source.detection_input_size,
+                "detector_pass": region.mask_source.detector_pass,
+                "page_to_local_affine": list(region.mask_source.page_to_local_affine),
+                "raw_index": region.mask_source.raw_index,
+                "source": region.mask_source.source,
+                "source_region_id": region.mask_source.source_region_id,
+            }
+            if region.mask_source is not None
+            else None
+        ),
+        "page_bbox": list(region.page_bbox) if region.page_bbox is not None else None,
         "raw_index": region.raw_index,
         "source": region.source,
         "vertical": region.vertical,
@@ -89,12 +107,26 @@ def _group_payload(group: TextGroup, payloads: dict[str, bytes]) -> dict[str, An
         "bbox": list(group.bbox),
         "duplicate_of": group.duplicate_of,
         "id": group.id,
+        "geometry_bbox": (
+            list(group.geometry_bbox) if group.geometry_bbox is not None else None
+        ),
         "layout_bbox": list(group.layout_bbox) if group.layout_bbox is not None else None,
         "layout_info": group.layout_info,
         "layout_mode": group.layout_mode,
         "mapping_chain": group.mapping_chain,
         "mapping_region_key": group.mapping_region_key,
         "mask": _mask_reference(group.mask, payloads),
+        "mask_sources": [
+            {
+                "detection_input_size": source.detection_input_size,
+                "detector_pass": source.detector_pass,
+                "page_to_local_affine": list(source.page_to_local_affine),
+                "raw_index": source.raw_index,
+                "source": source.source,
+                "source_region_id": source.source_region_id,
+            }
+            for source in group.mask_sources
+        ],
         "ocr_candidates": group.ocr_candidates,
         "ocr_confidence": group.ocr_confidence,
         "ocr_source": group.ocr_source,
@@ -225,6 +257,12 @@ def _region_from_payload(
     read_bytes: Callable[[str], bytes],
 ) -> TextRegion:
     mask = _read_mask(payload.get("local_mask"), allowed=allowed, read_bytes=read_bytes)
+    mask_source_payload = payload.get("mask_source")
+    mask_source = (
+        _mask_source_from_payload(mask_source_payload)
+        if isinstance(mask_source_payload, Mapping)
+        else None
+    )
     region = TextRegion(
         id=str(payload["id"]),
         x=int(payload["x"]),
@@ -237,6 +275,17 @@ def _region_from_payload(
         raw_index=int(payload["raw_index"]),
         detection_input_size=int(payload["detection_input_size"]),
         font_size_hint=float(payload["font_size_hint"]),
+        page_bbox=(
+            tuple(float(value) for value in payload["page_bbox"])
+            if payload.get("page_bbox") is not None
+            else None
+        ),
+        line_polygons=tuple(
+            tuple((float(point[0]), float(point[1])) for point in polygon)
+            for polygon in payload.get("line_polygons", ())
+        ),
+        angle_degrees=float(payload.get("angle_degrees", 0.0)),
+        mask_source=mask_source,
         mask_bbox=(
             tuple(int(value) for value in payload["mask_bbox"])
             if payload.get("mask_bbox") is not None
@@ -249,6 +298,24 @@ def _region_from_payload(
     if mask is not None and mask.shape[:2] != (region.h, region.w):
         raise ValueError(f"region {region.id} mask dimensions do not match its bbox")
     return region
+
+
+def _mask_source_from_payload(payload: Mapping[str, Any]) -> MaskSource:
+    affine = tuple(float(value) for value in payload["page_to_local_affine"])
+    if len(affine) != 6:
+        raise ValueError("mask source affine transform must contain six values")
+    return MaskSource(
+        detector_pass=int(payload["detector_pass"]),
+        detection_input_size=int(payload["detection_input_size"]),
+        raw_index=int(payload["raw_index"]),
+        source=str(payload["source"]),
+        source_region_id=(
+            str(payload["source_region_id"])
+            if payload.get("source_region_id") is not None
+            else None
+        ),
+        page_to_local_affine=affine,
+    )
 
 
 def _group_from_payload(
@@ -265,6 +332,11 @@ def _group_from_payload(
         id=str(payload["id"]),
         region_ids=[str(value) for value in payload["region_ids"]],
         bbox=bbox,
+        geometry_bbox=(
+            tuple(float(value) for value in payload["geometry_bbox"])
+            if payload.get("geometry_bbox") is not None
+            else None
+        ),
         vertical=bool(payload["vertical"]),
         ocr_text=str(payload["ocr_text"]),
         ocr_text_norm=str(payload["ocr_text_norm"]),
@@ -291,6 +363,9 @@ def _group_from_payload(
         mapping_region_key=str(payload["mapping_region_key"]),
         mapping_chain=dict(payload["mapping_chain"]),
         mask=mask,
+        mask_sources=tuple(
+            _mask_source_from_payload(item) for item in payload.get("mask_sources", ())
+        ),
     )
     if payload.get("stable_group_key") != _stable_group_key(group):
         raise ValueError(f"group {group.id} stable identity key mismatch")

@@ -6,7 +6,13 @@ import json
 import numpy as np
 import pytest
 
-from manga_translator.detector import DetectionResult, DetectorIssue, TextGroup, TextRegion
+from manga_translator.detector import (
+    DetectionResult,
+    DetectorIssue,
+    MaskSource,
+    TextGroup,
+    TextRegion,
+)
 from manga_translator.domain.issues import StageName
 from manga_translator.domain.models import ArtifactRef
 from manga_translator.stages.state import (
@@ -31,6 +37,17 @@ def _detection() -> DetectionResult:
         raw_index=4,
         detection_input_size=1024,
         font_size_hint=18.5,
+        page_bbox=(2.0, 3.0, 2.0, 2.0),
+        line_polygons=(((2.0, 3.0), (4.0, 3.0), (4.0, 5.0), (2.0, 5.0)),),
+        angle_degrees=4.5,
+        mask_source=MaskSource(
+            detector_pass=0,
+            detection_input_size=1024,
+            raw_index=4,
+            source="ctd",
+            source_region_id="r1",
+            page_to_local_affine=(1.0, 0.0, -2.0, 0.0, 1.0, -3.0),
+        ),
         mask_bbox=(2, 3, 2, 2),
         local_mask=local,
         group_id="g1",
@@ -49,6 +66,8 @@ def _detection() -> DetectionResult:
         mapping_region_key="group:key",
         mapping_chain={"region": "group:key"},
         mask=local.copy(),
+        geometry_bbox=(2.0, 3.0, 2.0, 2.0),
+        mask_sources=(region.mask_source,),
     )
     aggregate = np.zeros((8, 8), dtype=np.uint8)
     aggregate[3:5, 2:4] = local
@@ -116,6 +135,11 @@ def test_pipeline_state_round_trip_is_deterministic_and_artifact_backed() -> Non
     )
     assert restored.extras == extras
     assert restored.detection.groups[0].ocr_text == "猫"
+    assert restored.detection.regions_post[0].line_polygons == (
+        ((2.0, 3.0), (4.0, 3.0), (4.0, 5.0), (2.0, 5.0)),
+    )
+    assert restored.detection.regions_post[0].mask_source == _detection().regions_post[0].mask_source
+    assert restored.detection.groups[0].mask_sources == _detection().groups[0].mask_sources
     assert np.array_equal(restored.detection.groups[0].mask, np.array([[0, 255], [255, 0]]))
     assert np.array_equal(restored.detection.mask, _detection().mask)
 

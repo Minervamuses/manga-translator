@@ -20,20 +20,27 @@ def parse_translation_response(
     *,
     raw_response_ref: RawResponseRef | None = None,
 ) -> ValidatedTranslationBatch:
-    try:
-        payload = json.loads(response_text)
-    except (json.JSONDecodeError, TypeError) as error:
-        raise MappingContractError(
-            [MappingIssue("malformed_json", {"message": str(error)})]
-        ) from error
-    if not isinstance(payload, dict) or set(payload) != {"translations"}:
-        raise MappingContractError(
-            [MappingIssue("invalid_response_envelope", {"keys": list(payload) if isinstance(payload, dict) else []})]
-        )
     if raw_response_ref is None:
         raw_response_ref = RawResponseRef.from_bytes(
             response_text.encode("utf-8"),
             media_type="application/json",
+        )
+    try:
+        payload = json.loads(response_text)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise MappingContractError(
+            [MappingIssue("malformed_json", {"message": str(error)})],
+            raw_response_refs=[raw_response_ref],
+        ) from error
+    if not isinstance(payload, dict) or set(payload) != {"translations"}:
+        raise MappingContractError(
+            [
+                MappingIssue(
+                    "invalid_response_envelope",
+                    {"keys": list(payload) if isinstance(payload, dict) else []},
+                )
+            ],
+            raw_response_refs=[raw_response_ref],
         )
     return validate_response_items(
         request,

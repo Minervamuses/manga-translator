@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 
-from .detector import TextRegion
+from .contracts.mapping import normalize_mapping_chain
+from .detector import TextGroup, TextRegion
 
 PageStatus = Literal["succeeded", "failed", "blocked"]
 BatchStatus = Literal["succeeded", "partial", "failed", "blocked"]
@@ -35,6 +37,42 @@ class ResultIssue:
         return payload
 
 
+@dataclass(frozen=True)
+class GroupMappingSnapshot:
+    """Immutable manifest view of one group's mapping progress."""
+
+    group_id: str
+    region_ids: tuple[str, ...]
+    group_status: str
+    translation_valid: bool
+    skip_reason: str
+    duplicate_of: str | None
+    chain: dict[str, Any]
+
+    @classmethod
+    def from_group(cls, group: TextGroup) -> GroupMappingSnapshot:
+        return cls(
+            group_id=group.id,
+            region_ids=tuple(group.region_ids),
+            group_status=group.status,
+            translation_valid=group.translation_valid,
+            skip_reason=group.skip_reason,
+            duplicate_of=group.duplicate_of,
+            chain=deepcopy(normalize_mapping_chain(group.mapping_chain)),
+        )
+
+    def to_manifest(self) -> dict[str, Any]:
+        return {
+            "group_id": self.group_id,
+            "region_ids": list(self.region_ids),
+            "group_status": self.group_status,
+            "translation_valid": self.translation_valid,
+            "skip_reason": self.skip_reason,
+            "duplicate_of": self.duplicate_of,
+            "chain": deepcopy(normalize_mapping_chain(self.chain)),
+        }
+
+
 @dataclass
 class PageResult:
     page_id: str
@@ -45,6 +83,7 @@ class PageResult:
     regions: list[TextRegion] = field(default_factory=list, repr=False)
     ocr_results: list[str] = field(default_factory=list, repr=False)
     translations: list[str] = field(default_factory=list, repr=False)
+    mapping_chains: list[GroupMappingSnapshot] = field(default_factory=list)
     issues: list[ResultIssue] = field(default_factory=list)
     output_path: Path | None = None
     source_preserved: bool = False
@@ -64,6 +103,7 @@ class PageResult:
             "source_preserved": self.source_preserved,
             "stage_failure": self.stage_failure,
             "region_count": len(self.regions),
+            "mapping_chains": [chain.to_manifest() for chain in self.mapping_chains],
         }
 
 

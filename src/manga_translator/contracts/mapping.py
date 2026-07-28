@@ -9,6 +9,40 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+MAPPING_CHAIN_KEYS = (
+    "region",
+    "ocr_record",
+    "request_item",
+    "raw_response_item",
+    "validated_translation",
+    "layout_plan",
+    "render_target",
+)
+
+
+def mapping_chain_template(
+    *,
+    region_key: str | None = None,
+    ocr_record: str | None = None,
+    request_item: str | None = None,
+) -> dict[str, Any]:
+    """Return a complete, null-filled seven-stage mapping chain."""
+    return {
+        "region": region_key,
+        "ocr_record": ocr_record,
+        "request_item": request_item,
+        "raw_response_item": None,
+        "validated_translation": None,
+        "layout_plan": None,
+        "render_target": None,
+    }
+
+
+def normalize_mapping_chain(chain: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Keep the manifest contract stable even when a stage was not reached."""
+    material = chain or {}
+    return {key: material.get(key) for key in MAPPING_CHAIN_KEYS}
+
 
 def source_sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -21,8 +55,14 @@ class MappingIssue:
 
 
 class MappingContractError(ValueError):
-    def __init__(self, issues: Iterable[MappingIssue]) -> None:
+    def __init__(
+        self,
+        issues: Iterable[MappingIssue],
+        *,
+        raw_response_refs: Iterable[RawResponseRef] = (),
+    ) -> None:
         self.issues = tuple(issues)
+        self.raw_response_refs = tuple(dict.fromkeys(raw_response_refs))
         codes = ",".join(issue.code for issue in self.issues)
         super().__init__(f"translation mapping rejected: {codes}")
 
@@ -107,25 +147,24 @@ class ValidatedTranslationBatch:
         response_item = next(
             response for response in self.responses if response.item_id == request_item.item_id
         )
-        return {
-            "region": region_key,
-            "ocr_record": f"ocr:{region_key}",
-            "request_item": request_item.item_id,
-            "raw_response_item": {
-                "item_id": response_item.item_id,
-                "response_index": response_item.response_index,
-                "artifact": (
-                    response_item.raw_response_ref.to_dict()
-                    if response_item.raw_response_ref is not None
-                    else None
-                ),
-            },
-            "validated_translation": hashlib.sha256(
-                response_item.translation.encode("utf-8")
-            ).hexdigest(),
-            "layout_plan": None,
-            "render_target": None,
+        chain = mapping_chain_template(
+            region_key=region_key,
+            ocr_record=f"ocr:{region_key}",
+            request_item=request_item.item_id,
+        )
+        chain["raw_response_item"] = {
+            "item_id": response_item.item_id,
+            "response_index": response_item.response_index,
+            "artifact": (
+                response_item.raw_response_ref.to_dict()
+                if response_item.raw_response_ref is not None
+                else None
+            ),
         }
+        chain["validated_translation"] = hashlib.sha256(
+            response_item.translation.encode("utf-8")
+        ).hexdigest()
+        return chain
 
 
 def build_request_map(
@@ -256,7 +295,10 @@ def validate_response_items(
     if issues or len(responses) != len(request.items):
         if not issues:
             issues.append(MappingIssue("invalid_response_items", {}))
-        raise MappingContractError(issues)
+        raise MappingContractError(
+            issues,
+            raw_response_refs=([raw_response_ref] if raw_response_ref is not None else []),
+        )
 
     response_by_id = {item.item_id: item for item in responses}
     ordered = tuple(response_by_id[item.item_id] for item in request.items)
@@ -303,7 +345,14 @@ def bind_validated_responses(
             )
         )
     if issues:
-        raise MappingContractError(issues)
+        raise MappingContractError(
+            issues,
+            raw_response_refs=(
+                response.raw_response_ref
+                for response in material
+                if response.raw_response_ref is not None
+            ),
+        )
     ordered = tuple(response_by_id[item.item_id] for item in request.items)
     return ValidatedTranslationBatch(request=request, responses=ordered)
 

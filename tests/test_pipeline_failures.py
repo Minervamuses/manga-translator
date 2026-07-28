@@ -15,7 +15,12 @@ from manga_translator.config import AppConfig, OpenRouterConfig, PathsConfig
 from manga_translator.detector import DetectionResult, TextGroup, TextRegion
 from manga_translator.image_io import ImageEncodeError, ImageWriteError
 from manga_translator.pipeline import _translate_groups
-from manga_translator.result import BatchResult, PageResult, ResultIssue
+from manga_translator.result import (
+    BatchResult,
+    GroupMappingSnapshot,
+    PageResult,
+    ResultIssue,
+)
 
 
 def _config(tmp_path: Path) -> AppConfig:
@@ -115,6 +120,79 @@ def test_second_page_failure_is_isolated_and_manifest_is_partial(tmp_path, monke
     assert [page["page_id"] for page in manifest["pages"]] == ["page-id-1", "page-id-2"]
     assert manifest["pages"][1]["source_preserved"] is True
     assert manifest["pages"][1]["output_path"] == str(failed_output)
+
+
+def test_normal_batch_manifest_publishes_traceable_mapping_chain_without_debug(
+    tmp_path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    source = config.paths.input_dir / "page.png"
+    _write_source(source)
+    raw_response = b'{"provider":"response"}'
+    raw_hash = hashlib.sha256(raw_response).hexdigest()
+    relative_path = f"artifacts/translation-responses/{raw_hash}.json"
+    artifact_path = config.paths.output_dir / relative_path
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(raw_response)
+    group = TextGroup(
+        id="g001",
+        region_ids=["r001"],
+        bbox=(1, 1, 8, 8),
+        vertical=True,
+        translation="你好",
+        translation_valid=True,
+        status="ready",
+        mapping_region_key="group:stable",
+        mapping_chain={
+            "region": "group:stable",
+            "ocr_record": "ocr:group:stable",
+            "request_item": "R-test:T0000",
+            "raw_response_item": {
+                "item_id": "R-test:T0000",
+                "response_index": 0,
+                "artifact": {
+                    "sha256": raw_hash,
+                    "media_type": "application/json",
+                    "size_bytes": len(raw_response),
+                    "relative_path": relative_path,
+                },
+            },
+            "validated_translation": hashlib.sha256("你好".encode()).hexdigest(),
+            "layout_plan": "layout:g001",
+            "render_target": "render:g001",
+        },
+    )
+    page = _success_page(source, "page-id")
+    page.mapping_chains = [GroupMappingSnapshot.from_group(group)]
+    monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
+    monkeypatch.setattr(
+        pipeline_module,
+        "process_single_page",
+        lambda *_args, **_kwargs: page,
+    )
+
+    result = pipeline_module.run_pipeline(config)
+
+    assert result.status == "succeeded"
+    manifest = json.loads((config.paths.output_dir / "batch-manifest.json").read_text("utf-8"))
+    mapping = manifest["pages"][0]["mapping_chains"][0]
+    assert mapping["group_id"] == "g001"
+    assert mapping["group_status"] == "ready"
+    assert mapping["translation_valid"] is True
+    assert list(mapping["chain"]) == [
+        "region",
+        "ocr_record",
+        "request_item",
+        "raw_response_item",
+        "validated_translation",
+        "layout_plan",
+        "render_target",
+    ]
+    artifact = mapping["chain"]["raw_response_item"]["artifact"]
+    persisted = config.paths.output_dir / artifact["relative_path"]
+    assert persisted.read_bytes() == raw_response
+    assert hashlib.sha256(persisted.read_bytes()).hexdigest() == artifact["sha256"]
+    assert not (config.paths.output_dir / "debug").exists()
 
 
 def test_allow_partial_changes_only_cli_exit_code(tmp_path, monkeypatch) -> None:

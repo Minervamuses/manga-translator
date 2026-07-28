@@ -758,6 +758,7 @@ async def _repair_one_response(
 ) -> ResponseItem:
     resolved_ids = _normalized_item_ids(texts, item_ids)
     invalid = previous_invalid
+    last_raw_response_ref: RawResponseRef | None = None
     for _attempt in range(cfg.content_retries + 1):
         prompt = _build_prompt_with_context(
             texts,
@@ -780,6 +781,7 @@ async def _repair_one_response(
             expected_ids=[resolved_ids[index]],
             source_hashes=[source_sha256(texts[index])],
         ).responses[0]
+        last_raw_response_ref = response.raw_response_ref
         candidate = sanitize_translation_text(response.translation, source=texts[index])
         validation = validate_translation(texts[index], candidate, cfg)
         if validation.valid:
@@ -791,7 +793,10 @@ async def _repair_one_response(
                 "translation_validation_failed",
                 {"id": resolved_ids[index]},
             )
-        ]
+        ],
+        raw_response_refs=(
+            [last_raw_response_ref] if last_raw_response_ref is not None else []
+        ),
     )
 
 

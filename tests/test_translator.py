@@ -225,6 +225,42 @@ def test_malformed_success_response_is_persisted_before_json_decode(
     assert artifact.read_bytes() == raw
 
 
+def test_exact_id_failure_exposes_the_persisted_batch_artifact(
+    tmp_path, monkeypatch
+) -> None:
+    sources = ["一つ", "二つ"]
+    item_ids = ["R-invalid:T0000", "R-invalid:T0001"]
+    raw = _provider_response_bytes(
+        [
+            {
+                "id": item_ids[0],
+                "source_sha256": source_sha256(sources[0]),
+                "translation": "一個",
+            },
+            {
+                "id": item_ids[0],
+                "source_sha256": source_sha256(sources[0]),
+                "translation": "覆寫",
+            },
+        ]
+    )
+    _install_response_transport(monkeypatch, [raw])
+
+    with pytest.raises(MappingContractError) as captured:
+        translate_batch_mapped(
+            sources,
+            cfg(validate_translation=False),
+            item_ids=item_ids,
+            artifact_root=tmp_path,
+        )
+
+    assert len(captured.value.raw_response_refs) == 1
+    reference = captured.value.raw_response_refs[0]
+    assert reference.sha256 == hashlib.sha256(raw).hexdigest()
+    assert reference.relative_path is not None
+    assert (tmp_path / reference.relative_path).read_bytes() == raw
+
+
 def test_single_item_repair_accepts_dict_even_when_model_reuses_original_id() -> None:
     source_hash = source_sha256("心配するな")
     response = json.dumps(

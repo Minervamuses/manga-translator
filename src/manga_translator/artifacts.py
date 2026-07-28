@@ -9,6 +9,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .contracts.mapping import normalize_mapping_chain
 from .image_io import write_image
 
 
@@ -67,7 +68,7 @@ def _group_to_dict(group: Any) -> dict[str, Any]:
         "layout_mode": getattr(group, "layout_mode", ""),
         "layout_info": getattr(group, "layout_info", {}),
         "mapping_region_key": getattr(group, "mapping_region_key", ""),
-        "mapping_chain": getattr(group, "mapping_chain", {}),
+        "mapping_chain": normalize_mapping_chain(getattr(group, "mapping_chain", {})),
     }
 
 

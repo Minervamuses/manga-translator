@@ -4,30 +4,6 @@ channels:
   - defaults
 dependencies:
   - python=3.11
-  - pip>=24
-  - setuptools>=69
-  - wheel
-  - numpy>=1.26,<2
-  - requests>=2.32
-  - shapely>=2.0
-  - pyclipper>=1.3
-  - pillow>=10.2
-  - httpx>=0.27
-  - pydantic>=2.6,<3
-  - pydantic-settings>=2.2
-  - rich>=13.7
-  - pyyaml>=6.0
-  - click>=8.1
-  - pytest>=8
-  - pip:
-      # RTX 50 系列（sm_120）使用 CUDA 12.8 wheel。專案不建立 venv，
-      # 下列套件全部安裝在同一個 Conda 環境中。
-      - --extra-index-url https://download.pytorch.org/whl/cu128
-      - torch==2.7.1+cu128
-      - torchvision==0.22.1+cu128
-      - opencv-python-headless==4.9.0.80
-      # OCR 直接使用新版 Transformers 相容載入器，不再依賴舊版
-      # manga-ocr 的 AutoFeatureExtractor 實作。
-      - transformers>=4.45,<6
-      - fugashi>=1.3,<2
-      - unidic-lite>=1.0.8,<2
+  # Conda only owns the interpreter and the approved Python package manager.
+  # Project/runtime dependencies are resolved from poetry.lock by Poetry.
+  - poetry=2.2.1

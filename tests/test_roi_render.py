@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import cv2
 import numpy as np
 
@@ -112,6 +114,42 @@ def test_post_render_containment_failure_rolls_back_inpaint() -> None:
 
     assert not result.outcomes[0].committed
     assert "post-render alpha escaped" in result.outcomes[0].reason
+    assert np.array_equal(result.image, original)
+
+
+def test_empty_layout_or_render_alpha_never_commits_inpaint() -> None:
+    original = np.full((220, 260, 3), 245, dtype=np.uint8)
+    request = _request(60, 50)
+    x, y, width, height = request.roi_bbox
+    original[y : y + height, x : x + width][request.inpaint_mask > 0] = 0
+    empty_layout = replace(
+        request,
+        layout=replace(request.layout, alpha=np.zeros_like(request.layout.alpha)),
+    )
+
+    preflight = render_page_atomic(original, (empty_layout,))
+    assert not preflight.outcomes[0].committed
+    assert preflight.outcomes[0].reason == "empty_layout_alpha"
+    assert np.array_equal(preflight.image, original)
+
+    def transparent_renderer(_layout, _style):
+        return np.zeros((height, width, 4), dtype=np.uint8)
+
+    postflight = render_page_atomic(original, (request,), renderer=transparent_renderer)
+    assert not postflight.outcomes[0].committed
+    assert "renderer returned empty alpha" in postflight.outcomes[0].reason
+    assert np.array_equal(postflight.image, original)
+
+
+def test_empty_inpaint_mask_does_not_add_unpaired_translation() -> None:
+    original = np.full((220, 260, 3), 245, dtype=np.uint8)
+    request = _request(60, 50)
+    request = replace(request, inpaint_mask=np.zeros_like(request.inpaint_mask))
+
+    result = render_page_atomic(original, (request,))
+
+    assert not result.outcomes[0].committed
+    assert result.outcomes[0].reason == "empty_inpaint_mask"
     assert np.array_equal(result.image, original)
 
 

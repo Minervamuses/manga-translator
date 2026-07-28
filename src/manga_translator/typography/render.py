@@ -144,6 +144,10 @@ def atomic_inpaint_render(
         or request.layout.alpha.shape != expected_shape
     ):
         return AtomicRenderOutcome(False, request.roi_bbox, 0, 0, "roi_shape_mismatch")
+    if not np.any(request.inpaint_mask):
+        return AtomicRenderOutcome(False, request.roi_bbox, 0, 0, "empty_inpaint_mask")
+    if not np.any(request.layout.alpha):
+        return AtomicRenderOutcome(False, request.roi_bbox, 0, 0, "empty_layout_alpha")
     if not artifacts.accepts_alpha(request.layout.alpha):
         return AtomicRenderOutcome(False, request.roi_bbox, 0, 0, "pre_render_containment")
 
@@ -153,6 +157,8 @@ def atomic_inpaint_render(
         layer = renderer(request.layout, request.style)
         if layer.shape != (height, width, 4):
             raise ValueError("renderer returned non-ROI RGBA layer")
+        if not np.any(layer[:, :, 3]):
+            raise ValueError("renderer returned empty alpha")
         if not artifacts.accepts_alpha(layer[:, :, 3]):
             raise ValueError("post-render alpha escaped render mask")
         composed = _composite_bgr(repaired, layer)

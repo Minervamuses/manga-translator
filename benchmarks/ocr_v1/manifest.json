@@ -1,0 +1,25 @@
+{
+  "schema_version": "ocr_v1.manifest",
+  "status": "blocked",
+  "normalization_revision": "nfkc-strip-whitespace-v1",
+  "cer_denominator": "sum_normalized_ground_truth_codepoints_for_text_crops",
+  "minimums": {
+    "verified_text_crops": 300,
+    "verified_no_text_crops": 300,
+    "titles": 3,
+    "split_unit": "title"
+  },
+  "counts": {
+    "verified_text_crops": 0,
+    "verified_no_text_crops": 0,
+    "titles": 0
+  },
+  "items": [],
+  "blockers": [
+    "verified title-held-out text crop corpus unavailable",
+    "verified no-text art crop corpus unavailable",
+    "target GPU throughput run unavailable",
+    "production calibration artifact unavailable"
+  ],
+  "orchestrator_switch": "not_performed"
+}

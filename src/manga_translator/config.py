@@ -161,7 +161,6 @@ class TypesettingConfig(BaseModel):
     bubble_search_max_px: int = Field(default=720, ge=32, le=4096)
     bubble_inner_margin_ratio: float = Field(default=0.07, ge=0.0, le=0.5)
     vertical_char_spacing: float = Field(default=1.03, ge=0.75, le=2.0)
-    balance_columns: bool = True
     min_char_spacing_ratio: float = Field(default=0.88, ge=0.5, le=2.0)
     max_char_spacing_ratio: float = Field(default=1.32, ge=0.7, le=3.0)
     min_column_spacing_ratio: float = Field(default=0.92, ge=0.5, le=3.0)
@@ -170,8 +169,6 @@ class TypesettingConfig(BaseModel):
     reject_unreadable_layout: bool = True
     outline_width: int = Field(default=0, ge=0, le=20)
     outline_color: tuple[int, int, int] | str = "auto"
-    min_gap_px: int = Field(default=4, ge=0, le=100)
-    use_font_metrics: bool = True
     inner_padding: int = Field(default=2, ge=0, le=100)
     replace_unsupported_glyphs: bool = True
 

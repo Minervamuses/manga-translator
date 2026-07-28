@@ -1,0 +1,79 @@
+{
+  "schema_version": "visual_report.v1",
+  "status": "blocked",
+  "automated_status": "failed",
+  "page_count": 0,
+  "group_count": 0,
+  "hard_metrics": {
+    "five_page_corpus": false,
+    "mapping_100_percent": false,
+    "missing_glyphs_zero": false,
+    "clreq_hard_violations_zero": false,
+    "accepted_collisions_zero": false,
+    "outside_roi_changes_zero": false,
+    "alpha_containment_at_least_0_995": false
+  },
+  "distributions": {
+    "alpha_containment": {
+      "p05": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "worst": null
+    },
+    "font_size_ratio": {
+      "p05": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "worst": null
+    },
+    "center_offset_px": {
+      "p05": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "worst": null
+    },
+    "whitespace_ratio": {
+      "p05": 0.0,
+      "p50": 0.0,
+      "p95": 0.0,
+      "worst": null
+    }
+  },
+  "manual_review": {
+    "status": "blocked",
+    "verified_groups": 0,
+    "required_groups": 30,
+    "critical_regressions": [],
+    "comparisons": {
+      "readability": {
+        "legacy_p50": 0.0,
+        "new_p50": 0.0
+      },
+      "font_size": {
+        "legacy_p50": 0.0,
+        "new_p50": 0.0
+      },
+      "spacing": {
+        "legacy_p50": 0.0,
+        "new_p50": 0.0
+      },
+      "position": {
+        "legacy_p50": 0.0,
+        "new_p50": 0.0
+      },
+      "font_style": {
+        "legacy_p50": 0.0,
+        "new_p50": 0.0
+      },
+      "color_stroke": {
+        "legacy_p50": 0.0,
+        "new_p50": 0.0
+      },
+      "overall_preference": {
+        "legacy_p50": 0.0,
+        "new_p50": 0.0
+      }
+    }
+  },
+  "groups": []
+}

@@ -1,0 +1,100 @@
+{
+  "schema_version": "visual_v1.manifest",
+  "status": "blocked",
+  "page_count": 5,
+  "group_count": 38,
+  "pages": [
+    {
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "source_image": "samples/before_fix/0188_ive_hwa002.jpg",
+      "groups": 11,
+      "verified_groups": 2,
+      "artifact_status": "pending_raqm_run",
+      "expected_artifacts": {
+        "source_overlay": "pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/source_overlay.png",
+        "safe_mask": "pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/safe_mask.png",
+        "style_fingerprint": "pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/style_fingerprint.json",
+        "shaped_runs": "pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/shaped_runs.json",
+        "layout_alpha": "pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/layout_alpha.png",
+        "inpainted_roi": "pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/inpainted_roi.png",
+        "final_preview": "pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+        "metrics": "pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/metrics.json"
+      }
+    },
+    {
+      "page_id": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+      "source_image": "samples/before_fix/0211_t_11takamatic006.jpg",
+      "groups": 7,
+      "verified_groups": 0,
+      "artifact_status": "pending_raqm_run",
+      "expected_artifacts": {
+        "source_overlay": "pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/source_overlay.png",
+        "safe_mask": "pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/safe_mask.png",
+        "style_fingerprint": "pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/style_fingerprint.json",
+        "shaped_runs": "pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/shaped_runs.json",
+        "layout_alpha": "pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/layout_alpha.png",
+        "inpainted_roi": "pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/inpainted_roi.png",
+        "final_preview": "pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/final_preview.png",
+        "metrics": "pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/metrics.json"
+      }
+    },
+    {
+      "page_id": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
+      "source_image": "samples/before_fix/__#Uf008_#Ueff9#Ue7cc (3).jpg",
+      "groups": 7,
+      "verified_groups": 0,
+      "artifact_status": "pending_raqm_run",
+      "expected_artifacts": {
+        "source_overlay": "pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/source_overlay.png",
+        "safe_mask": "pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/safe_mask.png",
+        "style_fingerprint": "pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/style_fingerprint.json",
+        "shaped_runs": "pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/shaped_runs.json",
+        "layout_alpha": "pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/layout_alpha.png",
+        "inpainted_roi": "pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/inpainted_roi.png",
+        "final_preview": "pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/final_preview.png",
+        "metrics": "pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/metrics.json"
+      }
+    },
+    {
+      "page_id": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+      "source_image": "samples/before_fix/__#Uf008_#Ueff9#Ue7cc (4).jpg",
+      "groups": 6,
+      "verified_groups": 0,
+      "artifact_status": "pending_raqm_run",
+      "expected_artifacts": {
+        "source_overlay": "pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/source_overlay.png",
+        "safe_mask": "pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/safe_mask.png",
+        "style_fingerprint": "pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/style_fingerprint.json",
+        "shaped_runs": "pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/shaped_runs.json",
+        "layout_alpha": "pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/layout_alpha.png",
+        "inpainted_roi": "pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/inpainted_roi.png",
+        "final_preview": "pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/final_preview.png",
+        "metrics": "pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/metrics.json"
+      }
+    },
+    {
+      "page_id": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+      "source_image": "samples/before_fix/__#Uf008_#Ueff9#Ue7cc (5).jpg",
+      "groups": 7,
+      "verified_groups": 0,
+      "artifact_status": "pending_raqm_run",
+      "expected_artifacts": {
+        "source_overlay": "pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/source_overlay.png",
+        "safe_mask": "pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/safe_mask.png",
+        "style_fingerprint": "pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/style_fingerprint.json",
+        "shaped_runs": "pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/shaped_runs.json",
+        "layout_alpha": "pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/layout_alpha.png",
+        "inpainted_roi": "pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/inpainted_roi.png",
+        "final_preview": "pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/final_preview.png",
+        "metrics": "pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/metrics.json"
+      }
+    }
+  ],
+  "blockers": [
+    "local_pillow_raqm_unavailable",
+    "new_visual_artifacts_not_generated",
+    "manual_blind_review_0_of_30"
+  ],
+  "engine_switch": "not_performed",
+  "report": "report.json"
+}

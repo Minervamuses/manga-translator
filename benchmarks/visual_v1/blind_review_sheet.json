@@ -1,0 +1,1487 @@
+{
+  "schema_version": "blind_review.v1",
+  "rows": [
+    {
+      "blind_id": "abf231334ed9a845",
+      "page_id": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+      "region_key": "01b5cbea3c23:g000",
+      "preview_a": "benchmarks/regression_v032/overlays/0211_t_11takamatic006.overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "86ccbc9ade61ac00",
+      "page_id": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+      "region_key": "01b5cbea3c23:g001",
+      "preview_a": "benchmarks/visual_v1/pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0211_t_11takamatic006.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "6dd950056021738a",
+      "page_id": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+      "region_key": "01b5cbea3c23:g002",
+      "preview_a": "benchmarks/visual_v1/pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0211_t_11takamatic006.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "77cb8eb4e9160faa",
+      "page_id": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+      "region_key": "01b5cbea3c23:g003",
+      "preview_a": "benchmarks/visual_v1/pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0211_t_11takamatic006.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "75f56ff13733cb22",
+      "page_id": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+      "region_key": "01b5cbea3c23:g004",
+      "preview_a": "benchmarks/visual_v1/pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0211_t_11takamatic006.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "31881ea49cafc2fe",
+      "page_id": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+      "region_key": "01b5cbea3c23:g005",
+      "preview_a": "benchmarks/visual_v1/pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0211_t_11takamatic006.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "9ab13c95691a9a5a",
+      "page_id": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+      "region_key": "01b5cbea3c23:g006",
+      "preview_a": "benchmarks/visual_v1/pages/01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0211_t_11takamatic006.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "cdfb8a7a49bccabc",
+      "page_id": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+      "region_key": "0b9dc8fadf8e:g000",
+      "preview_a": "benchmarks/visual_v1/pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (5).overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "798638bb189c6b4c",
+      "page_id": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+      "region_key": "0b9dc8fadf8e:g001",
+      "preview_a": "benchmarks/visual_v1/pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (5).overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "2f1439f801608ba2",
+      "page_id": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+      "region_key": "0b9dc8fadf8e:g002",
+      "preview_a": "benchmarks/visual_v1/pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (5).overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "02b9636abce65e6a",
+      "page_id": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+      "region_key": "0b9dc8fadf8e:g003",
+      "preview_a": "benchmarks/visual_v1/pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (5).overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "cc0bba702bc6b785",
+      "page_id": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+      "region_key": "0b9dc8fadf8e:g004",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (5).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "043b93f1db31b474",
+      "page_id": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+      "region_key": "0b9dc8fadf8e:g005",
+      "preview_a": "benchmarks/visual_v1/pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (5).overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "f7b9dbad6b78b455",
+      "page_id": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+      "region_key": "0b9dc8fadf8e:g006",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (5).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "1599c12cdfa19549",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g000",
+      "preview_a": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "958e67062d4b4d7f",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g001",
+      "preview_a": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "3f8f5c05d12e9366",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g002",
+      "preview_a": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "1310e8a490bace5a",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g003",
+      "preview_a": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "cdef013138648a72",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g004",
+      "preview_a": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "94db67227db60b0a",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g005",
+      "preview_a": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "c08e344994c812cb",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g006",
+      "preview_a": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "6c5fc4169695896b",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g007",
+      "preview_a": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "2004be21b4088aed",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g008",
+      "preview_a": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "4dd3d921697406e2",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g009",
+      "preview_a": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "4deed38769b4b26c",
+      "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "region_key": "5e79409955a1:g010",
+      "preview_a": "benchmarks/visual_v1/pages/5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/0188_ive_hwa002.overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "3c463132fdb018ad",
+      "page_id": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
+      "region_key": "d6a2c70d9472:g000",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (3).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "53241997a6b75b07",
+      "page_id": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
+      "region_key": "d6a2c70d9472:g001",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (3).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "0680b114ecf989e9",
+      "page_id": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
+      "region_key": "d6a2c70d9472:g002",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (3).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "de1f28d6c0a1ebd4",
+      "page_id": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
+      "region_key": "d6a2c70d9472:g003",
+      "preview_a": "benchmarks/visual_v1/pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (3).overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "aa116c39a26f7051",
+      "page_id": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
+      "region_key": "d6a2c70d9472:g004",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (3).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "57bf4ed15ec19386",
+      "page_id": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
+      "region_key": "d6a2c70d9472:g005",
+      "preview_a": "benchmarks/visual_v1/pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/final_preview.png",
+      "preview_b": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (3).overlay.jpg",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "b4894b83f668d517",
+      "page_id": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
+      "region_key": "d6a2c70d9472:g006",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (3).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "7a434c53d0fbf675",
+      "page_id": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+      "region_key": "f81020c46353:g000",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (4).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "2b7f21493a764045",
+      "page_id": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+      "region_key": "f81020c46353:g001",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (4).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "16da392db34bc0c9",
+      "page_id": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+      "region_key": "f81020c46353:g002",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (4).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "578dfc6102b72a11",
+      "page_id": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+      "region_key": "f81020c46353:g003",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (4).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "f64161f4b03c8e57",
+      "page_id": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+      "region_key": "f81020c46353:g004",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (4).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    },
+    {
+      "blind_id": "b544a04bdc730df9",
+      "page_id": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+      "region_key": "f81020c46353:g005",
+      "preview_a": "benchmarks/regression_v032/overlays/__#Uf008_#Ueff9#Ue7cc (4).overlay.jpg",
+      "preview_b": "benchmarks/visual_v1/pages/f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d/final_preview.png",
+      "criteria": {
+        "readability": {
+          "a": null,
+          "b": null
+        },
+        "font_size": {
+          "a": null,
+          "b": null
+        },
+        "spacing": {
+          "a": null,
+          "b": null
+        },
+        "position": {
+          "a": null,
+          "b": null
+        },
+        "font_style": {
+          "a": null,
+          "b": null
+        },
+        "color_stroke": {
+          "a": null,
+          "b": null
+        },
+        "overall_preference": {
+          "a": null,
+          "b": null
+        }
+      },
+      "critical_regression": null,
+      "reviewer": null
+    }
+  ]
+}

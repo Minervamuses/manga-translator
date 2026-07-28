@@ -184,8 +184,6 @@ typesetting:
   font_preserve_floor_scale: 0.92
   min_font_scale: 0.85
   reject_unreadable_layout: true
-  balance_columns: true
-  clip_render: false
 ```
 
 0.3.2 先從原文字 mask 重建字級、欄數、中心與佔用範圍，再利用同一字幕框的安全留白。原尺寸附近能排下時不會選小字；低於可讀門檻則保留日文，不先擦成空白。

@@ -1,0 +1,34 @@
+{
+  "gate": "G3",
+  "name": "OCR quality and throughput gate",
+  "date": "2026-07-28",
+  "branch": "reapir_p3",
+  "implementation_head": "93de6f1",
+  "status": "blocked",
+  "traceability": {
+    "model_revision": "aa6573bd10b0d446cbf622e29c3e084914df9741",
+    "transformers": "5.14.1",
+    "preprocess_version": "awaiting production calibration artifact",
+    "calibration_artifact": null,
+    "ocr_manifest": "benchmarks/ocr_v1/manifest.json",
+    "calibration_manifest": "assets/calibration/ocr/manifest.json"
+  },
+  "replay_contracts": {
+    "ocr_error": "runtime exception and staged view result are persisted independently",
+    "uncertain": "stages/ocr.py records every attempted view and provisional score",
+    "no_text": "ocr_confidence.py decision includes no_text_probability and artifact fingerprint"
+  },
+  "automated_tests": {
+    "result": "238 passed, 1 skipped, 2 deselected",
+    "ruff": "passed",
+    "compileall": "passed"
+  },
+  "blockers": [
+    "human-labelled calibration data unavailable",
+    "title-held-out corpus has 0/300 verified text and 0/300 verified no-text crops",
+    "target GPU batching throughput comparison unavailable"
+  ],
+  "acceptance_profile_switch": "not_performed",
+  "orchestrator_switch": "not_performed",
+  "batch_runtime_retained": true
+}

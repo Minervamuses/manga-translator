@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from manga_translator.domain.ids import page_id_from_bytes
-from manga_translator.domain.models import ArtifactRef, PageDocument, SourcePage
+from manga_translator.domain.models import (
+    ArtifactRef,
+    EntityRecord,
+    PageDocument,
+    SourcePage,
+)
 from manga_translator.storage.artifact_store import (
     ArtifactIntegrityError,
     ArtifactStore,
@@ -310,6 +315,49 @@ def test_page_document_rejects_corrupt_member_artifact(tmp_path: Path) -> None:
             jobs.store_page_document("job-1", _document(source))
 
         assert jobs.connection.execute("SELECT count(*) FROM pages").fetchone()[0] == 0
+
+
+def test_mapping_artifact_is_a_verified_page_document_member(tmp_path: Path) -> None:
+    artifacts = ArtifactStore(tmp_path / "artifacts")
+    with JobStore(tmp_path / "jobs.sqlite3", artifacts) as jobs:
+        jobs.create_job("job-1")
+        source = _store_source(jobs)
+        mapping_artifact = jobs.store_artifact(
+            b'{"layout":"plan"}',
+            media_type="application/json",
+            owner_type="temporary",
+            owner_id="mapping-plan",
+        )
+        jobs.connection.execute(
+            "DELETE FROM artifact_references WHERE owner_type='temporary'"
+        )
+        document = PageDocument(
+            source=_document(source).source,
+            entities=(
+                EntityRecord(
+                    entity_id="mapping-1",
+                    kind="mapping_snapshot",
+                    canonical_name="ready",
+                    attributes={
+                        "chain": {
+                            "layout_plan": {
+                                "artifact": mapping_artifact.model_dump(mode="json")
+                            }
+                        }
+                    },
+                ),
+            ),
+        )
+        jobs.store_page_document("job-1", document)
+
+        jobs.gc()
+        assert artifacts.exists(
+            mapping_artifact.sha256,
+            expected_size=mapping_artifact.size_bytes,
+        )
+        artifacts.path_for(mapping_artifact.sha256).unlink()
+        with pytest.raises(MissingArtifactError, match="has no durable bytes"):
+            jobs.load_page_document(job_id="job-1", page_id=document.source.page_id)
 
 
 def test_gc_removes_unreferenced_records_and_orphan_files(tmp_path: Path) -> None:

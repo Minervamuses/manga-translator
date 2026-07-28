@@ -270,3 +270,31 @@ def test_issue_scope_must_belong_to_the_document() -> None:
                 ),
             ),
         )
+
+
+def test_mapping_snapshot_rejects_invalid_nested_artifact_reference() -> None:
+    document = _document()
+    with pytest.raises(ValidationError, match="invalid artifact reference"):
+        PageDocument(
+            source=document.source,
+            region_identities=document.region_identities,
+            region_revisions=document.region_revisions,
+            entities=(
+                EntityRecord(
+                    entity_id="mapping-1",
+                    kind="mapping_snapshot",
+                    canonical_name="ready",
+                    attributes={
+                        "chain": {
+                            "layout_plan": {
+                                "artifact": {
+                                    "sha256": "not-a-sha256",
+                                    "media_type": "application/json",
+                                    "size_bytes": 10,
+                                }
+                            }
+                        }
+                    },
+                ),
+            ),
+        )

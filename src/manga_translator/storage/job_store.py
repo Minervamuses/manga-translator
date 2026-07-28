@@ -245,6 +245,7 @@ class JobStore:
             *(record.raw_response_ref for record in document.translations),
             *(plan.font_ref for plan in document.layout_plans),
             *(plan.alpha_mask_ref for plan in document.layout_plans),
+            *document.mapping_artifact_references(),
         )
         for reference in references:
             prior_size = members.setdefault(reference.sha256, reference.size_bytes)
@@ -344,9 +345,11 @@ class JobStore:
             raise MissingArtifactError(
                 f"PageDocument artifact {row[0]} is not registered"
             )
-        return parse_document(
+        document = parse_document(
             self.artifacts.read_bytes(str(row[0]), expected_size=int(row[1]))
         )
+        self._require_page_document_members(self.connection, document)
+        return document
 
     def list_pages(self, *, job_id: str, page_id: str | None = None) -> list[sqlite3.Row]:
         if page_id is None:

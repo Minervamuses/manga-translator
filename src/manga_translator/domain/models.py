@@ -285,6 +285,40 @@ class PageDocument(DomainModel):
     issues: tuple[Issue, ...] = ()
     entities: tuple[EntityRecord, ...] = ()
 
+    def mapping_artifact_references(self) -> tuple[ArtifactRef, ...]:
+        references: list[ArtifactRef] = []
+
+        def visit(value: Any, *, entity_id: str) -> None:
+            if isinstance(value, dict):
+                artifact_keys = {"sha256", "media_type", "size_bytes"}
+                if artifact_keys <= set(value):
+                    try:
+                        references.append(
+                            ArtifactRef(
+                                sha256=value["sha256"],
+                                media_type=value["media_type"],
+                                size_bytes=value["size_bytes"],
+                            )
+                        )
+                    except (TypeError, ValueError) as error:
+                        raise ValueError(
+                            f"mapping entity {entity_id} has an invalid artifact reference"
+                        ) from error
+                for child in value.values():
+                    visit(child, entity_id=entity_id)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child, entity_id=entity_id)
+
+        for entity in self.entities:
+            if entity.kind != "mapping_snapshot":
+                continue
+            chain = entity.attributes.get("chain")
+            if not isinstance(chain, dict):
+                raise TypeError(f"mapping entity {entity.entity_id} has no mapping chain")
+            visit(chain, entity_id=entity.entity_id)
+        return tuple(references)
+
     @model_validator(mode="after")
     def validate_references_and_geometry(self) -> PageDocument:
         identities = {identity.region_id: identity for identity in self.region_identities}
@@ -350,4 +384,5 @@ class PageDocument(DomainModel):
                     raise ValueError("translation issue references a different source page")
                 if issue.region_id is not None and issue.region_id != translation.region_id:
                     raise ValueError("translation issue references a different region")
+        self.mapping_artifact_references()
         return self

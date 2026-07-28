@@ -81,7 +81,7 @@ from .stages.base import (
     StageInputs,
     StageOutputs,
 )
-from .stages.runner import StageOutcome, StageRunner
+from .stages.runner import StageFailureContext, StageOutcome, StageRunner
 from .stages.state import PipelineStageState, decode_pipeline_state, encode_pipeline_state
 from .storage import ArtifactStore, JobStore
 from .translator import (
@@ -1379,7 +1379,6 @@ def _group_failure_issues(
     failure_kinds = {
         "ocr_failed": ("ocr_group_failed", "ocr"),
         "translation_rejected": ("translation_rejected", "translation"),
-        "render_collision_rejected": ("render_collision_rejected", "layout"),
         "layout_rejected": ("layout_rejected", "layout"),
         "layout_collision_rejected": ("layout_collision_rejected", "layout"),
     }
@@ -2035,6 +2034,153 @@ def _page_result_from_stage_outcomes(
     )
 
 
+def _partial_state_after_failure(
+    failure: StageFailureContext,
+    store: JobStore,
+) -> PipelineStageState | None:
+    for stage in (
+        StageName.INPAINT_RENDER,
+        StageName.LAYOUT,
+        StageName.TRANSLATE,
+        StageName.OCR,
+        StageName.ORDER,
+        StageName.SAFE_REGION,
+        StageName.STYLE,
+        StageName.DETECT,
+    ):
+        outcome = failure.partial_outcomes.get(stage)
+        if outcome is not None:
+            return decode_pipeline_state(
+                outcome.outputs,
+                expected_stage=stage,
+                read_bytes=store.artifacts.read_bytes,
+            )
+    return None
+
+
+def _failure_result_issue(
+    *,
+    page_id: str,
+    failure: StageFailureContext,
+    error: Exception,
+) -> ResultIssue:
+    details: dict[str, object] = {"exception_type": type(error).__name__}
+    raw_response_refs = getattr(error, "raw_response_refs", ())
+    if raw_response_refs:
+        details["raw_response_artifacts"] = [
+            reference.to_dict() for reference in raw_response_refs
+        ]
+    return ResultIssue(
+        code=f"{failure.stage.value}_failed",
+        message=str(error),
+        stage=failure.stage.value,
+        page_id=page_id,
+        details=details,
+    )
+
+
+def _page_result_from_stage_failure(
+    *,
+    image_path: Path,
+    page_id: str,
+    store: JobStore,
+    failure: StageFailureContext,
+    error: Exception,
+) -> PageResult:
+    state = _partial_state_after_failure(failure, store)
+    issue = _failure_result_issue(page_id=page_id, failure=failure, error=error)
+    if state is None:
+        return PageResult(
+            page_id=page_id,
+            source_path=image_path,
+            status=("blocked" if isinstance(error, OCRInitializationError) else "failed"),
+            issues=[issue],
+            stage_failure=failure.stage.value,
+        )
+    detection = state.detection
+    groups = list(detection.groups)
+    source_image = _decode_source_image(
+        store,
+        _source_ref_from_extras(state.extras),
+    )
+    return PageResult(
+        page_id=page_id,
+        source_path=image_path,
+        status=("blocked" if isinstance(error, OCRInitializationError) else "failed"),
+        source_image=source_image,
+        regions=detection.regions_post,
+        ocr_results=[group.ocr_text for group in groups],
+        translations=[group.translation for group in groups],
+        groups=groups,
+        mapping_chains=(
+            _mapping_snapshots_from_extras(state.extras)
+            or [GroupMappingSnapshot.from_group(group) for group in groups]
+        ),
+        issues=[
+            *(
+                ResultIssue(
+                    code=detector_issue.code,
+                    message=detector_issue.message,
+                    stage="detect",
+                    page_id=page_id,
+                    details=detector_issue.details,
+                )
+                for detector_issue in detection.issues
+            ),
+            issue,
+        ],
+        stage_failure=failure.stage.value,
+    )
+
+
+def _document_with_stage_failure(
+    *,
+    previous: PageDocument,
+    page: PageResult,
+    store: JobStore,
+    job_id: str,
+    failure: StageFailureContext,
+) -> PageDocument:
+    outcomes = dict(failure.partial_outcomes)
+    if StageName.DETECT in outcomes:
+        document = _document_from_page_result(
+            previous=previous,
+            page=page,
+            outcomes=outcomes,
+            store=store,
+            job_id=job_id,
+        )
+    else:
+        failure_issue = _typed_issue(page.issues[-1])
+        retained_entities = tuple(
+            entity for entity in previous.entities if entity.entity_id != "_page_result"
+        )
+        document = previous.model_copy(
+            update={
+                "issues": (*previous.issues, failure_issue),
+                "entities": retained_entities
+                + (
+                    EntityRecord(
+                        entity_id="_page_result",
+                        kind="pipeline_result",
+                        canonical_name=page.status,
+                        attributes={"stage_failure": page.stage_failure},
+                    ),
+                ),
+            }
+        )
+    typed_failure = _typed_issue(page.issues[-1])
+    failed_record = StageRecord(
+        stage=failure.stage,
+        status=StageStatus.FAILED,
+        fingerprint=failure.fingerprint,
+        issues=(typed_failure,),
+    )
+    return document.model_copy(
+        update={"stages": (*_stage_records(outcomes), failed_record)}
+    )
+
+
 def _dump_debug_artifacts(
     image_path: Path,
     config: AppConfig,
@@ -2097,7 +2243,7 @@ def _initial_page_document(
 
 
 def _typed_issue(issue: ResultIssue) -> Issue:
-    stage = {
+    stage_alias = {
         "decode": StageName.SOURCE,
         "detection": StageName.DETECT,
         "ocr": StageName.OCR,
@@ -2105,12 +2251,17 @@ def _typed_issue(issue: ResultIssue) -> Issue:
         "layout": StageName.LAYOUT,
         "encode": StageName.ENCODE,
         "output": StageName.ENCODE,
-    }.get(issue.stage, StageName.SOURCE)
+    }
+    try:
+        stage = StageName(issue.stage)
+    except ValueError:
+        stage = stage_alias.get(issue.stage, StageName.SOURCE)
     code = {
         StageName.DETECT: IssueCode.DETECTOR_FAILED,
         StageName.OCR: IssueCode.OCR_FAILED,
         StageName.TRANSLATE: IssueCode.TRANSLATION_FAILED,
         StageName.LAYOUT: IssueCode.LAYOUT_FAILED,
+        StageName.INPAINT_RENDER: IssueCode.RENDER_FAILED,
         StageName.ENCODE: IssueCode.ENCODE_FAILED,
     }.get(stage, IssueCode.SOURCE_FAILED if issue.stage == "decode" else IssueCode.PIPELINE_FAILED)
     if issue.stage == "output":
@@ -2434,13 +2585,37 @@ def process_single_page_staged(
         glossary_revision=glossary_revision,
         runners=runners,
     )
-    outcomes = StageRunner(
+    runner = StageRunner(
         store=store,
         job_id=job_id,
         page_id=page_id,
         specs=specs,
         config=config_payload,
-    ).run(resume=resume, force_stage=force_stage)
+    )
+    try:
+        outcomes = runner.run(resume=resume, force_stage=force_stage)
+    except Exception as error:
+        failure = getattr(error, "stage_failure_context", None)
+        if not isinstance(failure, StageFailureContext):
+            raise
+        page = _page_result_from_stage_failure(
+            image_path=image_path,
+            page_id=page_id,
+            store=store,
+            failure=failure,
+            error=error,
+        )
+        document = _document_with_stage_failure(
+            previous=previous,
+            page=page,
+            store=store,
+            job_id=job_id,
+            failure=failure,
+        )
+        store.store_page_document(job_id, document)
+        if dump_json or prep_manual:
+            dump_page_document(config.paths.output_dir, image_path.name, document)
+        return page
     page = _page_result_from_stage_outcomes(
         image_path=image_path,
         store=store,

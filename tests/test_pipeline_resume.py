@@ -20,6 +20,7 @@ from manga_translator.contracts.mapping import (
     bind_validated_responses,
 )
 from manga_translator.detector import DetectionResult, TextGroup, TextRegion
+from manga_translator.domain.issues import IssueCode, StageName, StageStatus
 from manga_translator.domain.serialization import canonical_document_bytes
 from manga_translator.ocr import OCRCandidate, OCRResult
 from manga_translator.storage import ArtifactStore, JobStore
@@ -370,6 +371,7 @@ def test_rejected_provider_response_is_replayed_and_blocks_downstream(
     )
 
     assert first.status == second.status == "failed"
+    assert first.pages[0].stage_failure == second.pages[0].stage_failure == "translate"
     assert calls["provider"] == 1
     assert calls["layout"] == calls["inpaint"] == calls["render"] == 0
     assert ArtifactStore(state / "artifacts").read_bytes(raw_sha256) == raw
@@ -380,6 +382,13 @@ def test_rejected_provider_response_is_replayed_and_blocks_downstream(
             for row in store.list_stage_runs(job_id="job-1", page_id=page_id)
         }
     assert statuses["translate"] == "failed"
+    document = _open_document(state, page_id)
+    assert document is not None
+    translate_record = next(
+        record for record in document.stages if record.stage is StageName.TRANSLATE
+    )
+    assert translate_record.status is StageStatus.FAILED
+    assert translate_record.issues[0].code is IssueCode.TRANSLATION_FAILED
 
 
 def test_inspect_and_replay_need_only_durable_state(tmp_path: Path, monkeypatch) -> None:

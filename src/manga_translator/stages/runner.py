@@ -50,6 +50,13 @@ class StageOutcome:
     cache_hit: bool
 
 
+@dataclass(frozen=True)
+class StageFailureContext:
+    stage: StageName
+    fingerprint: str
+    partial_outcomes: Mapping[StageName, StageOutcome]
+
+
 def downstream_of(stage: StageName) -> set[StageName]:
     result = {stage}
     changed = True
@@ -308,12 +315,17 @@ class StageRunner:
                     fingerprint=fingerprint,
                     output_hashes=tuple(item.sha256 for item in artifacts),
                 )
-            except Exception:
+            except Exception as error:
                 self.store.fail_stage(
                     job_id=self.job_id,
                     page_id=self.page_id,
                     stage=name.value,
                     fingerprint=fingerprint,
+                )
+                error.stage_failure_context = StageFailureContext(  # type: ignore[attr-defined]
+                    stage=name,
+                    fingerprint=fingerprint,
+                    partial_outcomes=dict(outcomes),
                 )
                 raise
             outcomes[name] = StageOutcome(fingerprint, artifacts, False)

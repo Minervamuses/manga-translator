@@ -308,6 +308,12 @@ def test_component_stages_resume_without_reloading_models_or_provider(
 
     assert first.status == second.status == "succeeded"
     assert calls == first_calls
+    assert {group.id for group in second.pages[0].groups if group.translation_valid} == {
+        "g001"
+    }
+    assert {group.id for group in second.pages[0].groups if not group.translation_valid} == {
+        "g000"
+    }
     assert second_document is not None
     assert canonical_document_bytes(second_document) == first_bytes
     assert all(

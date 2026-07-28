@@ -123,6 +123,7 @@ class OCRConfig(BaseModel):
     )
     batch_size: int = Field(default=4, ge=1, le=64)
     max_length: int = Field(default=300, ge=2, le=1024)
+    pre_upscale: bool = False
     # OCR crop 會向外擴張，避免字體描邊或小假名被 bbox 切掉。
     crop_padding_ratio: float = Field(default=0.08, ge=0.0, le=0.5)
     crop_padding_min_px: int = Field(default=4, ge=0, le=128)

@@ -97,6 +97,8 @@ ocr:
   revision: "aa6573bd10b0d446cbf622e29c3e084914df9741"
   batch_size: 4
   max_length: 300
+  # false 避免先 Lanczos 放大、隨後又被固定尺寸 processor 重採樣
+  pre_upscale: false
   # 擴張 crop，避免描邊、小假名或傾斜字被框切掉
   crop_padding_ratio: 0.08
   crop_padding_min_px: 4

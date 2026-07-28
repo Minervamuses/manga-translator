@@ -39,6 +39,7 @@ from .ocr import (
     normalize_ocr_text,
     ocr_group_detailed,
 )
+from .profiling import profile_page, profile_span, set_page_profile_metrics
 from .result import BatchResult, PageResult, ResultIssue, derive_batch_status
 from .translator import (
     load_glossary,
@@ -934,7 +935,32 @@ def process_single_page(
     prep_manual: bool = False,
 ) -> PageResult:
     page_id = _page_id_for_path(image_path)
-    image = read_image(image_path)
+    with profile_page(page_id, str(image_path)):
+        return _process_single_page_impl(
+            image_path,
+            config,
+            glossary,
+            page_id=page_id,
+            debug=debug,
+            dump_json=dump_json,
+            save_intermediate=save_intermediate,
+            prep_manual=prep_manual,
+        )
+
+
+def _process_single_page_impl(
+    image_path: Path,
+    config: AppConfig,
+    glossary: dict[str, str],
+    *,
+    page_id: str,
+    debug: bool,
+    dump_json: bool,
+    save_intermediate: bool,
+    prep_manual: bool,
+) -> PageResult:
+    with profile_span("decode"):
+        image = read_image(image_path)
     if image is None:
         message = f"無法讀取圖片：{image_path}"
         return PageResult(
@@ -954,7 +980,14 @@ def process_single_page(
     original = image.copy()
     console.print(f"\n[bold]處理：{image_path.name}[/]")
 
-    detection = detect_text_regions(image, config.detection, config.postprocess)
+    with profile_span("detection"):
+        detection = detect_text_regions(image, config.detection, config.postprocess)
+    set_page_profile_metrics(
+        page_id,
+        width=int(image.shape[1]),
+        height=int(image.shape[0]),
+        detected_groups=len(detection.groups),
+    )
     detection_issues = [
         ResultIssue(
             code=issue.code,
@@ -997,13 +1030,14 @@ def process_single_page(
 
     for group in groups:
         try:
-            ocr_result = ocr_group_detailed(
-                image=original,
-                group=group,
-                regions_by_id=regions_by_id,
-                cfg=config.ocr,
-                image_key=str(image_path.resolve()),
-            )
+            with profile_span("ocr_group", group_id=group.id):
+                ocr_result = ocr_group_detailed(
+                    image=original,
+                    group=group,
+                    regions_by_id=regions_by_id,
+                    cfg=config.ocr,
+                    image_key=str(image_path.resolve()),
+                )
             group.ocr_text = ocr_result.text
             group.ocr_confidence = ocr_result.confidence
             group.ocr_source = ocr_result.source
@@ -1047,7 +1081,8 @@ def process_single_page(
 
     groups = _merge_duplicate_groups(groups, config.postprocess)
     groups = _refresh_group_order(groups, regions_by_id, config.postprocess)
-    translation_issue = _translate_groups(groups, page_id, config, glossary)
+    with profile_span("translation", group_count=len(groups)):
+        translation_issue = _translate_groups(groups, page_id, config, glossary)
     groups_after_translation = _merge_translation_duplicates(groups, config.postprocess)
     if len(groups_after_translation) != len(groups):
         console.print(
@@ -1074,12 +1109,13 @@ def process_single_page(
 
     # 排版先在原圖上完整預演。放不下、會縮得過小或實際文字塊會互撞時，
     # 直接保留原文；不能先擦掉再發現無法安全寫回。
-    layout_plans = _preflight_layout_plans(
-        original,
-        groups,
-        regions_by_id,
-        config,
-    )
+    with profile_span("layout", group_count=len(groups)):
+        layout_plans = _preflight_layout_plans(
+            original,
+            groups,
+            regions_by_id,
+            config,
+        )
     for group in groups:
         if group.id in layout_plans and group.mapping_chain:
             group.mapping_chain["layout_plan"] = f"layout:{group.id}"
@@ -1094,7 +1130,8 @@ def process_single_page(
 
     # Inpainter 會依 translation_valid 過濾；OCR／翻譯／排版失敗的原文都不會被擦掉。
     detection.groups = groups
-    inpainted = inpaint_regions(original, detection, config.inpainting)
+    with profile_span("inpaint"):
+        inpainted = inpaint_regions(original, detection, config.inpainting)
     result = inpainted.copy()
 
     renderable = [
@@ -1103,17 +1140,18 @@ def process_single_page(
         if group.translation_valid and group.translation.strip() and group.id in layout_plans
     ]
     for group in renderable:
-        result = render_text_into_group(
-            image=result,
-            group=group,
-            regions_by_id=regions_by_id,
-            text=group.translation,
-            font_path=config.paths.font,
-            cfg=config.typesetting,
-            fallback_font_path=config.paths.font_fallback,
-            layout_plan=layout_plans[group.id],
-            layout_reference_image=original,
-        )
+        with profile_span("render", group_id=group.id):
+            result = render_text_into_group(
+                image=result,
+                group=group,
+                regions_by_id=regions_by_id,
+                text=group.translation,
+                font_path=config.paths.font,
+                cfg=config.typesetting,
+                fallback_font_path=config.paths.font_fallback,
+                layout_plan=layout_plans[group.id],
+                layout_reference_image=original,
+            )
         group.mapping_chain["render_target"] = f"render:{group.id}"
 
     unresolved = [group for group in groups if not group.translation_valid]
@@ -1145,6 +1183,7 @@ def process_single_page(
     issues = list(detection_issues)
     if translation_issue is not None:
         issues.append(translation_issue)
+    set_page_profile_metrics(page_id, final_groups=len(groups), renderable_groups=len(renderable))
     return PageResult(
         page_id=page_id,
         source_path=image_path,
@@ -1324,7 +1363,8 @@ def _persist_page_result(page: PageResult, output_dir: Path) -> None:
     try:
         if page.image is None:
             raise ImageEncodeError(f"沒有可編碼的結果圖片：{page.source_path}")
-        write_image_or_raise(output_path, page.image)
+        with profile_span("encode", output_name=output_path.name):
+            write_image_or_raise(output_path, page.image)
     except (ImageEncodeError, ImageWriteError) as error:
         code = "image_encode_failed" if isinstance(error, ImageEncodeError) else "output_write_failed"
         page.status = "failed"

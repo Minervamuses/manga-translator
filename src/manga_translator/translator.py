@@ -6,6 +6,7 @@ import asyncio
 import json
 import random
 import re
+import time
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from rich.console import Console
 from .config import OpenRouterConfig
 from .contracts.mapping import request_map_from_ids, source_sha256
 from .contracts.translation import parse_translation_response
+from .profiling import profile_span, record_api_profile
 
 console = Console()
 MAX_RETRIES = 5
@@ -560,20 +562,29 @@ async def _request_with_retry(
     retryable_status = {408, 425, 429, 500, 502, 503, 504}
 
     for attempt in range(1, MAX_RETRIES + 1):
+        request_started_ns = time.perf_counter_ns()
         try:
-            response = await client.post(
-                cfg.base_url,
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {cfg.api_key}",
-                    "Content-Type": "application/json",
-                },
-            )
+            with profile_span("translation_api", attempt=attempt, model=cfg.model):
+                response = await client.post(
+                    cfg.base_url,
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {cfg.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                )
 
             try:
                 data: dict[str, Any] | None = response.json()
             except ValueError:
                 data = None
+            usage = data.get("usage") if isinstance(data, dict) else None
+            record_api_profile(
+                model=cfg.model,
+                status_code=response.status_code,
+                latency_ms=(time.perf_counter_ns() - request_started_ns) / 1_000_000,
+                usage=usage if isinstance(usage, dict) else None,
+            )
 
             if response.status_code in retryable_status:
                 error_message = _extract_error_message(data) if data is not None else ""
@@ -605,6 +616,12 @@ async def _request_with_retry(
             return _extract_content(data)
 
         except httpx.RequestError as error:
+            record_api_profile(
+                model=cfg.model,
+                status_code=0,
+                latency_ms=(time.perf_counter_ns() - request_started_ns) / 1_000_000,
+                usage=None,
+            )
             last_error = error
             if attempt >= MAX_RETRIES:
                 break

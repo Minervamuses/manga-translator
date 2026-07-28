@@ -19,6 +19,7 @@ from .config import OCRConfig
 from .detector import TextGroup, TextRegion
 from .geometry import containment_ratio, iom
 from .manga_ocr_runtime import MangaOcrRuntime
+from .profiling import profile_span
 
 console = Console()
 
@@ -339,7 +340,9 @@ def _ocr_image(region_image: np.ndarray, cache_key: str | None = None) -> str:
     else:
         rgb = cv2.cvtColor(region_image, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(rgb)
-    text = sanitize_ocr_text(model(pil_img))
+    device = str(getattr(model, "device", "cpu"))
+    with profile_span("ocr_forward", gpu=device.startswith("cuda"), device=device):
+        text = sanitize_ocr_text(model(pil_img))
     _remember_cache(key, text)
     return text
 
@@ -510,11 +513,12 @@ def _contrast_variant(image: np.ndarray) -> np.ndarray:
 
 
 def _make_candidate(image: np.ndarray, source: str, cfg: OCRConfig) -> OCRCandidate:
-    prepared = _upscale_for_ocr(image, cfg)
-    # 相同像素在不同 detector pass／group 中應共用 OCR 結果；source 只供 debug。
-    key = _image_cache_key(prepared)
-    text = _ocr_image(prepared, cache_key=key)
-    normalized = normalize_ocr_text(text, weak=False)
+    with profile_span("ocr_view", source=source):
+        prepared = _upscale_for_ocr(image, cfg)
+        # 相同像素在不同 detector pass／group 中應共用 OCR 結果；source 只供 debug。
+        key = _image_cache_key(prepared)
+        text = _ocr_image(prepared, cache_key=key)
+        normalized = normalize_ocr_text(text, weak=False)
     return OCRCandidate(
         text=text,
         normalized=normalized,

@@ -1,0 +1,14 @@
+{
+  "schema_version": "performance_manifest.v1",
+  "profile": "v032_baseline",
+  "latest_run_id": "v032_baseline-20260728T064929Z-e9b477fa",
+  "runs": [
+    {
+      "run_id": "v032_baseline-20260728T064929Z-e9b477fa",
+      "path": "benchmarks/performance/v032_baseline/runs/v032_baseline-20260728T064929Z-e9b477fa.json",
+      "sha256": "883e9a84c403946d47fcdbad8694a70682f98958504aebac7e7b10f07e3a7654",
+      "environment_kind": "mock",
+      "real_status": "blocked"
+    }
+  ]
+}

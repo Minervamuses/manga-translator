@@ -20,6 +20,7 @@ from .geometry import (
     iou,
     merge_bbox,
 )
+from .profiling import profile_span
 from .reading_order import sort_groups_auto, sort_groups_jp_vertical, sort_regions_jp_vertical
 
 console = Console()
@@ -875,11 +876,18 @@ def _run_detector_pass(
     from .ctd.utils.textmask import REFINEMASK_ANNOTATION
 
     _set_detector_input_size(detector, input_size)
-    mask, mask_refined, blocks = detector(
-        image,
-        refine_mode=REFINEMASK_ANNOTATION,
-        keep_undetected_mask=keep_undetected_mask,
-    )
+    device = str(getattr(detector, "device", "cpu"))
+    with profile_span(
+        "detector_pass",
+        gpu=device.startswith("cuda"),
+        input_size=input_size,
+        device=device,
+    ):
+        mask, mask_refined, blocks = detector(
+            image,
+            refine_mode=REFINEMASK_ANNOTATION,
+            keep_undetected_mask=keep_undetected_mask,
+        )
     return mask, mask_refined, list(blocks)
 
 
@@ -1020,12 +1028,13 @@ def detect_text_regions(
     )
     all_regions.extend(fallback_regions)
 
-    regions_post, groups = postprocess_regions(
-        all_regions,
-        (img_h, img_w),
-        postprocess_cfg,
-        refined_mask=refined_mask_union,
-    )
+    with profile_span("detector_postprocess", candidate_count=len(all_regions)):
+        regions_post, groups = postprocess_regions(
+            all_regions,
+            (img_h, img_w),
+            postprocess_cfg,
+            refined_mask=refined_mask_union,
+        )
 
     return DetectionResult(
         regions_raw=all_regions,

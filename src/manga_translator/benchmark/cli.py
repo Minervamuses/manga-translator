@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from .ground_truth import prepare_profile, validate_profile
+from .performance import run_performance_baseline
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,11 +19,28 @@ def main(argv: list[str] | None = None) -> int:
     validate = commands.add_parser("validate")
     validate.add_argument("profile")
     validate.add_argument("--require-verified", action="store_true")
+    performance = commands.add_parser("performance")
+    performance.add_argument("--profile", default="v032_baseline")
     args = parser.parse_args(argv)
 
     if args.command == "prepare":
         written = prepare_profile(args.root.resolve(), args.profile)
         print(json.dumps({"profile": args.profile, "pages": len(written)}, ensure_ascii=False))
+        return 0
+
+    if args.command == "performance":
+        run_path, report = run_performance_baseline(args.root.resolve(), args.profile)
+        print(
+            json.dumps(
+                {
+                    "profile": args.profile,
+                    "run_id": report["run_id"],
+                    "real_status": report["real_run"]["status"],
+                    "run_path": run_path.relative_to(args.root.resolve()).as_posix(),
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
 
     report = validate_profile(

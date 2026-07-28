@@ -294,13 +294,23 @@ class JobStore:
     def load_page_document(self, *, job_id: str, page_id: str) -> PageDocument | None:
         row = self.connection.execute(
             """
-            SELECT document_artifact_sha256 FROM pages WHERE job_id=? AND page_id=?
+            SELECT pages.document_artifact_sha256, artifacts.size_bytes
+            FROM pages
+            LEFT JOIN artifacts
+                ON artifacts.sha256=pages.document_artifact_sha256
+            WHERE pages.job_id=? AND pages.page_id=?
             """,
             (job_id, page_id),
         ).fetchone()
         if row is None:
             return None
-        return parse_document(self.artifacts.read_bytes(str(row[0])))
+        if row[1] is None:
+            raise MissingArtifactError(
+                f"PageDocument artifact {row[0]} is not registered"
+            )
+        return parse_document(
+            self.artifacts.read_bytes(str(row[0]), expected_size=int(row[1]))
+        )
 
     def list_pages(self, *, job_id: str, page_id: str | None = None) -> list[sqlite3.Row]:
         if page_id is None:
@@ -356,7 +366,13 @@ class JobStore:
         artifact = ArtifactRef(
             sha256=str(row[0]), media_type=str(row[1]), size_bytes=int(row[2])
         )
-        return artifact if self.artifacts.exists(artifact.sha256) else None
+        return (
+            artifact
+            if self.artifacts.exists(
+                artifact.sha256, expected_size=artifact.size_bytes
+            )
+            else None
+        )
 
     def interrupt_stale_stage_runs(self, *, job_id: str, page_id: str) -> int:
         with self.transaction() as connection:
@@ -420,7 +436,9 @@ class JobStore:
             artifact_row = self.connection.execute(
                 "SELECT media_type, size_bytes FROM artifacts WHERE sha256=?", (sha256,)
             ).fetchone()
-            if artifact_row is None or not self.artifacts.exists(sha256):
+            if artifact_row is None or not self.artifacts.exists(
+                sha256, expected_size=int(artifact_row[1])
+            ):
                 with self.transaction() as connection:
                     connection.execute(
                         """

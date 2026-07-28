@@ -171,6 +171,21 @@ def test_page_reference_is_committed_only_after_artifact_is_durable(tmp_path: Pa
             )
 
 
+def test_page_document_load_revalidates_registered_size(tmp_path: Path) -> None:
+    artifacts = ArtifactStore(tmp_path / "artifacts")
+    with JobStore(tmp_path / "jobs.sqlite3", artifacts) as jobs:
+        jobs.create_job("job-1")
+        document = _document(_store_source(jobs))
+        stored = jobs.store_page_document("job-1", document)
+        jobs.connection.execute(
+            "UPDATE artifacts SET size_bytes=size_bytes + 1 WHERE sha256=?",
+            (stored.sha256,),
+        )
+
+        with pytest.raises(ArtifactIntegrityError, match="expected"):
+            jobs.load_page_document(job_id="job-1", page_id=document.source.page_id)
+
+
 def test_artifact_write_failure_cannot_create_database_reference(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

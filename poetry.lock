@@ -2184,6 +2184,18 @@ files = [
 ]
 
 [[package]]
+name = "uniseg"
+version = "0.10.1"
+description = "Determine Unicode text segmentations"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "uniseg-0.10.1-py3-none-any.whl", hash = "sha256:74fe3f7b4ee46bbd703a70ea1e5cd28e04f63eee5af9a10388d93316c554e358"},
+    {file = "uniseg-0.10.1.tar.gz", hash = "sha256:5224267916fc01132cb2f7bf60882402dde72ab52c6977184827e4d9d6676de6"},
+]
+
+[[package]]
 name = "urllib3"
 version = "2.7.0"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
@@ -2207,4 +2219,4 @@ dev = ["pytest", "ruff"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11"
-content-hash = "da1ab55cd7fa29ded742abf31cd9d81dd2af3cd740ce9d329ce532f200534e56"
+content-hash = "5c72dc9386d6eb98389fbe97fae64f62f31eefc6539494e95210f3beab65e039"

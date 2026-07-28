@@ -85,6 +85,7 @@ class PageResult:
     translations: list[str] = field(default_factory=list, repr=False)
     groups: list[TextGroup] = field(default_factory=list, repr=False)
     mapping_chains: list[GroupMappingSnapshot] = field(default_factory=list)
+    style_fingerprints: dict[str, Any] = field(default_factory=dict, repr=False)
     issues: list[ResultIssue] = field(default_factory=list)
     output_path: Path | None = None
     source_preserved: bool = False

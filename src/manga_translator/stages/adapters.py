@@ -172,7 +172,11 @@ def build_pipeline_stage_specs(
             name=stage,
             dependencies=dependencies,
             run=runners[stage],
-            code_revision=f"manga-translator-v0.3.2-p2-{stage.value}.1",
+            code_revision=(
+                "manga-translator-v0.3.2-p2-style.2"
+                if stage is StageName.STYLE
+                else f"manga-translator-v0.3.2-p2-{stage.value}.1"
+            ),
             config_keys=config_keys.get(stage, ()),
             input_contracts={
                 dependency: output_contracts[dependency] for dependency in dependencies

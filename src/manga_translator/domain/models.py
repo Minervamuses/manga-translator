@@ -247,6 +247,11 @@ class StyleFingerprint(DomainModel):
     angle_degrees: float = 0.0
     features: dict[str, float] = Field(default_factory=dict)
     confidence: Score
+    sample_counts: dict[str, int] = Field(default_factory=dict)
+    confidences: dict[str, Score] = Field(default_factory=dict)
+    unknown_fields: tuple[str, ...] = ()
+    shadow_offset: tuple[float, float] | None = None
+    source: Literal["original_image"] = "original_image"
 
 
 class TranslationRecord(DomainModel):

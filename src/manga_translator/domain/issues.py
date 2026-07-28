@@ -59,6 +59,7 @@ class IssueCode(StrEnum):
     OUTPUT_FAILED = "output_failed"
     UNSUPPORTED_SCHEMA = "unsupported_schema"
     DETECTOR_FAILED = "detector_failed"
+    STYLE_FAILED = "style_failed"
     OCR_FAILED = "ocr_failed"
     OCR_REJECTED = "ocr_rejected"
     TRANSLATION_FAILED = "translation_failed"

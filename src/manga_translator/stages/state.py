@@ -158,7 +158,9 @@ def _stable_group_key(group: TextGroup) -> str:
 
 _REQUIRED_EXTRAS: dict[StageName, frozenset[str]] = {
     StageName.DETECT: frozenset({"source_artifact"}),
-    StageName.STYLE: frozenset({"source_artifact", "style_adapter"}),
+    StageName.STYLE: frozenset(
+        {"source_artifact", "style_adapter", "style_fingerprints"}
+    ),
     StageName.SAFE_REGION: frozenset({"safe_region_adapter", "source_artifact"}),
     StageName.OCR: frozenset({"ocr_adapter", "source_artifact"}),
     StageName.ORDER: frozenset(

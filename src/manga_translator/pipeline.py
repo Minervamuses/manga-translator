@@ -30,7 +30,13 @@ from .contracts.mapping import (
     build_request_map,
     mapping_chain_template,
 )
-from .detector import DetectionResult, TextGroup, TextRegion, detect_text_regions
+from .detector import (
+    DetectionResult,
+    DetectorIssue,
+    TextGroup,
+    TextRegion,
+    detect_text_regions,
+)
 from .domain.issues import Issue, IssueCode, IssueSeverity, StageName, StageStatus
 from .domain.models import (
     ArtifactRef,
@@ -47,6 +53,7 @@ from .domain.models import (
     RegionRevision,
     SourcePage,
     StageRecord,
+    StyleFingerprint,
     TranslationRecord,
 )
 from .domain.reconcile import RegionObservation, reconcile_regions
@@ -96,6 +103,7 @@ from .stages.state import (
     encode_pipeline_state,
 )
 from .storage import ArtifactStore, JobStore
+from .style import ExtractedStyle, extract_style_fingerprint
 from .translator import (
     load_glossary,
     sanitize_translation_text,
@@ -1726,15 +1734,48 @@ def _build_pipeline_stage_runners(
         )
 
     def style_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
-        encoded = adapter_state(inputs, stage=StageName.STYLE, adapter="style")
+        state = _read_stage_state(store, inputs, StageName.DETECT)
         reference = _source_artifact(inputs)
+        if _source_ref_from_extras(state.extras) != reference:
+            raise ValueError("style stage received inconsistent source lineage")
+        original = _decode_source_image(store, reference)
+        extracted: dict[str, dict[str, object]] = {}
+        for region in state.detection.regions_post:
+            if region.local_mask is None or not np.any(region.local_mask):
+                continue
+            try:
+                fingerprint = extract_style_fingerprint(
+                    original,
+                    region.local_mask,
+                    bbox=region.bbox,
+                    source_angle=region.angle_degrees,
+                )
+            except ValueError as error:
+                state.detection.issues.append(
+                    DetectorIssue(
+                        code="style_extract_failed",
+                        message=str(error),
+                        details={"region_id": region.id},
+                    )
+                )
+                continue
+            extracted[region.id] = fingerprint.model_dump(mode="json")
+        encoded = encode_pipeline_state(
+            state.detection,
+            producer_stage=StageName.STYLE,
+            extras={
+                **state.extras,
+                "style_adapter": "p2-original-image-v1",
+                "style_fingerprints": extracted,
+            },
+        )
         return StageOutputs(
             (
                 *encoded.artifacts,
                 ArtifactPayload(
                     store.artifacts.read_bytes(reference.sha256),
                     reference.media_type,
-                    "legacy_layout_reference",
+                    "layout_reference",
                 ),
             )
         )
@@ -1955,6 +1996,7 @@ def _build_pipeline_stage_runners(
             producer_stage=StageName.LAYOUT,
             extras={
                 **state.extras,
+                "style_fingerprints": style.extras.get("style_fingerprints", {}),
                 "layout_plan_artifact": plan_reference.model_dump(mode="json"),
                 "mapping_snapshots": _merge_mapping_snapshot_payloads(
                     state.extras.get("mapping_snapshots"), groups
@@ -2115,6 +2157,18 @@ def _mapping_snapshots_from_extras(extras: dict[str, object]) -> list[GroupMappi
     return snapshots
 
 
+def _style_fingerprints_from_extras(
+    extras: dict[str, object],
+) -> dict[str, ExtractedStyle]:
+    payload = extras.get("style_fingerprints", {})
+    if not isinstance(payload, dict):
+        raise TypeError("style fingerprint state must be an object")
+    return {
+        str(region_id): ExtractedStyle.model_validate(fingerprint)
+        for region_id, fingerprint in payload.items()
+    }
+
+
 def _page_result_from_stage_outcomes(
     *,
     image_path: Path,
@@ -2143,7 +2197,7 @@ def _page_result_from_stage_outcomes(
         ResultIssue(
             code=issue.code,
             message=issue.message,
-            stage="detection",
+            stage=("style" if issue.code.startswith("style_") else "detection"),
             page_id=outcomes[StageName.SOURCE].outputs[0].sha256,
             details=issue.details,
         )
@@ -2172,6 +2226,7 @@ def _page_result_from_stage_outcomes(
         ocr_results=[group.ocr_text for group in groups],
         translations=[group.translation for group in groups],
         groups=groups,
+        style_fingerprints=_style_fingerprints_from_extras(render_state.extras),
         mapping_chains=(
             _mapping_snapshots_from_extras(render_state.extras)
             or [GroupMappingSnapshot.from_group(group) for group in groups]
@@ -2260,6 +2315,7 @@ def _page_result_from_stage_failure(
         ocr_results=[group.ocr_text for group in groups],
         translations=[group.translation for group in groups],
         groups=groups,
+        style_fingerprints=_style_fingerprints_from_extras(state.extras),
         mapping_chains=(
             _mapping_snapshots_from_extras(state.extras)
             or [GroupMappingSnapshot.from_group(group) for group in groups]
@@ -2269,7 +2325,11 @@ def _page_result_from_stage_failure(
                 ResultIssue(
                     code=detector_issue.code,
                     message=detector_issue.message,
-                    stage="detect",
+                    stage=(
+                        "style"
+                        if detector_issue.code.startswith("style_")
+                        else "detect"
+                    ),
                     page_id=page_id,
                     details=detector_issue.details,
                 )
@@ -2394,6 +2454,7 @@ def _typed_issue(issue: ResultIssue) -> Issue:
     stage_alias = {
         "decode": StageName.SOURCE,
         "detection": StageName.DETECT,
+        "style": StageName.STYLE,
         "ocr": StageName.OCR,
         "translation": StageName.TRANSLATE,
         "layout": StageName.LAYOUT,
@@ -2406,6 +2467,7 @@ def _typed_issue(issue: ResultIssue) -> Issue:
         stage = stage_alias.get(issue.stage, StageName.SOURCE)
     code = {
         StageName.DETECT: IssueCode.DETECTOR_FAILED,
+        StageName.STYLE: IssueCode.STYLE_FAILED,
         StageName.OCR: IssueCode.OCR_FAILED,
         StageName.TRANSLATE: IssueCode.TRANSLATION_FAILED,
         StageName.LAYOUT: IssueCode.LAYOUT_FAILED,
@@ -2722,6 +2784,58 @@ def _document_from_page_result(
                 mask_lineage=mask_lineage,
             )
         )
+    domain_styles: list[StyleFingerprint] = [
+        fingerprint
+        for fingerprint in previous.style_fingerprints
+        if fingerprint.revision_id not in current_revision_ids
+    ]
+    for legacy_region_id, extracted in page.style_fingerprints.items():
+        revision = revision_by_legacy_id.get(legacy_region_id)
+        if revision is None or not isinstance(extracted, ExtractedStyle):
+            continue
+        estimates = {
+            "fill": extracted.fill,
+            "stroke": extracted.stroke,
+            "stroke_width": extracted.stroke_width,
+            "ink_density": extracted.ink_density,
+            "normalized_stroke_width": extracted.normalized_stroke_width,
+            "width_height_ratio": extracted.width_height_ratio,
+            "edge_roundness": extracted.edge_roundness,
+            "stroke_variation": extracted.stroke_variation,
+            "source_angle": extracted.source_angle,
+        }
+        features = {
+            name: float(estimate.value)
+            for name, estimate in estimates.items()
+            if name not in {"fill", "stroke"} and estimate.value is not None
+        }
+        known_confidences = [
+            estimate.confidence for estimate in estimates.values() if estimate.status == "known"
+        ]
+        domain_styles.append(
+            StyleFingerprint(
+                region_id=revision.region_id,
+                revision_id=revision.revision_id,
+                fill_rgb=extracted.fill.value,
+                stroke_rgb=extracted.stroke.value,
+                shadow_rgb=extracted.shadow.color.value,
+                stroke_width=extracted.stroke_width.value,
+                ink_density=extracted.ink_density.value,
+                angle_degrees=extracted.source_angle.value or 0.0,
+                features=features,
+                confidence=(
+                    sum(known_confidences) / len(known_confidences)
+                    if known_confidences
+                    else 0.0
+                ),
+                sample_counts={name: estimate.sample_count for name, estimate in estimates.items()},
+                confidences={name: estimate.confidence for name, estimate in estimates.items()},
+                unknown_fields=tuple(
+                    name for name, estimate in estimates.items() if estimate.status == "unknown"
+                ),
+                shadow_offset=extracted.shadow.offset.value,
+            )
+        )
     stage_records = _stage_records(outcomes)
     retained_entities = tuple(
         entity
@@ -2764,6 +2878,7 @@ def _document_from_page_result(
         region_identities=reconciled.identities,
         region_revisions=reconciled.revisions,
         group_geometries=tuple(group_geometries),
+        style_fingerprints=tuple(domain_styles),
         ocr_records=tuple(ocr_records),
         translations=tuple(translations),
         stages=stage_records,
@@ -2953,6 +3068,11 @@ def _page_result_from_document(
             if record.revision_id in active_revision_ids
         ],
         groups=groups,
+        style_fingerprints={
+            str(fingerprint.region_id): fingerprint
+            for fingerprint in document.style_fingerprints
+            if fingerprint.revision_id in active_revision_ids
+        },
         mapping_chains=mappings,
         issues=[
             ResultIssue(

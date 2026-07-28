@@ -328,6 +328,11 @@ def test_component_stages_resume_without_reloading_models_or_provider(
         first_document.region_revisions[0].revision_id
     )
     assert len(first_document.group_geometries) == 2
+    assert len(first_document.style_fingerprints) == 2
+    assert all(
+        fingerprint.source == "original_image"
+        for fingerprint in first_document.style_fingerprints
+    )
 
     second = pipeline_module.run_pipeline(
         config, job_id="job-1", state_dir=state, resume=True, dump_json=True

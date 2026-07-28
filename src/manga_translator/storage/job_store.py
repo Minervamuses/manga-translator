@@ -10,13 +10,15 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
+from time import time_ns
 from typing import Self
+from uuid import uuid4
 
 from ..domain.models import ArtifactRef, PageDocument
 from ..domain.serialization import canonical_document_bytes, parse_document
 from .artifact_store import ArtifactIntegrityError, ArtifactStore, require_local_storage
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class NewerDatabaseSchemaError(RuntimeError):
@@ -27,10 +29,21 @@ class MissingArtifactError(RuntimeError):
     pass
 
 
+class ProviderResponseClaimLostError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class GarbageCollectionResult:
     database_records: int
     files: int
+
+
+@dataclass(frozen=True)
+class ProviderResponseClaim:
+    owner_id: str
+    claim_token: str
+    lease_expires_at_ms: int
 
 
 class JobStore:
@@ -373,6 +386,145 @@ class JobStore:
             )
             else None
         )
+
+    @staticmethod
+    def _lease_deadline_ms(lease_seconds: float) -> int:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds must be positive")
+        return time_ns() // 1_000_000 + max(1, int(lease_seconds * 1_000))
+
+    def acquire_provider_response_claim(
+        self, *, owner_id: str, lease_seconds: float
+    ) -> ProviderResponseClaim | None:
+        """Atomically acquire or take over an expired provider-response lease."""
+
+        if not owner_id:
+            raise ValueError("owner_id must not be empty")
+        now_ms = time_ns() // 1_000_000
+        lease_expires_at_ms = self._lease_deadline_ms(lease_seconds)
+        claim_token = uuid4().hex
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO provider_response_claims(
+                    owner_id, claim_token, lease_expires_at_ms, updated_at
+                ) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(owner_id) DO UPDATE SET
+                    claim_token=excluded.claim_token,
+                    lease_expires_at_ms=excluded.lease_expires_at_ms,
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE provider_response_claims.lease_expires_at_ms <= ?
+                """,
+                (owner_id, claim_token, lease_expires_at_ms, now_ms),
+            )
+            row = connection.execute(
+                """
+                SELECT claim_token, lease_expires_at_ms
+                FROM provider_response_claims WHERE owner_id=?
+                """,
+                (owner_id,),
+            ).fetchone()
+        if row is None or str(row[0]) != claim_token:
+            return None
+        return ProviderResponseClaim(
+            owner_id=owner_id,
+            claim_token=claim_token,
+            lease_expires_at_ms=int(row[1]),
+        )
+
+    def renew_provider_response_claim(
+        self, claim: ProviderResponseClaim, *, lease_seconds: float
+    ) -> ProviderResponseClaim:
+        """Extend a lease only while its unguessable ownership token still matches."""
+
+        lease_expires_at_ms = self._lease_deadline_ms(lease_seconds)
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE provider_response_claims
+                SET lease_expires_at_ms=?, updated_at=CURRENT_TIMESTAMP
+                WHERE owner_id=? AND claim_token=?
+                """,
+                (lease_expires_at_ms, claim.owner_id, claim.claim_token),
+            )
+            if cursor.rowcount != 1:
+                raise ProviderResponseClaimLostError(
+                    f"provider response claim was lost for {claim.owner_id}"
+                )
+        return ProviderResponseClaim(
+            owner_id=claim.owner_id,
+            claim_token=claim.claim_token,
+            lease_expires_at_ms=lease_expires_at_ms,
+        )
+
+    def release_provider_response_claim(self, claim: ProviderResponseClaim) -> bool:
+        """Release a claim without disturbing a newer claimant after lease takeover."""
+
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM provider_response_claims
+                WHERE owner_id=? AND claim_token=?
+                """,
+                (claim.owner_id, claim.claim_token),
+            )
+        return cursor.rowcount == 1
+
+    def complete_provider_response_claim(
+        self,
+        claim: ProviderResponseClaim,
+        data: bytes,
+        *,
+        media_type: str,
+    ) -> ArtifactRef:
+        """Durably publish bytes and remove their lease in one SQLite transaction."""
+
+        if not isinstance(data, bytes):
+            raise TypeError("provider response data must be bytes")
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM provider_response_claims
+                WHERE owner_id=? AND claim_token=?
+                """,
+                (claim.owner_id, claim.claim_token),
+            ).fetchone()
+            if row is None:
+                raise ProviderResponseClaimLostError(
+                    f"provider response claim was lost for {claim.owner_id}"
+                )
+            artifact = self.artifacts.put_bytes(data, media_type=media_type)
+            if not self.artifacts.exists(
+                artifact.sha256, expected_size=artifact.size_bytes
+            ):
+                raise RuntimeError("provider response artifact did not become durable")
+            self._insert_artifact(connection, artifact)
+            connection.execute(
+                """
+                DELETE FROM artifact_references
+                WHERE owner_type='provider_response' AND owner_id=?
+                """,
+                (claim.owner_id,),
+            )
+            connection.execute(
+                """
+                INSERT INTO artifact_references(owner_type, owner_id, sha256)
+                VALUES ('provider_response', ?, ?)
+                """,
+                (claim.owner_id, artifact.sha256),
+            )
+            cursor = connection.execute(
+                """
+                DELETE FROM provider_response_claims
+                WHERE owner_id=? AND claim_token=?
+                """,
+                (claim.owner_id, claim.claim_token),
+            )
+            if cursor.rowcount != 1:
+                raise ProviderResponseClaimLostError(
+                    f"provider response claim was lost for {claim.owner_id}"
+                )
+        return artifact
 
     def interrupt_stale_stage_runs(self, *, job_id: str, page_id: str) -> int:
         with self.transaction() as connection:

@@ -20,6 +20,7 @@ from manga_translator.storage.job_store import (
     JobStore,
     MissingArtifactError,
     NewerDatabaseSchemaError,
+    ProviderResponseClaimLostError,
 )
 
 
@@ -95,9 +96,10 @@ def test_database_migration_is_idempotent_and_enables_foreign_keys(tmp_path: Pat
             "artifacts",
             "issues",
             "entities",
+            "provider_response_claims",
         } <= tables
         assert first.connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-        assert first.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert first.connection.execute("PRAGMA user_version").fetchone()[0] == 3
 
     with JobStore(database, artifacts) as reopened:
         assert reopened.connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 0
@@ -116,7 +118,7 @@ def test_migration_retries_committed_ddl_without_user_version_bump(tmp_path: Pat
             row[1] for row in recovered.connection.execute("PRAGMA table_info(stage_runs)")
         }
         assert {"cache_hits", "last_cache_hit_at"} <= columns
-        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 3
 
 
 def test_migration_ddl_and_version_bump_are_atomic(
@@ -142,7 +144,85 @@ def test_migration_ddl_and_version_bump_are_atomic(
 
     monkeypatch.undo()
     with JobStore(database, ArtifactStore(tmp_path / "artifacts")) as recovered:
-        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 3
+
+
+def test_provider_response_claim_is_cross_connection_exclusive_and_recoverable(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    artifact_root = tmp_path / "artifacts"
+    with (
+        JobStore(database, ArtifactStore(artifact_root)) as first,
+        JobStore(database, ArtifactStore(artifact_root)) as second,
+    ):
+        original = first.acquire_provider_response_claim(
+            owner_id="provider-owner", lease_seconds=60
+        )
+        assert original is not None
+        assert (
+            second.acquire_provider_response_claim(
+                owner_id="provider-owner", lease_seconds=60
+            )
+            is None
+        )
+
+        first.connection.execute(
+            """
+            UPDATE provider_response_claims SET lease_expires_at_ms=1
+            WHERE owner_id=?
+            """,
+            (original.owner_id,),
+        )
+        replacement = second.acquire_provider_response_claim(
+            owner_id="provider-owner", lease_seconds=60
+        )
+        assert replacement is not None
+        assert replacement.claim_token != original.claim_token
+        assert not first.release_provider_response_claim(original)
+        with pytest.raises(ProviderResponseClaimLostError, match="claim was lost"):
+            first.complete_provider_response_claim(
+                original, b"stale", media_type="application/octet-stream"
+            )
+
+        completed = second.complete_provider_response_claim(
+            replacement, b"winner", media_type="application/octet-stream"
+        )
+        cached = first.find_artifact(
+            owner_type="provider_response", owner_id="provider-owner"
+        )
+        assert cached == completed
+        assert first.artifacts.read_bytes(completed.sha256) == b"winner"
+
+
+def test_provider_response_partial_publish_is_not_a_cache_hit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = ArtifactStore(tmp_path / "artifacts")
+    with JobStore(tmp_path / "jobs.sqlite3", artifacts) as jobs:
+        claim = jobs.acquire_provider_response_claim(
+            owner_id="provider-owner", lease_seconds=60
+        )
+        assert claim is not None
+
+        def fail_registration(
+            _connection: sqlite3.Connection, _artifact: ArtifactRef
+        ) -> None:
+            raise RuntimeError("simulated registration failure")
+
+        monkeypatch.setattr(JobStore, "_insert_artifact", staticmethod(fail_registration))
+        with pytest.raises(RuntimeError, match="registration failure"):
+            jobs.complete_provider_response_claim(
+                claim, b"uncommitted", media_type="application/octet-stream"
+            )
+
+        assert (
+            jobs.find_artifact(
+                owner_type="provider_response", owner_id="provider-owner"
+            )
+            is None
+        )
+        assert jobs.release_provider_response_claim(claim)
 
 
 def test_newer_database_schema_is_rejected(tmp_path: Path) -> None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import itertools
 import math
-import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -15,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .config import TypesettingConfig
 from .detector import TextGroup, TextRegion
+from .text import grapheme_clusters, normalize_text
 
 VERTICAL_PUNCT_MAP = {
     "(": "︵",
@@ -100,7 +100,7 @@ def _measure_char_advance(font: ImageFont.FreeTypeFont, char: str) -> int:
 
 
 def _verticalize_punctuation(text: str) -> str:
-    return "".join(VERTICAL_PUNCT_MAP.get(ch, ch) for ch in text)
+    return "".join(VERTICAL_PUNCT_MAP.get(cluster, cluster) for cluster in grapheme_clusters(text))
 
 
 def _has_glyph(font_path: str, size: int, char: str) -> bool:
@@ -132,22 +132,11 @@ def _get_font_and_char(
 
 
 def _sanitize_render_text(text: str) -> str:
-    text = unicodedata.normalize("NFC", text or "")
-    chars: list[str] = []
-    for char in text:
-        if char in {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\ufffd"}:
-            continue
-        category = unicodedata.category(char)
-        if category in {"Cc", "Cs", "Co", "Cn"}:
-            if char in {"\n", "\r", "\t"}:
-                chars.append(" ")
-            continue
-        chars.append(char)
-    return " ".join("".join(chars).split())
+    return normalize_text(text or "").nfc_display
 
 
 def _visible_length(text: str) -> int:
-    return sum(not char.isspace() for char in _sanitize_render_text(text))
+    return sum(not cluster.isspace() for cluster in grapheme_clusters(_sanitize_render_text(text)))
 
 
 def _decide_direction(obj: TextRegion | TextGroup, config_dir: str) -> str:
@@ -161,7 +150,11 @@ def _decide_direction(obj: TextRegion | TextGroup, config_dir: str) -> str:
 def _wrap_horizontal(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
     lines: list[str] = []
     current = ""
-    for ch in text:
+    for ch in grapheme_clusters(text):
+        if ch == "\n":
+            lines.append(current)
+            current = ""
+            continue
         test = current + ch
         bbox = font.getbbox(test)
         width = int(bbox[2] - bbox[0])
@@ -217,7 +210,7 @@ def _calculate_font_size(
             char_step = max(1, round(line_h * cfg.vertical_char_spacing))
             col_step = max(1, round(mid * cfg.line_spacing))
             chars_per_col = max(1, available_h // char_step)
-            cols_needed = math.ceil(len(text) / chars_per_col)
+            cols_needed = math.ceil(len(grapheme_clusters(text)) / chars_per_col)
             fits = mid + max(0, cols_needed - 1) * col_step <= available_w
         else:
             lines = _wrap_horizontal(text, font, available_w)
@@ -782,13 +775,14 @@ def _select_layout_bbox(
 
 
 def _balanced_chunks(text: str, count: int) -> tuple[str, ...]:
-    count = max(1, min(count, len(text)))
-    base, remainder = divmod(len(text), count)
+    clusters = grapheme_clusters(text)
+    count = max(1, min(count, len(clusters)))
+    base, remainder = divmod(len(clusters), count)
     lengths = [base + (1 if index < remainder else 0) for index in range(count)]
     chunks: list[str] = []
     cursor = 0
     for length in lengths:
-        chunks.append(text[cursor : cursor + length])
+        chunks.append("".join(clusters[cursor : cursor + length]))
         cursor += length
     return tuple(chunks)
 
@@ -866,7 +860,8 @@ def _plan_vertical(
     target_y = geometry.bbox[1] + geometry.bbox[3] / 2.0 - layout_bbox[1]
     target_w = max(preferred, float(geometry.bbox[2]))
     target_h = max(preferred, float(geometry.bbox[3]))
-    length_ratio = len(text) / max(1, geometry.source_length)
+    text_length = len(grapheme_clusters(text))
+    length_ratio = text_length / max(1, geometry.source_length)
     expected_columns = max(
         1,
         round(geometry.primary_count * math.sqrt(max(0.15, length_ratio))),
@@ -885,15 +880,15 @@ def _plan_vertical(
         min_col_step = max(glyph_w, size * cfg.min_column_spacing_ratio)
         max_col_step = size * cfg.max_column_spacing_ratio
         max_columns = min(
-            len(text),
+            text_length,
             max(1, math.floor((available_w - glyph_w) / max(1.0, min_col_step)) + 1),
         )
 
         for columns in range(1, max_columns + 1):
             chunks = _balanced_chunks(text, columns)
-            max_items = max(len(chunk) for chunk in chunks)
-            if columns > 1 and len(text) / columns < cfg.min_chars_per_column * 0.65:
-                sparse_penalty = (cfg.min_chars_per_column - len(text) / columns) * 0.7
+            max_items = max(len(grapheme_clusters(chunk)) for chunk in chunks)
+            if columns > 1 and text_length / columns < cfg.min_chars_per_column * 0.65:
+                sparse_penalty = (cfg.min_chars_per_column - text_length / columns) * 0.7
             else:
                 sparse_penalty = 0.0
 
@@ -1199,7 +1194,7 @@ def _simple_patch_plan(
         primary_count=1,
         primary_step=float(preferred),
         secondary_step=float(preferred) * 1.08,
-        source_length=max(1, len(text)),
+        source_length=max(1, len(grapheme_clusters(text))),
     )
     bbox = (0, 0, width, height)
     if direction == "vertical":

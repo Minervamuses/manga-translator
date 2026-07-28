@@ -22,6 +22,7 @@ from manga_translator.pipeline import (
     _translate_groups,
 )
 from manga_translator.result import GroupMappingSnapshot
+from manga_translator.translator import ProviderResponseError
 
 
 def _config() -> AppConfig:
@@ -228,3 +229,24 @@ def test_mapping_failure_invalidates_entire_batch_and_produces_zero_inpaint_mask
         InpaintingConfig(method="white", mask_dilate=0, extra_mask_dilate=0),
     )
     assert np.array_equal(result, source)
+
+
+def test_provider_parse_failure_links_raw_artifact_from_page_issue(monkeypatch) -> None:
+    group = _group("g-a", "猫だ")
+    raw_reference = RawResponseRef.from_bytes(
+        b"not-json",
+        media_type="application/json",
+        relative_path="artifacts/translation-responses/not-json.json",
+    )
+
+    def reject(*_args, **_kwargs):
+        raise ProviderResponseError("invalid provider response", [raw_reference])
+
+    monkeypatch.setattr("manga_translator.pipeline._request_translations", reject)
+
+    issue = _translate_groups([group], "page", _config(), {})
+
+    assert issue is not None
+    assert issue.code == "translation_api_failed"
+    assert issue.details["raw_response_artifacts"] == [raw_reference.to_dict()]
+    assert group.mapping_chain["raw_response_item"] is None

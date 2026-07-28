@@ -61,6 +61,16 @@ class ProviderResponse:
     raw_response_ref: RawResponseRef
 
 
+class ProviderResponseError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        raw_response_refs: Iterable[RawResponseRef],
+    ) -> None:
+        self.raw_response_refs = tuple(dict.fromkeys(raw_response_refs))
+        super().__init__(message)
+
+
 def load_glossary(path: str | Path) -> dict[str, str]:
     """載入專有名詞字典。"""
     path = Path(path)
@@ -641,6 +651,7 @@ async def _request_with_retry(
 
     delay = INITIAL_DELAY_SEC
     last_error: Exception | None = None
+    raw_response_refs: list[RawResponseRef] = []
     retryable_status = {408, 425, 429, 500, 502, 503, 504}
 
     for attempt in range(1, MAX_RETRIES + 1):
@@ -663,6 +674,7 @@ async def _request_with_retry(
                 media_type=media_type,
                 artifact_root=artifact_root,
             )
+            raw_response_refs.append(raw_response_ref)
             try:
                 data: dict[str, Any] | None = response.json()
             except ValueError:
@@ -697,13 +709,28 @@ async def _request_with_retry(
             if response.status_code == 400 and data is not None:
                 message = _extract_error_message(data)
                 if "model_not_available" in message.lower():
-                    raise RuntimeError(f"OpenRouter model_not_available for {cfg.model}")
+                    raise ProviderResponseError(
+                        f"OpenRouter model_not_available for {cfg.model}",
+                        raw_response_refs,
+                    )
 
             response.raise_for_status()
             if data is None:
-                data = response.json()
+                raise ProviderResponseError(
+                    "OpenRouter response is not valid JSON",
+                    raw_response_refs,
+                )
+            if not isinstance(data, dict):
+                raise ProviderResponseError(
+                    "OpenRouter response JSON root must be an object",
+                    raw_response_refs,
+                )
+            try:
+                content = _extract_content(data)
+            except RuntimeError as error:
+                raise ProviderResponseError(str(error), raw_response_refs) from error
             return ProviderResponse(
-                content=_extract_content(data),
+                content=content,
                 raw_response_ref=raw_response_ref,
             )
 
@@ -723,8 +750,9 @@ async def _request_with_retry(
             await asyncio.sleep(delay + random.uniform(0.0, min(0.5, delay * 0.1)))
             delay = min(delay * 2, 30.0)
         except httpx.HTTPStatusError as error:
-            raise RuntimeError(
-                f"OpenRouter HTTP {error.response.status_code}: {error.response.text[:500]}"
+            raise ProviderResponseError(
+                f"OpenRouter HTTP {error.response.status_code}: {error.response.text[:500]}",
+                raw_response_refs,
             ) from error
 
     raise RuntimeError(f"Failed to get completion after {MAX_RETRIES} retries") from last_error

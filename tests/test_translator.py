@@ -10,6 +10,7 @@ import manga_translator.translator as translator_module
 from manga_translator.config import OpenRouterConfig
 from manga_translator.contracts.mapping import MappingContractError, source_sha256
 from manga_translator.translator import (
+    ProviderResponseError,
     _build_prompt_with_context,
     _parse_response,
     sanitize_translation_text,
@@ -23,7 +24,7 @@ def cfg(**updates) -> OpenRouterConfig:
     return base.model_copy(update=updates)
 
 
-def _provider_response_bytes(items: list[dict[str, str]]) -> bytes:
+def _provider_response_bytes(items: object) -> bytes:
     content = json.dumps(
         {"translations": items},
         ensure_ascii=False,
@@ -212,7 +213,7 @@ def test_malformed_success_response_is_persisted_before_json_decode(
     raw = b"not-json"
     _install_response_transport(monkeypatch, [raw])
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ProviderResponseError) as captured:
         translate_batch_mapped(
             ["こんにちは"],
             cfg(validate_translation=False),
@@ -223,6 +224,47 @@ def test_malformed_success_response_is_persisted_before_json_decode(
     raw_hash = hashlib.sha256(raw).hexdigest()
     artifact = tmp_path / f"artifacts/translation-responses/{raw_hash}.json"
     assert artifact.read_bytes() == raw
+    assert captured.value.raw_response_refs[0].sha256 == raw_hash
+
+
+@pytest.mark.parametrize("raw", [b"[]", b"{}"])
+def test_invalid_provider_envelope_keeps_raw_artifact_reference(
+    tmp_path, monkeypatch, raw
+) -> None:
+    _install_response_transport(monkeypatch, [raw])
+
+    with pytest.raises(ProviderResponseError) as captured:
+        translate_batch_mapped(
+            ["こんにちは"],
+            cfg(validate_translation=False),
+            item_ids=["R-envelope:T0000"],
+            artifact_root=tmp_path,
+        )
+
+    reference = captured.value.raw_response_refs[0]
+    assert reference.sha256 == hashlib.sha256(raw).hexdigest()
+    assert reference.relative_path is not None
+    assert (tmp_path / reference.relative_path).read_bytes() == raw
+
+
+def test_non_array_translation_payload_keeps_raw_artifact_reference(
+    tmp_path, monkeypatch
+) -> None:
+    raw = _provider_response_bytes({"unexpected": "object"})
+    _install_response_transport(monkeypatch, [raw])
+
+    with pytest.raises(MappingContractError) as captured:
+        translate_batch_mapped(
+            ["こんにちは"],
+            cfg(validate_translation=False),
+            item_ids=["R-type:T0000"],
+            artifact_root=tmp_path,
+        )
+
+    reference = captured.value.raw_response_refs[0]
+    assert reference.sha256 == hashlib.sha256(raw).hexdigest()
+    assert reference.relative_path is not None
+    assert (tmp_path / reference.relative_path).read_bytes() == raw
 
 
 def test_exact_id_failure_exposes_the_persisted_batch_artifact(

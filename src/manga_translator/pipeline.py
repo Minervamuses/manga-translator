@@ -942,9 +942,10 @@ def _translate_groups(
             else "translation_api_failed"
         )
         details: dict[str, object] = {}
-        if isinstance(error, MappingContractError) and error.raw_response_refs:
+        raw_response_refs = getattr(error, "raw_response_refs", ())
+        if raw_response_refs:
             details["raw_response_artifacts"] = [
-                reference.to_dict() for reference in error.raw_response_refs
+                reference.to_dict() for reference in raw_response_refs
             ]
         return ResultIssue(
             code=code,

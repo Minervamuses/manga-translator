@@ -230,7 +230,8 @@ def validate_response_items(
     issues: list[MappingIssue] = []
     if not isinstance(raw_items, list):
         raise MappingContractError(
-            [MappingIssue("invalid_response_type", {"actual": type(raw_items).__name__})]
+            [MappingIssue("invalid_response_type", {"actual": type(raw_items).__name__})],
+            raw_response_refs=([raw_response_ref] if raw_response_ref is not None else []),
         )
 
     expected = request.by_item_id

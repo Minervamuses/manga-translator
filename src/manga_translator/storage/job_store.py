@@ -18,7 +18,7 @@ from ..domain.models import ArtifactRef, PageDocument
 from ..domain.serialization import canonical_document_bytes, parse_document
 from .artifact_store import ArtifactIntegrityError, ArtifactStore, require_local_storage
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class NewerDatabaseSchemaError(RuntimeError):
@@ -148,6 +148,18 @@ class JobStore:
                 "claim_token",
                 "lease_expires_at_ms",
             } <= claim_columns
+        if target == 5:
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            return {
+                "chapter_entities",
+                "entity_aliases",
+                "translation_memory",
+            } <= tables
         return False
 
     @staticmethod

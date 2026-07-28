@@ -22,6 +22,7 @@ from .ocr import OCRInitializationError
 from .pipeline import process_single_page, run_pipeline
 from .storage import ArtifactStore, JobStore
 from .storage.artifact_store import assess_storage_path
+from .translation.entities import EntityLedger
 from .translator import load_glossary
 
 console = Console()
@@ -30,6 +31,134 @@ console = Console()
 @click.group()
 def cli():
     """manga-translator: 日漫翻譯工具"""
+
+
+def _entity_ledger(state_dir: Path, job_id: str, chapter_id: str):
+    store = JobStore(state_dir / "jobs.sqlite3", ArtifactStore(state_dir / "artifacts"))
+    exists = store.connection.execute("SELECT 1 FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+    if exists is None:
+        store.create_job(job_id)
+    return store, EntityLedger(store, job_id=job_id, chapter_id=chapter_id)
+
+
+def _entity_payload(entity) -> dict[str, object]:
+    return {
+        "entity_id": entity.entity_id,
+        "canonical_source": entity.canonical_source,
+        "aliases": entity.aliases,
+        "approved_zh_tw": entity.approved_zh_tw,
+        "kind": entity.kind,
+        "scope": entity.scope,
+        "status": entity.status,
+        "provenance": entity.provenance,
+        "first_seen": entity.first_seen,
+        "last_seen": entity.last_seen,
+        "merged_into": entity.merged_into,
+    }
+
+
+@cli.group("entities")
+def entities():
+    """管理章節專名候選與 glossary。"""
+
+
+def _entity_options(function):
+    function = click.option("--chapter", "chapter_id", required=True)(function)
+    function = click.option("--job", "job_id", default="default", show_default=True)(function)
+    return click.option("--state-dir", type=click.Path(path_type=Path), required=True)(function)
+
+
+@entities.command("list")
+@_entity_options
+@click.option("--status", type=click.Choice(["candidate", "approved", "rejected", "merged"]))
+def list_entities(state_dir: Path, job_id: str, chapter_id: str, status: str | None) -> None:
+    with _entity_ledger(state_dir, job_id, chapter_id)[0] as store:
+        ledger = EntityLedger(store, job_id=job_id, chapter_id=chapter_id)
+        material = ledger.list(status=status) if status else ledger.list()
+        click.echo(json.dumps([_entity_payload(item) for item in material], ensure_ascii=False))
+
+
+@entities.command("approve")
+@_entity_options
+@click.argument("entity_id")
+@click.argument("approved_zh_tw")
+@click.option("--reviewer", required=True)
+def approve_entity(
+    state_dir: Path,
+    job_id: str,
+    chapter_id: str,
+    entity_id: str,
+    approved_zh_tw: str,
+    reviewer: str,
+) -> None:
+    store, ledger = _entity_ledger(state_dir, job_id, chapter_id)
+    with store:
+        click.echo(
+            json.dumps(
+                _entity_payload(ledger.approve(entity_id, approved_zh_tw, reviewer_id=reviewer)),
+                ensure_ascii=False,
+            )
+        )
+
+
+@entities.command("reject")
+@_entity_options
+@click.argument("entity_id")
+@click.option("--reviewer", required=True)
+def reject_entity(
+    state_dir: Path, job_id: str, chapter_id: str, entity_id: str, reviewer: str
+) -> None:
+    store, ledger = _entity_ledger(state_dir, job_id, chapter_id)
+    with store:
+        click.echo(
+            json.dumps(
+                _entity_payload(ledger.reject(entity_id, reviewer_id=reviewer)),
+                ensure_ascii=False,
+            )
+        )
+
+
+@entities.command("merge")
+@_entity_options
+@click.argument("source_id")
+@click.argument("target_id")
+@click.option("--reviewer", required=True)
+def merge_entity(
+    state_dir: Path,
+    job_id: str,
+    chapter_id: str,
+    source_id: str,
+    target_id: str,
+    reviewer: str,
+) -> None:
+    store, ledger = _entity_ledger(state_dir, job_id, chapter_id)
+    with store:
+        click.echo(
+            json.dumps(
+                _entity_payload(ledger.merge(source_id, target_id, reviewer_id=reviewer)),
+                ensure_ascii=False,
+            )
+        )
+
+
+@entities.command("import-glossary")
+@_entity_options
+@click.argument("glossary", type=click.Path(path_type=Path, exists=True))
+def import_entity_glossary(state_dir: Path, job_id: str, chapter_id: str, glossary: Path) -> None:
+    store, ledger = _entity_ledger(state_dir, job_id, chapter_id)
+    with store:
+        imported = ledger.import_glossary(glossary)
+        click.echo(json.dumps([_entity_payload(item) for item in imported], ensure_ascii=False))
+
+
+@entities.command("export-glossary")
+@_entity_options
+@click.argument("output", type=click.Path(path_type=Path))
+def export_entity_glossary(state_dir: Path, job_id: str, chapter_id: str, output: Path) -> None:
+    store, ledger = _entity_ledger(state_dir, job_id, chapter_id)
+    with store:
+        ledger.export_glossary(output)
+    click.echo(str(output))
 
 
 def _apply_runtime_overrides(
@@ -59,7 +188,9 @@ def _apply_runtime_overrides(
 @click.option("--debug", "-d", is_flag=True, help="輸出 debug 標註圖")
 @click.option("--dump-json", is_flag=True, help="輸出每頁 canonical PageDocument JSON")
 @click.option("--save-intermediate", is_flag=True, help="輸出中間圖（original/inpainted/blanked）")
-@click.option("--prep-manual", is_flag=True, help="輸出手動校正素材（會啟用 debug/json/intermediate）")
+@click.option(
+    "--prep-manual", is_flag=True, help="輸出手動校正素材（會啟用 debug/json/intermediate）"
+)
 @click.option("--allow-partial", is_flag=True, help="部分頁面失敗時仍以成功退出")
 @click.option("--resume", is_flag=True, help="沿用 fingerprint 相同且 artifact 完整的 stage")
 @click.option(
@@ -221,9 +352,7 @@ def cache_gc(config: str, state_dir: Path | None) -> None:
     root = _durable_root(config, state_dir)
     with JobStore(root / "jobs.sqlite3", ArtifactStore(root / "artifacts")) as store:
         result = store.gc()
-    click.echo(
-        f"removed database_records={result.database_records} artifact_files={result.files}"
-    )
+    click.echo(f"removed database_records={result.database_records} artifact_files={result.files}")
 
 
 @cli.command()
@@ -408,10 +537,7 @@ def doctor(config: str, strict_api_key: bool):
         from .manga_ocr_runtime import check_runtime_dependencies
 
         versions = check_runtime_dependencies()
-        ok(
-            "OCR 執行元件可用："
-            f"Transformers {versions['transformers']} / Torch {versions['torch']}"
-        )
+        ok(f"OCR 執行元件可用：Transformers {versions['transformers']} / Torch {versions['torch']}")
     except Exception as e:  # noqa: BLE001 - runtime health checks may expose backend failures
         fail(f"OCR 執行元件不可用：{e}")
 
@@ -452,10 +578,7 @@ def doctor(config: str, strict_api_key: bool):
             f"HarfBuzz {shaping.harfbuzz_version} / FriBiDi {shaping.fribidi_version}"
         )
     else:
-        fail(
-            "新排版器缺少 Pillow RAQM/HarfBuzz/FriBiDi，排版將 blocked："
-            f"{shaping}"
-        )
+        fail(f"新排版器缺少 Pillow RAQM/HarfBuzz/FriBiDi，排版將 blocked：{shaping}")
 
     cfg.paths.input_dir.mkdir(parents=True, exist_ok=True)
     ok(f"輸入目錄存在：{cfg.paths.input_dir}")
@@ -501,10 +624,7 @@ def doctor(config: str, strict_api_key: bool):
         except Exception as e:  # noqa: BLE001 - Pillow can surface backend-specific errors
             fail(f"字體無法載入：{font_path}（{e}）")
     else:
-        fail(
-            "字體不存在："
-            f"{font_path}（請放入 config.yaml 指定的主字體）"
-        )
+        fail(f"字體不存在：{font_path}（請放入 config.yaml 指定的主字體）")
 
     fallback_font = cfg.paths.font_fallback
     if fallback_font.exists():

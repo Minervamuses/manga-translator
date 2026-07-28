@@ -231,14 +231,13 @@ def greedy_legal_wrap(
     return tuple(lines)
 
 
-def balanced_legal_chunks(
+def balanced_legal_breaks(
     text: str,
     count: int,
     *,
     preferred_grapheme_breaks: Iterable[int] = (),
-) -> tuple[str, ...]:
-    """Split near equal grapheme counts without inventing illegal boundaries."""
-
+) -> tuple[int, ...]:
+    """Choose near-equal internal break indices without inventing boundaries."""
     if not text:
         return ()
     analysis = analyze_line_breaks(
@@ -261,5 +260,23 @@ def balanced_legal_chunks(
             key=lambda item: (abs(item.grapheme_index - target), -item.preference),
         )
         selected.add(best.index)
+    return tuple(sorted(selected))
+
+
+def balanced_legal_chunks(
+    text: str,
+    count: int,
+    *,
+    preferred_grapheme_breaks: Iterable[int] = (),
+) -> tuple[str, ...]:
+    """Split near equal grapheme counts without inventing illegal boundaries."""
+
+    if not text:
+        return ()
+    selected = balanced_legal_breaks(
+        text,
+        count,
+        preferred_grapheme_breaks=preferred_grapheme_breaks,
+    )
     cuts = [0, *sorted(selected), len(text)]
     return tuple(_render_slice(text, start, end) for start, end in pairwise(cuts))

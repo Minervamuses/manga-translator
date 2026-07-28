@@ -167,6 +167,146 @@ class JobStore:
         rows = self.connection.execute("SELECT DISTINCT sha256 FROM artifact_references")
         return {str(row[0]) for row in rows}
 
+    def find_artifact(self, *, owner_type: str, owner_id: str) -> ArtifactRef | None:
+        row = self.connection.execute(
+            """
+            SELECT artifacts.sha256, artifacts.media_type, artifacts.size_bytes
+            FROM artifact_references
+            JOIN artifacts USING(sha256)
+            WHERE owner_type=? AND owner_id=?
+            ORDER BY artifacts.sha256
+            LIMIT 1
+            """,
+            (owner_type, owner_id),
+        ).fetchone()
+        if row is None:
+            return None
+        artifact = ArtifactRef(
+            sha256=str(row[0]), media_type=str(row[1]), size_bytes=int(row[2])
+        )
+        return artifact if self.artifacts.exists(artifact.sha256) else None
+
+    def interrupt_stale_stage_runs(self, *, job_id: str, page_id: str) -> int:
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE stage_runs
+                SET status='interrupted', finished_at=CURRENT_TIMESTAMP
+                WHERE job_id=? AND page_id=? AND status='running'
+                """,
+                (job_id, page_id),
+            )
+        return cursor.rowcount
+
+    def invalidate_stages(self, *, job_id: str, page_id: str, stages: set[str]) -> int:
+        if not stages:
+            return 0
+        placeholders = ",".join("?" for _ in stages)
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                f"""
+                UPDATE stage_runs SET status='invalidated', finished_at=CURRENT_TIMESTAMP
+                WHERE job_id=? AND page_id=? AND stage IN ({placeholders})
+                """,
+                (job_id, page_id, *sorted(stages)),
+            )
+        return cursor.rowcount
+
+    def cached_stage_outputs(
+        self, *, job_id: str, page_id: str, stage: str, fingerprint: str
+    ) -> tuple[ArtifactRef, ...] | None:
+        row = self.connection.execute(
+            """
+            SELECT output_hashes_json FROM stage_runs
+            WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=? AND status='succeeded'
+            """,
+            (job_id, page_id, stage, fingerprint),
+        ).fetchone()
+        if row is None:
+            return None
+        hashes = json.loads(str(row[0]))
+        outputs: list[ArtifactRef] = []
+        for sha256 in hashes:
+            artifact_row = self.connection.execute(
+                "SELECT media_type, size_bytes FROM artifacts WHERE sha256=?", (sha256,)
+            ).fetchone()
+            if artifact_row is None or not self.artifacts.exists(sha256):
+                with self.transaction() as connection:
+                    connection.execute(
+                        """
+                        UPDATE stage_runs SET status='invalidated', finished_at=CURRENT_TIMESTAMP
+                        WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=?
+                        """,
+                        (job_id, page_id, stage, fingerprint),
+                    )
+                return None
+            outputs.append(
+                ArtifactRef(
+                    sha256=sha256,
+                    media_type=str(artifact_row[0]),
+                    size_bytes=int(artifact_row[1]),
+                )
+            )
+        return tuple(outputs)
+
+    def start_stage(
+        self,
+        *,
+        job_id: str,
+        page_id: str,
+        stage: str,
+        fingerprint: str,
+        input_hashes: tuple[str, ...],
+    ) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO stage_runs(
+                    job_id, page_id, stage, fingerprint, status, input_hashes_json, started_at
+                ) VALUES (?, ?, ?, ?, 'running', ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(job_id, page_id, stage, fingerprint) DO UPDATE SET
+                    status='running',
+                    input_hashes_json=excluded.input_hashes_json,
+                    output_hashes_json='[]',
+                    started_at=CURRENT_TIMESTAMP,
+                    finished_at=NULL
+                """,
+                (job_id, page_id, stage, fingerprint, json.dumps(input_hashes)),
+            )
+
+    def finish_stage(
+        self,
+        *,
+        job_id: str,
+        page_id: str,
+        stage: str,
+        fingerprint: str,
+        output_hashes: tuple[str, ...],
+    ) -> None:
+        with self.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE stage_runs
+                SET status='succeeded', output_hashes_json=?, finished_at=CURRENT_TIMESTAMP
+                WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=? AND status='running'
+                """,
+                (json.dumps(output_hashes), job_id, page_id, stage, fingerprint),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("running stage record disappeared before completion")
+
+    def fail_stage(
+        self, *, job_id: str, page_id: str, stage: str, fingerprint: str
+    ) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE stage_runs SET status='failed', finished_at=CURRENT_TIMESTAMP
+                WHERE job_id=? AND page_id=? AND stage=? AND fingerprint=?
+                """,
+                (job_id, page_id, stage, fingerprint),
+            )
+
     def gc(self) -> GarbageCollectionResult:
         referenced = self.referenced_hashes()
         registered = {

@@ -35,6 +35,13 @@ def test_clreq_tailoring_rejects_forbidden_line_edges() -> None:
     assert validate_breaks(text, analysis.legal_indices) == ()
 
 
+def test_ascii_opening_bracket_cannot_end_a_line() -> None:
+    violations = validate_breaks("甲[乙", (2,))
+    assert [item.rule for item in violations] == [
+        "clreq_no_opening_punctuation_at_line_end"
+    ]
+
+
 @pytest.mark.parametrize("text", ["王小明", "2026", "……", "——", "&amp;"])
 def test_names_numbers_pairs_ellipsis_dash_and_entities_have_no_hard_violation(text: str) -> None:
     analysis = analyze_line_breaks(text, atomic_spans=((0, len(text)),))
@@ -52,6 +59,14 @@ def test_explicit_newline_is_preserved_as_mandatory_break() -> None:
     assert greedy_legal_wrap(text, len, 100) == ("第一行", "第二行")
 
 
+def test_preferred_grapheme_break_is_exposed_to_layout_scoring() -> None:
+    analysis = analyze_line_breaks("甲｜乙", preferred_grapheme_breaks=(2,))
+    preferred = next(item for item in analysis.opportunities if item.grapheme_index == 2)
+
+    assert "preferred_break" in preferred.reasons
+    assert preferred.preference >= 100
+
+
 def test_greedy_and_balanced_wrapping_only_use_legal_boundaries() -> None:
     text = "他說「你好」，王小明回答。"
     horizontal = greedy_legal_wrap(text, len, 6)
@@ -64,6 +79,12 @@ def test_greedy_and_balanced_wrapping_only_use_legal_boundaries() -> None:
             cursor = text.index(chunk, cursor) + len(chunk)
             indices.append(cursor)
         assert validate_breaks(text, indices) == ()
+
+
+def test_balancing_uses_graphemes_instead_of_codepoint_offsets() -> None:
+    text = "甲👨‍👩‍👧‍👦乙丙丁戊"
+
+    assert balanced_legal_chunks(text, 2) == ("甲👨‍👩‍👧‍👦乙", "丙丁戊")
 
 
 def test_uax50_vertical_runs_keep_cjk_upright_and_rotate_latin_runs() -> None:

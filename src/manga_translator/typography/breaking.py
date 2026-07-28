@@ -12,7 +12,7 @@ from uniseg.linebreak import line_break_boundaries
 
 from ..text import grapheme_clusters
 
-OPENING_PUNCTUATION = frozenset("（［｛〔〈《「『【〖〘〚〝‘“(［{")
+OPENING_PUNCTUATION = frozenset("（［｛〔〈《「『【〖〘〚〝‘“([{")
 CLOSING_PUNCTUATION = frozenset("、。，．？！：；）》」』】〕〉》〗〙〛〞〟’”）］｝,.:;!?)]}")
 ELLIPSIS_AND_DASH = frozenset("…⋯—―─")
 _ATOMIC_TOKEN = re.compile(
@@ -109,6 +109,7 @@ def analyze_line_breaks(
     text: str,
     *,
     atomic_spans: Iterable[tuple[int, int]] = (),
+    preferred_grapheme_breaks: Iterable[int] = (),
 ) -> LineBreakAnalysis:
     """Return UAX #14 opportunities after applying hard CLREQ tailoring.
 
@@ -119,6 +120,7 @@ def analyze_line_breaks(
 
     clusters, offsets = _cluster_boundaries(text)
     spans = (*_automatic_atomic_spans(text), *tuple(atomic_spans))
+    preferred_breaks = frozenset(preferred_grapheme_breaks)
     base_boundaries = set(line_break_boundaries(text))
     opportunities: list[BreakOpportunity] = []
     violations: list[BreakViolation] = []
@@ -137,6 +139,9 @@ def analyze_line_breaks(
         preference, reasons = _preference(previous, following)
         if mandatory:
             preference, reasons = 1_000, ("explicit_newline",)
+        elif grapheme_index in preferred_breaks:
+            preference += 100
+            reasons = (*reasons, "preferred_break")
         opportunities.append(
             BreakOpportunity(
                 index=index,
@@ -190,10 +195,15 @@ def greedy_legal_wrap(
     text: str,
     measure: Callable[[str], float],
     max_extent: float,
+    *,
+    preferred_grapheme_breaks: Iterable[int] = (),
 ) -> tuple[str, ...]:
     """Choose only legal boundaries, preferring the furthest fitting one."""
 
-    analysis = analyze_line_breaks(text)
+    analysis = analyze_line_breaks(
+        text,
+        preferred_grapheme_breaks=preferred_grapheme_breaks,
+    )
     if not text:
         return ()
     boundaries = analysis.opportunities
@@ -221,23 +231,35 @@ def greedy_legal_wrap(
     return tuple(lines)
 
 
-def balanced_legal_chunks(text: str, count: int) -> tuple[str, ...]:
+def balanced_legal_chunks(
+    text: str,
+    count: int,
+    *,
+    preferred_grapheme_breaks: Iterable[int] = (),
+) -> tuple[str, ...]:
     """Split near equal grapheme counts without inventing illegal boundaries."""
 
     if not text:
         return ()
-    analysis = analyze_line_breaks(text)
+    analysis = analyze_line_breaks(
+        text,
+        preferred_grapheme_breaks=preferred_grapheme_breaks,
+    )
     internal = [item for item in analysis.opportunities if item.index < len(text)]
     mandatory = {item.index for item in internal if item.strength is BreakStrength.MANDATORY}
     desired_count = max(1, count, len(mandatory) + 1)
     desired_count = min(desired_count, len(internal) + 1)
     selected = set(mandatory)
+    grapheme_count = len(grapheme_clusters(text))
     for part in range(1, desired_count):
-        target = len(text) * part / desired_count
+        target = grapheme_count * part / desired_count
         remaining = [item for item in internal if item.index not in selected]
         if not remaining:
             break
-        best = min(remaining, key=lambda item: (abs(item.index - target), -item.preference))
+        best = min(
+            remaining,
+            key=lambda item: (abs(item.grapheme_index - target), -item.preference),
+        )
         selected.add(best.index)
     cuts = [0, *sorted(selected), len(text)]
     return tuple(_render_slice(text, start, end) for start, end in pairwise(cuts))

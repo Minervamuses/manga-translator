@@ -84,32 +84,38 @@ def test_nested_same_page_profile_context_records_one_page_wall() -> None:
     assert page_spans[-1].stage == "page_wall"
 
 
-def test_process_single_page_reuses_precomputed_page_id(monkeypatch) -> None:
-    source = Path("page.png")
-    config = AppConfig(openrouter=OpenRouterConfig(api_key="test", model="test/model"))
+def test_process_single_page_reuses_precomputed_page_id(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "page.png"
+    source.write_bytes(b"stable-page-bytes")
+    page_id = hashlib.sha256(source.read_bytes()).hexdigest()
+    config = AppConfig(
+        openrouter=OpenRouterConfig(api_key="test", model="test/model"),
+        paths=PathsConfig(output_dir=tmp_path / "output"),
+    )
 
     def fail_rehash(_path):
         raise AssertionError("page content must not be hashed twice")
 
-    def process_impl(image_path, _config, _glossary, **kwargs):
-        assert kwargs["page_id"] == "precomputed-page-id"
+    def process_staged(*, image_path, source_bytes, **_kwargs):
+        assert source_bytes == b"stable-page-bytes"
         return PageResult(
-            page_id=kwargs["page_id"],
+            page_id=page_id,
             source_path=image_path,
             status="succeeded",
         )
 
     monkeypatch.setattr(pipeline_module, "_page_id_for_path", fail_rehash)
-    monkeypatch.setattr(pipeline_module, "_process_single_page_impl", process_impl)
+    monkeypatch.setattr(pipeline_module, "process_single_page_staged", process_staged)
 
     result = pipeline_module.process_single_page(
         source,
         config,
         {},
-        page_id="precomputed-page-id",
+        page_id=page_id,
+        state_dir=tmp_path / "state",
     )
 
-    assert result.page_id == "precomputed-page-id"
+    assert result.page_id == page_id
 
 
 def test_run_pipeline_profiles_encode_inside_single_page_wall(tmp_path, monkeypatch) -> None:
@@ -130,8 +136,7 @@ def test_run_pipeline_profiles_encode_inside_single_page_wall(tmp_path, monkeypa
         ),
     )
 
-    def process_page(image_path, *_args, **kwargs):
-        assert kwargs["page_id"] == page_id
+    def process_page(*, image_path, **_kwargs):
         with profile_page(page_id, str(image_path)), profile_span("decode"):
             return PageResult(
                 page_id=page_id,
@@ -140,8 +145,7 @@ def test_run_pipeline_profiles_encode_inside_single_page_wall(tmp_path, monkeypa
                 image=np.full((8, 8, 3), 127, dtype=np.uint8),
             )
 
-    monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
-    monkeypatch.setattr(pipeline_module, "process_single_page", process_page)
+    monkeypatch.setattr(pipeline_module, "process_single_page_staged", process_page)
     profiler = RunProfiler("pipeline-page", environment_kind="mock")
 
     with activate_profiler(profiler):

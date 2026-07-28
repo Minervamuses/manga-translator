@@ -83,6 +83,7 @@ class PageResult:
     regions: list[TextRegion] = field(default_factory=list, repr=False)
     ocr_results: list[str] = field(default_factory=list, repr=False)
     translations: list[str] = field(default_factory=list, repr=False)
+    groups: list[TextGroup] = field(default_factory=list, repr=False)
     mapping_chains: list[GroupMappingSnapshot] = field(default_factory=list)
     issues: list[ResultIssue] = field(default_factory=list)
     output_path: Path | None = None

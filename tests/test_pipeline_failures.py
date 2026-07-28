@@ -99,7 +99,7 @@ def test_second_page_failure_is_isolated_and_manifest_is_partial(tmp_path, monke
     monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
     monkeypatch.setattr(
         pipeline_module,
-        "process_single_page",
+        "process_single_page_staged",
         lambda image_path, *_args, **_kwargs: (
             _success_page(image_path, "page-id-1")
             if image_path.name == "page1.png"
@@ -167,7 +167,7 @@ def test_normal_batch_manifest_publishes_traceable_mapping_chain_without_debug(
     monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
     monkeypatch.setattr(
         pipeline_module,
-        "process_single_page",
+        "process_single_page_staged",
         lambda *_args, **_kwargs: page,
     )
 
@@ -275,7 +275,7 @@ def test_encode_and_output_write_failures_have_distinct_codes(
     monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
     monkeypatch.setattr(
         pipeline_module,
-        "process_single_page",
+        "process_single_page_staged",
         lambda image_path, *_args, **_kwargs: _success_page(image_path, "page-id"),
     )
     monkeypatch.setattr(
@@ -356,8 +356,8 @@ def test_group_ocr_exception_is_blocked_and_preserves_source(tmp_path, monkeypat
     assert page.output_path == config.paths.output_dir / "failed" / "page.source-preserved.png"
     assert page.output_path.read_bytes() == source.read_bytes()
     assert not (config.paths.output_dir / "page.png").exists()
-    assert group.status == "ocr_failed"
-    assert not group.translation_valid
+    assert page.groups[0].status == "ocr_failed"
+    assert not page.groups[0].translation_valid
     assert len(page.issues) == 1
     assert page.issues[0].code == "ocr_group_failed"
     assert page.issues[0].stage == "ocr"

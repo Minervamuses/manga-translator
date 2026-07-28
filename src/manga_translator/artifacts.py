@@ -66,6 +66,8 @@ def _group_to_dict(group: Any) -> dict[str, Any]:
         "rendered_direction": getattr(group, "rendered_direction", ""),
         "layout_mode": getattr(group, "layout_mode", ""),
         "layout_info": getattr(group, "layout_info", {}),
+        "mapping_region_key": getattr(group, "mapping_region_key", ""),
+        "mapping_chain": getattr(group, "mapping_chain", {}),
     }
 
 

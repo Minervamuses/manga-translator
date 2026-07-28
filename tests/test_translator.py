@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from manga_translator.config import OpenRouterConfig
+from manga_translator.contracts.mapping import MappingContractError, source_sha256
 from manga_translator.translator import (
     _build_prompt_with_context,
     _parse_response,
@@ -15,18 +20,44 @@ def cfg(**updates) -> OpenRouterConfig:
 
 
 def test_parse_json_response_by_stable_ids() -> None:
-    response = '{"translations":[{"id":"T0000","text":"你好"},{"id":"T0001","text":"走吧"}]}'
-    assert _parse_response(response, 2) == ["你好", "走吧"]
+    sources = ["こんにちは", "行こう"]
+    response = json.dumps(
+        {
+            "translations": [
+                {"id": "T0000", "source_sha256": source_sha256(sources[0]), "text": "你好"},
+                {"id": "T0001", "source_sha256": source_sha256(sources[1]), "text": "走吧"},
+            ]
+        },
+        ensure_ascii=False,
+    )
+    assert _parse_response(
+        response, 2, source_hashes=[source_sha256(source) for source in sources]
+    ) == ["你好", "走吧"]
 
 
 def test_single_item_repair_accepts_dict_even_when_model_reuses_original_id() -> None:
-    response = '{"translations":[{"id":"T0017","text":"別擔心"}]}'
-    assert _parse_response(response, 1) == ["別擔心"]
+    source_hash = source_sha256("心配するな")
+    response = json.dumps(
+        {
+            "translations": [
+                {"id": "T0017", "source_sha256": source_hash, "text": "別擔心"}
+            ]
+        },
+        ensure_ascii=False,
+    )
+    assert _parse_response(
+        response, 1, expected_ids=["T0017"], source_hashes=[source_hash]
+    ) == ["別擔心"]
 
 
 def test_parse_numbered_lines_without_copying_labels() -> None:
     response = "[0]：你好\n[1]：走吧"
-    assert _parse_response(response, 2) == ["你好", "走吧"]
+    with pytest.raises(MappingContractError):
+        _parse_response(
+            response,
+            2,
+            source_hashes=[source_sha256("こんにちは"), source_sha256("行こう")],
+        )
 
 
 def test_sanitizer_repairs_common_mojibake_and_duplicate_lines() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -13,6 +14,11 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 from .artifacts import dump_debug_artifacts
 from .config import AppConfig, PostprocessConfig
+from .contracts.mapping import (
+    ValidatedTranslationBatch,
+    bind_validated_values,
+    build_request_map,
+)
 from .detector import DetectionResult, TextGroup, TextRegion, detect_text_regions
 from .geometry import center_distance, containment_ratio, iom, merge_bbox
 from .image_io import read_image, write_image
@@ -365,6 +371,8 @@ def _merge_group_objects(a: TextGroup, b: TextGroup) -> TextGroup:
         status=translation_best.status if translation_best.translation_valid else best.status,
         skip_reason="" if translation_best.translation_valid else best.skip_reason,
         sort_key=min(a.sort_key, b.sort_key),
+        mapping_region_key=translation_best.mapping_region_key,
+        mapping_chain=dict(translation_best.mapping_chain),
         mask=_merge_group_masks(a, b, merged_bbox),
     )
 
@@ -751,41 +759,66 @@ def _build_page_translation_units(groups: list[TextGroup]) -> tuple[list[TextGro
     return ordered, [group.ocr_text for group in ordered]
 
 
+def _mapping_region_key(page_id: str, group: TextGroup) -> str:
+    identity_parts = sorted(group.region_ids) or [group.id]
+    material = "|".join(
+        [page_id, *identity_parts, *(str(value) for value in group.bbox)]
+    )
+    return "group:" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+
+
 def _request_translations(
     groups: list[TextGroup],
+    page_id: str,
     config: AppConfig,
     glossary: dict[str, str],
-) -> list[str]:
-    _ordered, texts = _build_page_translation_units(groups)
+) -> ValidatedTranslationBatch:
+    ordered, texts = _build_page_translation_units(groups)
     if not texts:
-        return []
+        return bind_validated_values(build_request_map(page_id, []), [])
+    for group in ordered:
+        if not group.mapping_region_key:
+            group.mapping_region_key = _mapping_region_key(page_id, group)
+    request = build_request_map(
+        page_id, ((group.mapping_region_key, group.ocr_text) for group in ordered)
+    )
+    item_ids = [item.item_id for item in request.items]
 
     if not config.postprocess.enable_group_translate:
         if config.openrouter.translation_mode == "context":
-            return translate_with_context(
+            values = translate_with_context(
                 texts,
                 config.openrouter,
                 glossary,
                 context_size=config.openrouter.context_size,
+                item_ids=item_ids,
             )
-        return translate_batch(texts, config.openrouter, glossary)
+        else:
+            values = translate_batch(
+                texts, config.openrouter, glossary, item_ids=item_ids
+            )
+        return bind_validated_values(request, values)
 
     total_chars = sum(len(text) for text in texts)
     should_fallback_window = total_chars > 6000 or len(texts) > 120
     if config.openrouter.page_context_mode == "page" and not should_fallback_window:
-        return translate_page(texts, config.openrouter, glossary)
-    if config.openrouter.translation_mode == "context":
-        return translate_with_context(
+        values = translate_page(texts, config.openrouter, glossary, item_ids=item_ids)
+    elif config.openrouter.translation_mode == "context":
+        values = translate_with_context(
             texts,
             config.openrouter,
             glossary,
             context_size=config.openrouter.context_size,
+            item_ids=item_ids,
         )
-    return translate_batch(texts, config.openrouter, glossary)
+    else:
+        values = translate_batch(texts, config.openrouter, glossary, item_ids=item_ids)
+    return bind_validated_values(request, values)
 
 
 def _translate_groups(
     groups: list[TextGroup],
+    page_id: str,
     config: AppConfig,
     glossary: dict[str, str],
 ) -> None:
@@ -809,24 +842,29 @@ def _translate_groups(
     if not translatable:
         return
 
+    for group in translatable:
+        if not group.mapping_region_key:
+            group.mapping_region_key = _mapping_region_key(page_id, group)
+
     try:
-        translations = _request_translations(translatable, config, glossary)
+        translations = _request_translations(translatable, page_id, config, glossary)
     except Exception as error:  # noqa: BLE001 - page boundary must preserve source on failure
         console.print(f"[red]本頁翻譯失敗，保留原文：{error}[/]")
         for group in translatable:
+            group.translation = ""
+            group.translation_valid = False
             group.status = "translation_failed"
             group.skip_reason = str(error)
         return
 
-    if len(translations) < len(translatable):
-        translations = translations + [""] * (len(translatable) - len(translations))
-
-    for group, raw_translation in zip(translatable, translations):
+    for group in translatable:
+        raw_translation = translations.by_region_key[group.mapping_region_key]
         translation = sanitize_translation_text(raw_translation, source=group.ocr_text)
         validation = validate_translation(group.ocr_text, translation, config.openrouter)
         group.translation = translation if validation.valid else ""
         group.translation_valid = validation.valid
         if validation.valid:
+            group.mapping_chain = translations.chain_for(group.mapping_region_key)
             group.status = "ready"
             group.skip_reason = ""
         else:
@@ -875,6 +913,8 @@ def process_single_page(
     if image is None:
         raise ValueError(f"無法讀取圖片：{image_path}")
     original = image.copy()
+    with image_path.open("rb") as source_file:
+        page_id = hashlib.file_digest(source_file, "sha256").hexdigest()
     console.print(f"\n[bold]處理：{image_path.name}[/]")
 
     detection = detect_text_regions(image, config.detection, config.postprocess)
@@ -943,7 +983,7 @@ def process_single_page(
 
     groups = _merge_duplicate_groups(groups, config.postprocess)
     groups = _refresh_group_order(groups, regions_by_id, config.postprocess)
-    _translate_groups(groups, config, glossary)
+    _translate_groups(groups, page_id, config, glossary)
     groups_after_translation = _merge_translation_duplicates(groups, config.postprocess)
     if len(groups_after_translation) != len(groups):
         console.print(
@@ -976,6 +1016,9 @@ def process_single_page(
         regions_by_id,
         config,
     )
+    for group in groups:
+        if group.id in layout_plans and group.mapping_chain:
+            group.mapping_chain["layout_plan"] = f"layout:{group.id}"
     layout_rejected = sum(
         group.status in {"layout_rejected", "layout_collision_rejected"}
         for group in groups
@@ -1007,6 +1050,7 @@ def process_single_page(
             layout_plan=layout_plans[group.id],
             layout_reference_image=original,
         )
+        group.mapping_chain["render_target"] = f"render:{group.id}"
 
     unresolved = [group for group in groups if not group.translation_valid]
     if unresolved:

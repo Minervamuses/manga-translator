@@ -1,4 +1,4 @@
-"""OpenRouter 漫畫翻譯：穩定編號、容錯解析、輸出清理與品質重試。"""
+"""OpenRouter 漫畫翻譯：精確 ID 綁定、輸出清理與品質重試。"""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ import httpx
 from rich.console import Console
 
 from .config import OpenRouterConfig
+from .contracts.mapping import request_map_from_ids, source_sha256
+from .contracts.translation import parse_translation_response
 
 console = Console()
 MAX_RETRIES = 5
@@ -86,8 +88,24 @@ def _item_id(index: int) -> str:
     return f"T{index:04d}"
 
 
-def _serialize_items(texts: Iterable[str]) -> str:
-    items = [{"id": _item_id(index), "source": text} for index, text in enumerate(texts)]
+def _normalized_item_ids(texts: list[str], item_ids: list[str] | None) -> list[str]:
+    resolved = item_ids or [_item_id(index) for index in range(len(texts))]
+    if len(resolved) != len(texts) or len(set(resolved)) != len(resolved):
+        raise ValueError("item_ids must be unique and match texts")
+    return resolved
+
+
+def _serialize_items(texts: Iterable[str], item_ids: list[str] | None = None) -> str:
+    material = list(texts)
+    resolved_ids = _normalized_item_ids(material, item_ids)
+    items = [
+        {
+            "id": resolved_ids[index],
+            "source_sha256": source_sha256(text),
+            "source": text,
+        }
+        for index, text in enumerate(material)
+    ]
     return json.dumps(items, ensure_ascii=False, indent=2)
 
 
@@ -104,13 +122,15 @@ def _glossary_block(glossary: dict[str, str] | None, texts: list[str]) -> str:
     return json.dumps(used, ensure_ascii=False, indent=2)
 
 
-def _translation_rules(target_id: str | None = None) -> str:
+def _translation_rules(
+    target_id: str | None = None, *, example_id: str | None = None
+) -> str:
     item_rule = (
         f"只輸出 role=target 的 {target_id}，而且剛好一次；不得輸出 context 項目。"
         if target_id is not None
         else "每個輸入 id 必須剛好輸出一次，不得合併、拆分、遺漏或重複。"
     )
-    example_id = target_id or "T0000"
+    example_id = target_id or example_id or "T0000"
     return f"""規則：
 1. 將 source 翻成自然、口語化的台灣繁體中文，保留人物語氣與情緒。
 2. 擬聲詞可翻成自然中文擬聲詞；專名嚴格遵守詞彙表。
@@ -120,31 +140,44 @@ def _translation_rules(target_id: str | None = None) -> str:
 6. 不得自行增加原文沒有的省略號、直線分隔符（例如 |、||、丨）、引號或舞台標記。
 7. 日文長音符「ー」只表示讀音，不是破折號；不得翻成「—」「——」「―」「─」等線條。
 8. 譯文必須精簡，同一資訊只說一次，不得重述、拼接整句與半句或輸出重複片段。
-9. 只回傳合法 JSON：{{"translations":[{{"id":"{example_id}","text":"翻譯"}}]}}。"""
+9. 每項必須原樣回傳該輸入的 source_sha256，作為來源綁定證據。
+10. 只回傳合法 JSON：{{"translations":[{{"id":"{example_id}","source_sha256":"輸入雜湊","text":"翻譯"}}]}}。"""
 
 
-def _build_prompt(texts: list[str], glossary: dict[str, str] | None = None) -> str:
+def _build_prompt(
+    texts: list[str],
+    glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
+) -> str:
+    resolved_ids = _normalized_item_ids(texts, item_ids)
     return f"""你是專業的日文漫畫翻譯者。
 
-{_translation_rules()}
+{_translation_rules(example_id=resolved_ids[0] if resolved_ids else None)}
 
 詞彙表（日文 → 繁體中文）：
 {_glossary_block(glossary, texts)}
 
 待翻譯資料：
-{_serialize_items(texts)}"""
+{_serialize_items(texts, resolved_ids)}"""
 
 
-def _build_page_prompt(texts: list[str], glossary: dict[str, str] | None = None) -> str:
+def _build_page_prompt(
+    texts: list[str],
+    glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
+) -> str:
+    resolved_ids = _normalized_item_ids(texts, item_ids)
     return f"""你是專業的日文漫畫翻譯者。以下資料來自同一頁漫畫，順序就是閱讀順序；請利用整頁上下文處理省略主詞、語氣與前後呼應。
 
-{_translation_rules()}
+{_translation_rules(example_id=resolved_ids[0] if resolved_ids else None)}
 
 詞彙表（日文 → 繁體中文）：
 {_glossary_block(glossary, texts)}
 
 同頁對白：
-{_serialize_items(texts)}"""
+{_serialize_items(texts, resolved_ids)}"""
 
 
 def _build_prompt_with_context(
@@ -154,14 +187,17 @@ def _build_prompt_with_context(
     prev_translations: dict[int, str] | None = None,
     glossary: dict[str, str] | None = None,
     previous_invalid: str = "",
+    item_ids: list[str] | None = None,
 ) -> str:
-    target_id = _item_id(index)
+    resolved_ids = _normalized_item_ids(texts, item_ids)
+    target_id = resolved_ids[index]
     start = max(0, index - context_size)
     end = min(len(texts), index + context_size + 1)
     context: list[dict[str, str]] = []
     for current in range(start, end):
         item: dict[str, str] = {
-            "id": _item_id(current),
+            "id": resolved_ids[current],
+            "source_sha256": source_sha256(texts[current]),
             "source": texts[current],
             "role": "target" if current == index else "context",
         }
@@ -197,136 +233,24 @@ def _strip_code_fences(text: str) -> str:
     return stripped.strip()
 
 
-def _extract_balanced_json(text: str) -> str | None:
-    """從模型可能附帶的前後文字中擷取第一個完整 JSON object/array。"""
-    for start, char in enumerate(text):
-        if char not in "[{":
-            continue
-        opening = char
-        closing = "]" if opening == "[" else "}"
-        depth = 0
-        in_string = False
-        escaped = False
-        for index in range(start, len(text)):
-            current = text[index]
-            if in_string:
-                if escaped:
-                    escaped = False
-                elif current == "\\":
-                    escaped = True
-                elif current == '"':
-                    in_string = False
-                continue
-            if current == '"':
-                in_string = True
-            elif current == opening:
-                depth += 1
-            elif current == closing:
-                depth -= 1
-                if depth == 0:
-                    return text[start : index + 1]
-        # 此起點沒有形成合法 JSON，繼續找下一個。
-    return None
-
-
-def _parse_json_payload(payload: Any, count: int) -> list[str] | None:
-    translations = [""] * count
-    found = False
-
-    if isinstance(payload, dict):
-        if "translations" in payload:
-            payload = payload["translations"]
-        elif "items" in payload:
-            payload = payload["items"]
-        else:
-            for key, value in payload.items():
-                match = re.fullmatch(r"(?:T)?(\d+)", str(key), flags=re.IGNORECASE)
-                if not match or not isinstance(value, (str, int, float)):
-                    continue
-                index = int(match.group(1))
-                if 0 <= index < count:
-                    translations[index] = sanitize_translation_text(str(value))
-                    found = True
-            return translations if found else None
-
-    if isinstance(payload, list):
-        if all(isinstance(item, str) for item in payload) and len(payload) == count:
-            return [sanitize_translation_text(str(item)) for item in payload]
-
-        if count == 1 and len(payload) == 1 and isinstance(payload[0], dict):
-            item = payload[0]
-            text = item.get("text", item.get("translation", item.get("translated_text", "")))
-            if isinstance(text, (str, int, float)):
-                return [sanitize_translation_text(str(text))]
-
-        for position, item in enumerate(payload):
-            if not isinstance(item, dict):
-                continue
-            raw_id = item.get("id", item.get("index", position))
-            text = item.get("text", item.get("translation", item.get("translated_text", "")))
-            match = re.search(r"(\d+)", str(raw_id))
-            if match and isinstance(text, (str, int, float)):
-                index = int(match.group(1))
-                if 0 <= index < count:
-                    translations[index] = sanitize_translation_text(str(text))
-                    found = True
-    return translations if found else None
-
-
-def _parse_numbered_lines(response_text: str, count: int) -> list[str] | None:
-    translations = [""] * count
-    found = False
-    pattern = re.compile(
-        r"^\s*(?:[-*]\s*)?(?:\[|【|\()?\s*(?:T)?(\d+)\s*(?:\]|】|\))?\s*"
-        r"(?:[:：=\-–—]\s*)?(.*?)\s*$",
-        flags=re.IGNORECASE,
-    )
-    for line in response_text.splitlines():
-        match = pattern.match(line)
-        if not match:
-            continue
-        # 沒有括號、T 前綴或分隔符時，避免把普通數字句誤認為編號。
-        prefix = line[: match.start(2)]
-        if not any(token in prefix for token in ("[", "【", "(", "T", "t", ":", "：", "=", "-")):
-            continue
-        index = int(match.group(1))
-        if 0 <= index < count:
-            translations[index] = sanitize_translation_text(match.group(2))
-            found = True
-    return translations if found else None
-
-
-def _parse_response(response_text: str, count: int) -> list[str]:
-    """解析 JSON、編號行與單句 fallback，始終回傳固定長度。"""
+def _parse_response(
+    response_text: str,
+    count: int,
+    *,
+    expected_ids: list[str] | None = None,
+    source_hashes: list[str] | None = None,
+) -> list[str]:
+    """Parse one exact-ID JSON response or reject the entire response."""
     if count <= 0:
         return []
-
-    cleaned = _strip_code_fences(response_text)
-    json_candidates = [cleaned]
-    balanced = _extract_balanced_json(cleaned)
-    if balanced and balanced != cleaned:
-        json_candidates.append(balanced)
-
-    for candidate in json_candidates:
-        try:
-            payload = json.loads(candidate)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        parsed = _parse_json_payload(payload, count)
-        if parsed is not None:
-            return parsed
-
-    parsed_lines = _parse_numbered_lines(cleaned, count)
-    if parsed_lines is not None:
-        return parsed_lines
-
-    nonempty_lines = [sanitize_translation_text(line) for line in cleaned.splitlines()]
-    nonempty_lines = [line for line in nonempty_lines if line]
-    if len(nonempty_lines) == count:
-        return nonempty_lines
-    if count == 1:
-        return [sanitize_translation_text(cleaned)]
-    return [""] * count
+    item_ids = expected_ids or [_item_id(index) for index in range(count)]
+    if source_hashes is None:
+        raise ValueError("source_hashes are required for response binding")
+    if len(item_ids) != count or len(source_hashes) != count:
+        raise ValueError("expected response metadata count mismatch")
+    request = request_map_from_ids(item_ids, source_hashes)
+    batch = parse_translation_response(response_text, request)
+    return [response.translation for response in batch.responses]
 
 
 def _strip_known_prefix(text: str) -> str:
@@ -508,11 +432,6 @@ def sanitize_translation_text(text: str, source: str | None = None) -> str:
     if not result or not _has_meaningful_character(result):
         return ""
     return result
-
-
-def _normalize_context_translation(response_text: str) -> str:
-    parsed = _parse_response(response_text, 1)
-    return parsed[0] if parsed else ""
 
 
 def _is_kana(char: str) -> bool:
@@ -725,7 +644,9 @@ async def _repair_one_translation(
     glossary: dict[str, str] | None,
     previous_translations: dict[int, str] | None = None,
     previous_invalid: str = "",
+    item_ids: list[str] | None = None,
 ) -> str:
+    resolved_ids = _normalized_item_ids(texts, item_ids)
     invalid = previous_invalid
     for _attempt in range(cfg.content_retries + 1):
         prompt = _build_prompt_with_context(
@@ -735,13 +656,19 @@ async def _repair_one_translation(
             prev_translations=previous_translations,
             glossary=glossary,
             previous_invalid=invalid,
+            item_ids=resolved_ids,
         )
         response = await _request_with_retry(
             client,
             _payload(prompt, cfg, retry=True, max_tokens=768),
             cfg,
         )
-        result = _parse_response(response, 1)[0]
+        result = _parse_response(
+            response,
+            1,
+            expected_ids=[resolved_ids[index]],
+            source_hashes=[source_sha256(texts[index])],
+        )[0]
         validation = validate_translation(texts[index], result, cfg)
         if validation.valid:
             return sanitize_translation_text(result, source=texts[index])
@@ -755,7 +682,9 @@ async def _validate_and_repair_batch(
     translations: list[str],
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None,
+    item_ids: list[str] | None = None,
 ) -> list[str]:
+    resolved_ids = _normalized_item_ids(texts, item_ids)
     repaired = list(translations[: len(texts)])
     if len(repaired) < len(texts):
         repaired.extend([""] * (len(texts) - len(repaired)))
@@ -770,7 +699,9 @@ async def _validate_and_repair_batch(
             continue
 
         issue_text = ",".join(validation.issues) or "invalid"
-        console.print(f"[yellow]翻譯項目 {_item_id(index)} 驗證失敗（{issue_text}），單句重試[/]")
+        console.print(
+            f"[yellow]翻譯項目 {resolved_ids[index]} 驗證失敗（{issue_text}），單句重試[/]"
+        )
         repaired[index] = await _repair_one_translation(
             client,
             texts,
@@ -779,6 +710,7 @@ async def _validate_and_repair_batch(
             glossary,
             previous_translations=known,
             previous_invalid=candidate,
+            item_ids=resolved_ids,
         )
         if repaired[index]:
             known[index] = repaired[index]
@@ -789,9 +721,12 @@ async def translate_batch_async(
     texts: list[str],
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
 ) -> list[str]:
     if not texts:
         return []
+    resolved_ids = _normalized_item_ids(texts, item_ids)
 
     indexed = [(index, text) for index, text in enumerate(texts) if text.strip()]
     if not indexed:
@@ -803,15 +738,21 @@ async def translate_batch_async(
             batch = indexed[batch_start : batch_start + cfg.batch_size]
             batch_texts = [text for _, text in batch]
             batch_indices = [index for index, _ in batch]
+            batch_ids = [resolved_ids[index] for index in batch_indices]
 
             response = await _request_with_retry(
                 client,
-                _payload(_build_prompt(batch_texts, glossary), cfg),
+                _payload(_build_prompt(batch_texts, glossary, item_ids=batch_ids), cfg),
                 cfg,
             )
-            parsed = _parse_response(response, len(batch_texts))
+            parsed = _parse_response(
+                response,
+                len(batch_texts),
+                expected_ids=batch_ids,
+                source_hashes=[source_sha256(text) for text in batch_texts],
+            )
             parsed = await _validate_and_repair_batch(
-                client, batch_texts, parsed, cfg, glossary
+                client, batch_texts, parsed, cfg, glossary, item_ids=batch_ids
             )
             for local_index, original_index in enumerate(batch_indices):
                 all_translations[original_index] = parsed[local_index]
@@ -825,6 +766,8 @@ async def translate_page_async(
     texts: list[str],
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
 ) -> list[str]:
     """整頁上下文翻譯；只對缺漏／可疑項目做單句修復。"""
     if not texts:
@@ -834,16 +777,25 @@ async def translate_page_async(
     if not indexed:
         return [""] * len(texts)
     nonempty_texts = [text for _, text in indexed]
+    resolved_ids = _normalized_item_ids(texts, item_ids)
+    nonempty_ids = [resolved_ids[index] for index, _text in indexed]
 
     async with httpx.AsyncClient(timeout=cfg.request_timeout_sec) as client:
         response = await _request_with_retry(
             client,
-            _payload(_build_page_prompt(nonempty_texts, glossary), cfg),
+            _payload(
+                _build_page_prompt(nonempty_texts, glossary, item_ids=nonempty_ids), cfg
+            ),
             cfg,
         )
-        parsed = _parse_response(response, len(nonempty_texts))
+        parsed = _parse_response(
+            response,
+            len(nonempty_texts),
+            expected_ids=nonempty_ids,
+            source_hashes=[source_sha256(text) for text in nonempty_texts],
+        )
         parsed = await _validate_and_repair_batch(
-            client, nonempty_texts, parsed, cfg, glossary
+            client, nonempty_texts, parsed, cfg, glossary, item_ids=nonempty_ids
         )
 
     all_translations = [""] * len(texts)
@@ -857,9 +809,12 @@ async def translate_with_context_async(
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None = None,
     context_size: int = 5,
+    *,
+    item_ids: list[str] | None = None,
 ) -> list[str]:
     if not texts:
         return []
+    resolved_ids = _normalized_item_ids(texts, item_ids)
 
     translations: dict[int, str] = {}
     nonempty_count = sum(bool(text.strip()) for text in texts)
@@ -879,13 +834,19 @@ async def translate_with_context_async(
                 context_size=context_size,
                 prev_translations=translations,
                 glossary=glossary,
+                item_ids=resolved_ids,
             )
             response = await _request_with_retry(
                 client,
                 _payload(prompt, cfg, max_tokens=768),
                 cfg,
             )
-            result = _normalize_context_translation(response)
+            result = _parse_response(
+                response,
+                1,
+                expected_ids=[resolved_ids[index]],
+                source_hashes=[source_sha256(text)],
+            )[0]
             validation = validate_translation(text, result, cfg)
             if not validation.valid:
                 result = await _repair_one_translation(
@@ -896,6 +857,7 @@ async def translate_with_context_async(
                     glossary,
                     previous_translations=translations,
                     previous_invalid=result,
+                    item_ids=resolved_ids,
                 )
             translations[index] = sanitize_translation_text(result, source=text)
             done += 1
@@ -908,16 +870,20 @@ def translate_batch(
     texts: list[str],
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
 ) -> list[str]:
-    return asyncio.run(translate_batch_async(texts, cfg, glossary))
+    return asyncio.run(translate_batch_async(texts, cfg, glossary, item_ids=item_ids))
 
 
 def translate_page(
     texts: list[str],
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
 ) -> list[str]:
-    return asyncio.run(translate_page_async(texts, cfg, glossary))
+    return asyncio.run(translate_page_async(texts, cfg, glossary, item_ids=item_ids))
 
 
 def translate_with_context(
@@ -925,5 +891,11 @@ def translate_with_context(
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None = None,
     context_size: int = 5,
+    *,
+    item_ids: list[str] | None = None,
 ) -> list[str]:
-    return asyncio.run(translate_with_context_async(texts, cfg, glossary, context_size))
+    return asyncio.run(
+        translate_with_context_async(
+            texts, cfg, glossary, context_size, item_ids=item_ids
+        )
+    )

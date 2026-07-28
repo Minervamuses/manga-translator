@@ -84,6 +84,8 @@ class TextGroup:
     rendered_direction: str = ""
     layout_mode: str = ""
     layout_info: dict[str, Any] = field(default_factory=dict)
+    mapping_region_key: str = ""
+    mapping_chain: dict[str, str | None] = field(default_factory=dict)
     # group mask 是與 bbox 對齊的局部 mask，避免每個群組複製一張整頁遮罩。
     mask: np.ndarray | None = field(default=None, repr=False, compare=False)
 

@@ -8,6 +8,7 @@ import pytest
 from manga_translator.domain.ids import page_id_from_bytes
 from manga_translator.domain.models import ArtifactRef, PageDocument, SourcePage
 from manga_translator.storage.artifact_store import (
+    ArtifactIntegrityError,
     ArtifactStore,
     NetworkShareError,
     assess_storage_path,
@@ -44,6 +45,26 @@ def test_same_bytes_create_one_atomic_artifact(tmp_path: Path) -> None:
     assert store.read_bytes(first.sha256) == b"same bytes"
     assert list(store.iter_hashes()) == [first.sha256]
     assert not list(store.root.rglob("*.tmp"))
+
+
+def test_existing_artifact_is_revalidated_before_reuse(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    artifact = store.put_bytes(b"original", media_type="application/octet-stream")
+    store.path_for(artifact.sha256).write_bytes(b"tampered")
+
+    with pytest.raises(ArtifactIntegrityError, match="content hashes to"):
+        store.put_bytes(b"original", media_type="application/octet-stream")
+
+
+def test_read_and_exists_fail_closed_on_corrupt_artifact(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    artifact = store.put_bytes(b"original", media_type="application/octet-stream")
+    store.path_for(artifact.sha256).write_bytes(b"short")
+
+    with pytest.raises(ArtifactIntegrityError, match="has size 5, expected 8"):
+        store.exists(artifact.sha256, expected_size=artifact.size_bytes)
+    with pytest.raises(ArtifactIntegrityError, match="has size 5, expected 8"):
+        store.read_bytes(artifact.sha256, expected_size=artifact.size_bytes)
 
 
 def test_database_migration_is_idempotent_and_enables_foreign_keys(tmp_path: Path) -> None:

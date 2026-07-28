@@ -17,6 +17,10 @@ class NetworkShareError(ValueError):
     pass
 
 
+class ArtifactIntegrityError(RuntimeError):
+    """Raised when content-addressed bytes do not match their recorded identity."""
+
+
 @dataclass(frozen=True)
 class StoragePathAssessment:
     kind: Literal["local", "network", "unknown"]
@@ -66,10 +70,37 @@ class ArtifactStore:
         self._validate_sha256(sha256)
         return self.root / sha256[:2] / sha256[2:]
 
+    @staticmethod
+    def _verify_bytes(
+        data: bytes, *, sha256: str, expected_size: int | None = None
+    ) -> None:
+        if expected_size is not None and len(data) != expected_size:
+            raise ArtifactIntegrityError(
+                f"artifact {sha256} has size {len(data)}, expected {expected_size}"
+            )
+        actual_sha256 = hashlib.sha256(data).hexdigest()
+        if actual_sha256 != sha256:
+            raise ArtifactIntegrityError(
+                f"artifact {sha256} content hashes to {actual_sha256}"
+            )
+
+    def verify(self, sha256: str, *, expected_size: int | None = None) -> bool:
+        """Return whether an artifact exists, raising if existing bytes are corrupt."""
+
+        path = self.path_for(sha256)
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            return False
+        self._verify_bytes(data, sha256=sha256, expected_size=expected_size)
+        return True
+
     def put_bytes(self, data: bytes, *, media_type: str) -> ArtifactRef:
         sha256 = hashlib.sha256(data).hexdigest()
         destination = self.path_for(sha256)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if self.verify(sha256, expected_size=len(data)):
+            return ArtifactRef(sha256=sha256, media_type=media_type, size_bytes=len(data))
         if not destination.exists():
             temporary = destination.parent / f".{destination.name}.{uuid.uuid4().hex}.tmp"
             try:
@@ -84,6 +115,8 @@ class ArtifactStore:
                     self._fsync_directory(destination.parent)
             finally:
                 temporary.unlink(missing_ok=True)
+        if not self.verify(sha256, expected_size=len(data)):
+            raise RuntimeError("artifact did not become durable")
         return ArtifactRef(sha256=sha256, media_type=media_type, size_bytes=len(data))
 
     @staticmethod
@@ -96,11 +129,13 @@ class ArtifactStore:
         finally:
             os.close(descriptor)
 
-    def read_bytes(self, sha256: str) -> bytes:
-        return self.path_for(sha256).read_bytes()
+    def read_bytes(self, sha256: str, *, expected_size: int | None = None) -> bytes:
+        data = self.path_for(sha256).read_bytes()
+        self._verify_bytes(data, sha256=sha256, expected_size=expected_size)
+        return data
 
-    def exists(self, sha256: str) -> bool:
-        return self.path_for(sha256).is_file()
+    def exists(self, sha256: str, *, expected_size: int | None = None) -> bool:
+        return self.verify(sha256, expected_size=expected_size)
 
     def delete(self, sha256: str) -> bool:
         path = self.path_for(sha256)

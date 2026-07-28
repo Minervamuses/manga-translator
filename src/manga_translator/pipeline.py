@@ -49,7 +49,6 @@ from .geometry import center_distance, containment_ratio, iom, merge_bbox
 from .image_io import (
     ImageEncodeError,
     ImageWriteError,
-    read_image,
     write_image,
     write_image_or_raise,
 )
@@ -126,6 +125,10 @@ class TranslationBundleReplayError(RuntimeError):
         self.error_type = error_type
         self.mapping_issues = mapping_issues
         self.raw_artifacts = raw_artifacts
+
+
+class SourceImageDecodeError(ValueError):
+    """The exact source bytes are durable but do not encode a supported image."""
 
 
 def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
@@ -1668,6 +1671,12 @@ def _build_pipeline_stage_runners(
     source_media_type = _source_media_type(source_bytes, image_path)
 
     def source_stage(_context: StageContext, _inputs: StageInputs) -> StageOutputs:
+        decoded = cv2.imdecode(
+            np.frombuffer(source_bytes, dtype=np.uint8),
+            cv2.IMREAD_UNCHANGED,
+        )
+        if decoded is None:
+            raise SourceImageDecodeError(f"無法讀取圖片：{image_path}")
         return StageOutputs(
             (ArtifactPayload(source_bytes, source_media_type, "source"),)
         )
@@ -2199,10 +2208,11 @@ def _failure_result_issue(
         details["raw_response_artifacts"] = [
             reference.to_dict() for reference in raw_response_refs
         ]
+    source_decode_failed = isinstance(error, SourceImageDecodeError)
     return ResultIssue(
-        code=f"{failure.stage.value}_failed",
+        code=("image_read_failed" if source_decode_failed else f"{failure.stage.value}_failed"),
         message=str(error),
-        stage=failure.stage.value,
+        stage=("decode" if source_decode_failed else failure.stage.value),
         page_id=page_id,
         details=details,
     )
@@ -2549,7 +2559,14 @@ def _document_from_page_result(
                 )
                 recorded_translation.add(revision.revision_id)
             elif not group.translation_valid:
-                if group.status.startswith("ocr"):
+                legacy_code: str | None = None
+                severity = IssueSeverity.WARNING
+                if group.status == "ocr_failed":
+                    code = IssueCode.OCR_FAILED
+                    issue_stage = StageName.OCR
+                    legacy_code = "ocr_group_failed"
+                    severity = IssueSeverity.ERROR
+                elif group.status.startswith("ocr"):
                     code = IssueCode.OCR_REJECTED
                     issue_stage = StageName.OCR
                 elif "layout" in group.status or "collision" in group.status:
@@ -2561,12 +2578,18 @@ def _document_from_page_result(
                 group_issues.append(
                     Issue(
                         code=code,
-                        severity=IssueSeverity.WARNING,
+                        severity=severity,
                         stage=issue_stage,
                         message=group.skip_reason,
                         page_id=page.page_id,
                         region_id=revision.region_id,
-                        details={"group_id": group.id, "group_status": group.status},
+                        details={
+                            "group_id": group.id,
+                            "group_status": group.status,
+                            "reason": group.skip_reason or group.status,
+                            "region_ids": list(group.region_ids),
+                            **({"legacy_code": legacy_code} if legacy_code else {}),
+                        },
                     )
                 )
     stage_records = _stage_records(outcomes)
@@ -2802,11 +2825,15 @@ def _page_result_from_document(
         mapping_chains=mappings,
         issues=[
             ResultIssue(
-                code=issue.code.value,
+                code=str(issue.details.get("legacy_code", issue.code.value)),
                 message=issue.message,
                 stage=issue.stage.value,
                 page_id=issue.page_id,
-                details=issue.details,
+                details={
+                    key: value
+                    for key, value in issue.details.items()
+                    if key != "legacy_code"
+                },
             )
             for issue in document.issues
         ],
@@ -2890,8 +2917,9 @@ def process_single_page_staged(
     dump_json: bool,
     save_intermediate: bool,
     prep_manual: bool,
+    source_bytes: bytes | None = None,
 ) -> PageResult:
-    source_bytes = image_path.read_bytes()
+    source_bytes = image_path.read_bytes() if source_bytes is None else source_bytes
     page_id = hashlib.sha256(source_bytes).hexdigest()
     previous = store.load_page_document(job_id=job_id, page_id=page_id)
     if previous is None:
@@ -2987,272 +3015,42 @@ def process_single_page(
     prep_manual: bool = False,
     *,
     page_id: str | None = None,
+    state_dir: Path | None = None,
+    job_id: str = "single",
+    resume: bool = False,
+    force_stage: StageName | None = None,
 ) -> PageResult:
-    page_id = page_id or _page_id_for_path(image_path)
-    with profile_page(page_id, str(image_path)):
-        return _process_single_page_impl(
-            image_path,
-            config,
-            glossary,
-            page_id=page_id,
-            debug=debug,
-            dump_json=dump_json,
-            save_intermediate=save_intermediate,
-            prep_manual=prep_manual,
+    source_bytes = image_path.read_bytes()
+    content_page_id = hashlib.sha256(source_bytes).hexdigest()
+    if page_id is not None and page_id != content_page_id:
+        raise ValueError("precomputed page_id does not match the immutable source bytes")
+    durable_root = (state_dir or (config.paths.output_dir / ".manga-translator")).resolve()
+    with JobStore(
+        durable_root / "jobs.sqlite3",
+        ArtifactStore(durable_root / "artifacts"),
+    ) as store:
+        store.ensure_job(
+            job_id,
+            config={
+                "model": config.openrouter.model,
+                "input_dir": str(image_path.parent),
+            },
         )
-
-
-def _process_single_page_impl(
-    image_path: Path,
-    config: AppConfig,
-    glossary: dict[str, str],
-    *,
-    page_id: str,
-    debug: bool,
-    dump_json: bool,
-    save_intermediate: bool,
-    prep_manual: bool,
-) -> PageResult:
-    with profile_span("decode"):
-        image = read_image(image_path)
-    if image is None:
-        message = f"無法讀取圖片：{image_path}"
-        return PageResult(
-            page_id=page_id,
-            source_path=image_path,
-            status="failed",
-            issues=[
-                ResultIssue(
-                    code="image_read_failed",
-                    message=message,
-                    stage="decode",
-                    page_id=page_id,
-                )
-            ],
-            stage_failure="decode",
-        )
-    original = image.copy()
-    console.print(f"\n[bold]處理：{image_path.name}[/]")
-
-    with profile_span("detection"):
-        detection = detect_text_regions(image, config.detection, config.postprocess)
-    set_page_profile_metrics(
-        page_id,
-        width=int(image.shape[1]),
-        height=int(image.shape[0]),
-        detected_groups=len(detection.groups),
-    )
-    detection_issues = [
-        ResultIssue(
-            code=issue.code,
-            message=issue.message,
-            stage="detection",
-            page_id=page_id,
-            details=issue.details,
-        )
-        for issue in detection.issues
-    ]
-    fallback_count = sum(region.source == "mask_fallback" for region in detection.regions_raw)
-    console.print(
-        f"  raw={len(detection.regions_raw)} post={len(detection.regions_post)} "
-        f"groups={len(detection.groups)} mask-fallback={fallback_count}"
-    )
-
-    regions_by_id = {region.id: region for region in detection.regions_post}
-    groups = list(detection.groups)
-    if groups:
-        try:
-            initialize_ocr_model()
-        except OCRInitializationError as error:
-            return PageResult(
-                page_id=page_id,
-                source_path=image_path,
-                status="blocked",
-                source_image=original,
-                regions=detection.regions_post,
-                mapping_chains=[GroupMappingSnapshot.from_group(group) for group in groups],
-                issues=[
-                    *detection_issues,
-                    ResultIssue(
-                        code="ocr_initialization_failed",
-                        message=str(error),
-                        stage="ocr",
-                        page_id=page_id,
-                    )
-                ],
-                stage_failure="ocr",
+        with profile_page(content_page_id, str(image_path)):
+            return process_single_page_staged(
+                image_path=image_path,
+                config=config,
+                glossary=glossary,
+                store=store,
+                job_id=job_id,
+                resume=resume,
+                force_stage=force_stage,
+                source_bytes=source_bytes,
+                debug=debug,
+                dump_json=dump_json,
+                save_intermediate=save_intermediate,
+                prep_manual=prep_manual,
             )
-
-    for group in groups:
-        try:
-            with profile_span("ocr_group", group_id=group.id):
-                ocr_result = ocr_group_detailed(
-                    image=original,
-                    group=group,
-                    regions_by_id=regions_by_id,
-                    cfg=config.ocr,
-                    image_key=str(image_path.resolve()),
-                )
-            group.ocr_text = ocr_result.text
-            group.ocr_confidence = ocr_result.confidence
-            group.ocr_source = ocr_result.source
-            group.ocr_candidates = [candidate.to_dict() for candidate in ocr_result.candidates]
-            group_regions = [
-                regions_by_id[rid]
-                for rid in group.region_ids
-                if rid in regions_by_id
-            ]
-            fallback_only = bool(group_regions) and all(
-                region.source == "mask_fallback" for region in group_regions
-            )
-            has_pixel_mask = (
-                group.mask is not None
-                and group.mask.size > 0
-                and bool(np.any(group.mask))
-            )
-            accepted, reason = assess_ocr_result(
-                ocr_result,
-                config.ocr,
-                fallback_only=fallback_only,
-            )
-            if not has_pixel_mask:
-                accepted, reason = False, "missing_text_mask"
-
-            group.ocr_text_norm = (
-                normalize_ocr_text(ocr_result.text, weak=True) if accepted else ""
-            )
-            group.status = "ocr_done" if accepted else "ocr_rejected"
-            group.skip_reason = "" if accepted else reason
-        except OCRInitializationError:
-            raise
-        except Exception as error:  # noqa: BLE001 - isolate OCR failure to this region
-            group.ocr_text = ""
-            group.ocr_text_norm = ""
-            group.ocr_confidence = 0.0
-            group.ocr_source = "error"
-            group.status = "ocr_failed"
-            group.skip_reason = str(error)
-            console.print(f"[yellow]  [{group.id}] OCR 失敗，保留原文：{error}[/]")
-
-    groups = _merge_duplicate_groups(groups, config.postprocess)
-    groups = _refresh_group_order(groups, regions_by_id, config.postprocess)
-    with profile_span("translation", group_count=len(groups)):
-        translation_issue = _translate_groups(groups, page_id, config, glossary)
-    mapping_outcomes = list(groups)
-    groups_after_translation = _merge_translation_duplicates(groups, config.postprocess)
-    if len(groups_after_translation) != len(groups):
-        console.print(
-            f"[yellow]  翻譯後再合併 {len(groups) - len(groups_after_translation)} 個強重疊重複框[/]"
-        )
-    groups_after_collision = _resolve_render_collisions(
-        groups_after_translation,
-        regions_by_id,
-        config.postprocess,
-    )
-    collision_count = sum(
-        group.status == "render_collision_rejected"
-        for group in groups_after_collision
-    )
-    if collision_count:
-        console.print(
-            f"[yellow]  阻止 {collision_count} 個強重疊譯文寫入同一位置[/]"
-        )
-    groups = _refresh_group_order(
-        groups_after_collision,
-        regions_by_id,
-        config.postprocess,
-    )
-
-    # 排版先在原圖上完整預演。放不下、會縮得過小或實際文字塊會互撞時，
-    # 直接保留原文；不能先擦掉再發現無法安全寫回。
-    with profile_span("layout", group_count=len(groups)):
-        layout_plans = _preflight_layout_plans(
-            original,
-            groups,
-            regions_by_id,
-            config,
-        )
-    _record_mapping_layout_plans(groups)
-    layout_rejected = sum(
-        group.status in {"layout_rejected", "layout_collision_rejected"}
-        for group in groups
-    )
-    if layout_rejected:
-        console.print(
-            f"[yellow]  {layout_rejected} 個譯文無法以接近原字級安全排版，已保留原文[/]"
-        )
-
-    # Inpainter 會依 translation_valid 過濾；OCR／翻譯／排版失敗的原文都不會被擦掉。
-    detection.groups = groups
-    with profile_span("inpaint"):
-        inpainted = inpaint_regions(original, detection, config.inpainting)
-    result = inpainted.copy()
-
-    renderable = [
-        group
-        for group in groups
-        if group.translation_valid and group.translation.strip() and group.id in layout_plans
-    ]
-    for group in renderable:
-        with profile_span("render", group_id=group.id):
-            result = render_text_into_group(
-                image=result,
-                group=group,
-                regions_by_id=regions_by_id,
-                text=group.translation,
-                font_path=config.paths.font,
-                cfg=config.typesetting,
-                fallback_font_path=config.paths.font_fallback,
-                layout_plan=layout_plans[group.id],
-                layout_reference_image=original,
-            )
-        group.mapping_chain["render_target"] = f"render:{group.id}"
-
-    unresolved = [group for group in groups if not group.translation_valid]
-    if unresolved:
-        console.print(
-            f"[yellow]  {len(unresolved)} 個候選未通過 OCR／翻譯／排版檢查，已保留原文；"
-            "可用 --debug --dump-json 查看原因。[/]"
-        )
-
-    if prep_manual or save_intermediate:
-        intermediate_dir = config.paths.output_dir / "intermediate"
-        intermediate_dir.mkdir(parents=True, exist_ok=True)
-        write_image(intermediate_dir / f"{image_path.stem}_original.png", original)
-        write_image(intermediate_dir / f"{image_path.stem}_inpainted.png", inpainted)
-        write_image(intermediate_dir / f"{image_path.stem}_blanked.png", inpainted)
-
-    if debug or dump_json or prep_manual:
-        _dump_debug_artifacts(
-            image_path=image_path,
-            config=config,
-            original_img=original,
-            detection=detection,
-            groups=groups,
-            inpainted_img=inpainted if (debug or save_intermediate or prep_manual) else None,
-            final_img=result if debug else None,
-        )
-
-    group_issues = _group_failure_issues(groups, page_id)
-    issues = [*detection_issues, *group_issues]
-    if translation_issue is not None:
-        issues.append(translation_issue)
-    blocking_issue = translation_issue or (group_issues[0] if group_issues else None)
-    set_page_profile_metrics(page_id, final_groups=len(groups), renderable_groups=len(renderable))
-    return PageResult(
-        page_id=page_id,
-        source_path=image_path,
-        status="blocked" if blocking_issue is not None else "succeeded",
-        image=result,
-        source_image=original,
-        regions=detection.regions_post,
-        ocr_results=[group.ocr_text for group in groups],
-        translations=[group.translation for group in groups],
-        groups=groups,
-        mapping_chains=_mapping_snapshots(mapping_outcomes, groups),
-        issues=issues,
-        stage_failure=blocking_issue.stage if blocking_issue is not None else None,
-    )
 
 
 def run_pipeline(
@@ -3290,43 +3088,15 @@ def run_pipeline(
     console.print(f"[bold]模型：{config.openrouter.model}[/]")
     console.print(f"[bold]輸出：{output_dir}[/]")
 
-    durable_store: JobStore | None = None
-    if job_id is not None:
-        durable_root = (state_dir or (output_dir / ".manga-translator")).resolve()
-        durable_store = JobStore(
-            durable_root / "jobs.sqlite3", ArtifactStore(durable_root / "artifacts")
-        )
-        durable_store.ensure_job(
-            job_id,
-            config={"model": config.openrouter.model, "input_dir": str(config.paths.input_dir)},
-        )
-    try:
-        if durable_store is None:
-            initialize_ocr_model()
-    except OCRInitializationError as error:
-        pages = [
-            PageResult(
-                page_id=_page_id_for_path(image_path),
-                source_path=image_path,
-                status="blocked",
-                issues=[
-                    ResultIssue(
-                        code="ocr_initialization_failed",
-                        message=str(error),
-                        stage="ocr",
-                        page_id=_page_id_for_path(image_path),
-                    )
-                ],
-                stage_failure="ocr",
-            )
-            for image_path in image_files
-        ]
-        for page in pages:
-            _preserve_failed_source(page, output_dir)
-        batch = BatchResult(status=derive_batch_status(pages), pages=pages)
-        _write_batch_manifest(batch, output_dir)
-        console.print(f"[red]OCR 初始化失敗：{error}[/]")
-        return batch
+    effective_job_id = job_id or "default"
+    durable_root = (state_dir or (output_dir / ".manga-translator")).resolve()
+    durable_store = JobStore(
+        durable_root / "jobs.sqlite3", ArtifactStore(durable_root / "artifacts")
+    )
+    durable_store.ensure_job(
+        effective_job_id,
+        config={"model": config.openrouter.model, "input_dir": str(config.paths.input_dir)},
+    )
 
     pages: list[PageResult] = []
     with Progress(
@@ -3341,31 +3111,19 @@ def run_pipeline(
             page_id = _page_id_for_path(image_path)
             with profile_page(page_id, str(image_path)):
                 try:
-                    if durable_store is None:
-                        page = process_single_page(
-                            image_path=image_path,
-                            config=config,
-                            glossary=glossary,
-                            debug=debug,
-                            dump_json=dump_json,
-                            save_intermediate=save_intermediate,
-                            prep_manual=prep_manual,
-                            page_id=page_id,
-                        )
-                    else:
-                        page = process_single_page_staged(
-                            image_path=image_path,
-                            config=config,
-                            glossary=glossary,
-                            store=durable_store,
-                            job_id=job_id,
-                            resume=resume,
-                            force_stage=force_stage,
-                            debug=debug,
-                            dump_json=dump_json,
-                            save_intermediate=save_intermediate,
-                            prep_manual=prep_manual,
-                        )
+                    page = process_single_page_staged(
+                        image_path=image_path,
+                        config=config,
+                        glossary=glossary,
+                        store=durable_store,
+                        job_id=effective_job_id,
+                        resume=resume,
+                        force_stage=force_stage,
+                        debug=debug,
+                        dump_json=dump_json,
+                        save_intermediate=save_intermediate,
+                        prep_manual=prep_manual,
+                    )
                 except OCRInitializationError as error:
                     page = _failed_page_result(
                         image_path,
@@ -3387,8 +3145,7 @@ def run_pipeline(
             pages.append(page)
             progress.advance(task)
 
-    if durable_store is not None:
-        durable_store.close()
+    durable_store.close()
 
     batch = BatchResult(status=derive_batch_status(pages), pages=pages)
     _write_batch_manifest(batch, output_dir)

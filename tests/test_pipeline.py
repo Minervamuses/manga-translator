@@ -194,13 +194,12 @@ detection:
     config = AppConfig.from_yaml(config_path)
     calls = 0
 
-    def fail_once() -> None:
+    def fail_once(*_args, **_kwargs):
         nonlocal calls
         calls += 1
         raise OCRInitializationError("single startup failure")
 
-    monkeypatch.setattr(pipeline_module, "initialize_ocr_model", fail_once)
-    monkeypatch.setattr(pipeline_module, "process_single_page", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline_module, "process_single_page_staged", fail_once)
 
     result = pipeline_module.run_pipeline(config)
 

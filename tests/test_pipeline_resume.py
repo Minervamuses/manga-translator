@@ -220,6 +220,28 @@ def _open_document(state: Path, page_id: str):
         return store.load_page_document(job_id="job-1", page_id=page_id)
 
 
+def test_default_batch_and_single_page_entrypoints_persist_page_documents(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    source = _source(config)
+    _install_component_fakes(monkeypatch, config)
+    durable_root = config.paths.output_dir / ".manga-translator"
+
+    batch = pipeline_module.run_pipeline(config)
+    page_id = batch.pages[0].page_id
+    single = pipeline_module.process_single_page(source, config, {})
+
+    assert batch.status == single.status == "succeeded"
+    assert not hasattr(pipeline_module, "_process_single_page_impl")
+    assert (durable_root / "jobs.sqlite3").is_file()
+    with JobStore(
+        durable_root / "jobs.sqlite3", ArtifactStore(durable_root / "artifacts")
+    ) as store:
+        assert store.load_page_document(job_id="default", page_id=page_id) is not None
+        assert store.load_page_document(job_id="single", page_id=page_id) is not None
+
+
 def test_region_mask_artifacts_require_canonical_png_and_bbox_dimensions(
     tmp_path: Path,
 ) -> None:

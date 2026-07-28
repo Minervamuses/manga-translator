@@ -184,6 +184,7 @@ class RegionRevision(DomainModel):
     line_polygons: tuple[Polygon, ...] = ()
     angle_degrees: float = 0.0
     orientation: Literal["horizontal", "vertical", "rotated", "unknown"] = "unknown"
+    kind: Literal["dialogue", "caption", "sfx", "other", "unknown"] = "unknown"
     detector_score: Score
     font_size_hint: float | None = Field(default=None, gt=0)
     mask_refs: tuple[ArtifactRef, ...] = ()
@@ -339,6 +340,22 @@ class EntityRecord(DomainModel):
         return ensure_json_object(value, field_name="attributes")
 
 
+class PanelOverride(DomainModel):
+    """Human-authored panel geometry and precedence for a page."""
+
+    panel_id: str = Field(min_length=1)
+    bbox: BoundingBox
+    order: int = Field(ge=0)
+
+
+class ReadingOrderOverride(DomainModel):
+    """Human-authored final order for one persistent region identity."""
+
+    region_id: UUID
+    panel_id: str | None = Field(default=None, min_length=1)
+    order: int = Field(ge=0)
+
+
 class PageDocument(DomainModel):
     schema_version: Literal["1.0"] = SCHEMA_VERSION
     source: SourcePage
@@ -352,6 +369,8 @@ class PageDocument(DomainModel):
     stages: tuple[StageRecord, ...] = ()
     issues: tuple[Issue, ...] = ()
     entities: tuple[EntityRecord, ...] = ()
+    panel_overrides: tuple[PanelOverride, ...] = ()
+    reading_order_overrides: tuple[ReadingOrderOverride, ...] = ()
 
     def mapping_artifact_references(self) -> tuple[ArtifactRef, ...]:
         references: list[ArtifactRef] = []
@@ -395,6 +414,26 @@ class PageDocument(DomainModel):
             raise ValueError("duplicate region_id")
         if len(revisions) != len(self.region_revisions):
             raise ValueError("duplicate revision_id")
+        panel_ids = {panel.panel_id for panel in self.panel_overrides}
+        if len(panel_ids) != len(self.panel_overrides):
+            raise ValueError("duplicate panel override ID")
+        if len({panel.order for panel in self.panel_overrides}) != len(self.panel_overrides):
+            raise ValueError("duplicate panel override order")
+        override_regions = {override.region_id for override in self.reading_order_overrides}
+        if len(override_regions) != len(self.reading_order_overrides):
+            raise ValueError("duplicate reading order override region")
+        if len({override.order for override in self.reading_order_overrides}) != len(
+            self.reading_order_overrides
+        ):
+            raise ValueError("duplicate reading order override position")
+        for panel in self.panel_overrides:
+            if panel.bbox.right > self.source.width or panel.bbox.bottom > self.source.height:
+                raise ValueError("panel override bbox outside source page")
+        for override in self.reading_order_overrides:
+            if override.region_id not in identities:
+                raise ValueError("reading order override references unknown region")
+            if override.panel_id is not None and override.panel_id not in panel_ids:
+                raise ValueError("reading order override references unknown panel")
         for identity in self.region_identities:
             revision = revisions.get(identity.active_revision_id)
             if revision is None or revision.region_id != identity.region_id:

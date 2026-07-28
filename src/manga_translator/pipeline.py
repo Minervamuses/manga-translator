@@ -356,10 +356,8 @@ def _best_ocr_group(a: TextGroup, b: TextGroup) -> TextGroup:
     )
 
 
-def _merge_group_objects(a: TextGroup, b: TextGroup) -> TextGroup:
-    best = _best_ocr_group(a, b)
-    merged_bbox = merge_bbox([a, b])
-    translation_best = max(
+def _best_translation_group(a: TextGroup, b: TextGroup) -> TextGroup:
+    return max(
         (a, b),
         key=lambda group: (
             bool(group.translation_valid and group.translation.strip()),
@@ -367,6 +365,18 @@ def _merge_group_objects(a: TextGroup, b: TextGroup) -> TextGroup:
             group.ocr_confidence,
         ),
     )
+
+
+def _merge_group_objects(
+    a: TextGroup,
+    b: TextGroup,
+    *,
+    identity_source: TextGroup | None = None,
+) -> TextGroup:
+    best = _best_ocr_group(a, b)
+    merged_bbox = merge_bbox([a, b])
+    translation_best = _best_translation_group(a, b)
+    identity_source = identity_source or a
     merged_candidates: list[dict[str, object]] = []
     seen_candidates: set[tuple[str, str]] = set()
     for candidate in a.ocr_candidates + b.ocr_candidates:
@@ -377,7 +387,7 @@ def _merge_group_objects(a: TextGroup, b: TextGroup) -> TextGroup:
         merged_candidates.append(candidate)
 
     return TextGroup(
-        id=a.id,
+        id=identity_source.id,
         region_ids=list(dict.fromkeys(a.region_ids + b.region_ids)),
         bbox=merged_bbox,
         vertical=a.vertical if _group_area(a) >= _group_area(b) else b.vertical,
@@ -486,14 +496,27 @@ def _merge_translation_duplicates(
         if consumed[index]:
             continue
         current = group
+        members = [group]
         for other_index in range(index + 1, len(groups)):
             if consumed[other_index]:
                 continue
             other = groups[other_index]
             if not _are_translation_duplicates(current, other, cfg):
                 continue
-            other.duplicate_of = current.id
-            current = _merge_group_objects(current, other)
+            survivor = _best_translation_group(current, other)
+            survivor_request = survivor.mapping_chain.get("request_item")
+            members.append(other)
+            for member in members:
+                member.duplicate_of = (
+                    None
+                    if member.mapping_chain.get("request_item") == survivor_request
+                    else survivor.id
+                )
+            current = _merge_group_objects(
+                current,
+                other,
+                identity_source=survivor,
+            )
             consumed[other_index] = True
         kept.append(current)
     return kept
@@ -876,6 +899,12 @@ def _translate_groups(
 ) -> ResultIssue | None:
     translatable: list[TextGroup] = []
     for group in groups:
+        if not group.mapping_region_key:
+            group.mapping_region_key = _mapping_region_key(page_id, group)
+        group.mapping_chain = mapping_chain_template(
+            region_key=group.mapping_region_key,
+            ocr_record=f"ocr:{group.mapping_region_key}",
+        )
         if group.status in {"ocr_rejected", "ocr_failed"}:
             continue
         accepted = bool(group.ocr_text_norm) and (
@@ -894,16 +923,11 @@ def _translate_groups(
     if not translatable:
         return None
 
-    _ordered, _texts, request = _build_translation_request(translatable, page_id)
-    for group in translatable:
-        request_item = request.by_region_key[group.mapping_region_key]
-        group.mapping_chain = mapping_chain_template(
-            region_key=group.mapping_region_key,
-            ocr_record=f"ocr:{group.mapping_region_key}",
-            request_item=request_item.item_id,
-        )
-
     try:
+        _ordered, _texts, request = _build_translation_request(translatable, page_id)
+        for group in translatable:
+            request_item = request.by_region_key[group.mapping_region_key]
+            group.mapping_chain["request_item"] = request_item.item_id
         translations = _request_translations(translatable, page_id, config, glossary)
     except Exception as error:  # noqa: BLE001 - page boundary must preserve source on failure
         console.print(f"[red]本頁翻譯失敗，保留原文：{error}[/]")

@@ -97,6 +97,43 @@ def test_translation_rejection_keeps_prefix_and_nulls_unvalidated_stages(monkeyp
     assert rejected.mapping_chain["render_target"] is None
 
 
+def test_ocr_failures_keep_completed_mapping_prefix() -> None:
+    rejected = _group("g-rejected", "")
+    rejected.ocr_text_norm = ""
+    rejected.status = "ocr_rejected"
+    failed = _group("g-failed", "")
+    failed.ocr_text_norm = ""
+    failed.status = "ocr_failed"
+
+    issue = _translate_groups([rejected, failed], "page", _config(), {})
+
+    assert issue is None
+    for group in (rejected, failed):
+        assert group.mapping_chain["region"] == group.mapping_region_key
+        assert group.mapping_chain["ocr_record"] == f"ocr:{group.mapping_region_key}"
+        assert group.mapping_chain["request_item"] is None
+        assert group.mapping_chain["raw_response_item"] is None
+        assert group.mapping_chain["validated_translation"] is None
+        assert group.mapping_chain["layout_plan"] is None
+        assert group.mapping_chain["render_target"] is None
+
+
+def test_request_map_initialization_failure_is_a_typed_translation_failure() -> None:
+    first = _group("g-a", "猫だ")
+    second = _group("g-b", "犬だ")
+    first.mapping_region_key = "group:duplicate"
+    second.mapping_region_key = "group:duplicate"
+
+    issue = _translate_groups([first, second], "page", _config(), {})
+
+    assert issue is not None
+    assert issue.code == "translation_mapping_failed"
+    assert all(group.status == "translation_failed" for group in (first, second))
+    assert all(group.mapping_chain["region"] == "group:duplicate" for group in (first, second))
+    assert all(group.mapping_chain["ocr_record"] for group in (first, second))
+    assert all(group.mapping_chain["request_item"] is None for group in (first, second))
+
+
 def test_layout_rejection_records_plan_but_not_render_target() -> None:
     rejected = _group("g-layout", "こんにちは")
     rejected.translation = "你好"
@@ -124,6 +161,7 @@ def test_post_translation_merge_preserves_each_request_mapping_outcome() -> None
     second = _group("g-b", "猫です")
     first.mapping_region_key = "group:first"
     second.mapping_region_key = "group:second"
+    second.ocr_confidence = 1.1
     request = build_request_map(
         "page",
         [
@@ -141,6 +179,8 @@ def test_post_translation_merge_preserves_each_request_mapping_outcome() -> None
     request_groups = [first, second]
     final_groups = _merge_translation_duplicates(request_groups, _config().postprocess)
     assert len(final_groups) == 1
+    assert final_groups[0].id == second.id
+    assert final_groups[0].mapping_chain["request_item"] == request.items[1].item_id
     final_groups[0].mapping_chain["layout_plan"] = f"layout:{final_groups[0].id}"
     final_groups[0].mapping_chain["render_target"] = f"render:{final_groups[0].id}"
 
@@ -151,6 +191,8 @@ def test_post_translation_merge_preserves_each_request_mapping_outcome() -> None
     assert set(by_item) == {item.item_id for item in request.items}
     assert sum(snapshot.chain["render_target"] is not None for snapshot in snapshots) == 1
     assert sum(snapshot.duplicate_of is not None for snapshot in snapshots) == 1
+    assert by_item[request.items[0].item_id].duplicate_of == second.id
+    assert by_item[request.items[1].item_id].duplicate_of is None
 
 
 def test_mapping_failure_invalidates_entire_batch_and_produces_zero_inpaint_mask(

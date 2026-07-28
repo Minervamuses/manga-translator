@@ -1,0 +1,241 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+import cv2
+import numpy as np
+import pytest
+from click.testing import CliRunner
+
+from manga_translator import cli as cli_module
+from manga_translator import pipeline as pipeline_module
+from manga_translator.config import AppConfig, OpenRouterConfig, PathsConfig
+from manga_translator.detector import DetectionResult, TextGroup
+from manga_translator.image_io import ImageEncodeError, ImageWriteError
+from manga_translator.pipeline import _translate_groups
+from manga_translator.result import BatchResult, PageResult, ResultIssue
+
+
+def _config(tmp_path: Path) -> AppConfig:
+    return AppConfig(
+        openrouter=OpenRouterConfig(api_key="test", model="test/model"),
+        paths=PathsConfig(
+            input_dir=tmp_path / "input",
+            output_dir=tmp_path / "output",
+            glossary=tmp_path / "missing-glossary.json",
+            font=tmp_path / "missing-font.ttf",
+            font_fallback=tmp_path / "missing-fallback.ttf",
+        ),
+    )
+
+
+def _write_source(path: Path, value: int = 255) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    assert cv2.imwrite(str(path), np.full((12, 12, 3), value, dtype=np.uint8))
+
+
+def _success_page(path: Path, page_id: str) -> PageResult:
+    return PageResult(
+        page_id=page_id,
+        source_path=path,
+        status="succeeded",
+        image=np.full((12, 12, 3), 127, dtype=np.uint8),
+    )
+
+
+def _failed_page(path: Path, page_id: str) -> PageResult:
+    return PageResult(
+        page_id=page_id,
+        source_path=path,
+        status="blocked",
+        issues=[
+            ResultIssue(
+                code="translation_api_failed",
+                message="provider unavailable",
+                stage="translation",
+                page_id=page_id,
+            )
+        ],
+        stage_failure="translation",
+    )
+
+
+def test_process_single_page_returns_typed_result_with_content_page_id(tmp_path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    source = config.paths.input_dir / "blank.png"
+    _write_source(source)
+    monkeypatch.setattr(
+        pipeline_module,
+        "detect_text_regions",
+        lambda image, *_args: DetectionResult(
+            regions_raw=[],
+            regions_post=[],
+            groups=[],
+            mask=np.zeros(image.shape[:2], dtype=np.uint8),
+        ),
+    )
+
+    result = pipeline_module.process_single_page(source, config, {})
+
+    assert isinstance(result, PageResult)
+    assert result.status == "succeeded"
+    assert result.page_id == hashlib.sha256(source.read_bytes()).hexdigest()
+
+
+def test_second_page_failure_is_isolated_and_manifest_is_partial(tmp_path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    first = config.paths.input_dir / "page1.png"
+    second = config.paths.input_dir / "page2.png"
+    _write_source(first, 240)
+    _write_source(second, 220)
+
+    monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
+    monkeypatch.setattr(
+        pipeline_module,
+        "process_single_page",
+        lambda image_path, *_args, **_kwargs: (
+            _success_page(image_path, "page-id-1")
+            if image_path.name == "page1.png"
+            else _failed_page(image_path, "page-id-2")
+        ),
+    )
+
+    result = pipeline_module.run_pipeline(config)
+
+    failed_output = config.paths.output_dir / "failed" / "page2.source-preserved.png"
+    assert result.status == "partial"
+    assert (config.paths.output_dir / "page1.png").is_file()
+    assert not (config.paths.output_dir / "page2.png").exists()
+    assert failed_output.read_bytes() == second.read_bytes()
+    manifest = json.loads((config.paths.output_dir / "batch-manifest.json").read_text("utf-8"))
+    assert manifest["status"] == "partial"
+    assert manifest["partial"] is True
+    assert [page["page_id"] for page in manifest["pages"]] == ["page-id-1", "page-id-2"]
+    assert manifest["pages"][1]["source_preserved"] is True
+    assert manifest["pages"][1]["output_path"] == str(failed_output)
+
+
+def test_allow_partial_changes_only_cli_exit_code(tmp_path, monkeypatch) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "openrouter:\n  api_key: test\n  model: test/model\n",
+        encoding="utf-8",
+    )
+    page = _failed_page(tmp_path / "page2.png", "page-id-2")
+    batch = BatchResult(status="partial", pages=[_success_page(tmp_path / "page1.png", "1"), page])
+    calls: list[dict[str, object]] = []
+
+    def return_partial(*_args, **kwargs):
+        calls.append(kwargs)
+        return batch
+
+    monkeypatch.setattr(cli_module, "run_pipeline", return_partial)
+    runner = CliRunner()
+
+    default = runner.invoke(cli_module.cli, ["run", "--config", str(config_path)])
+    allowed = runner.invoke(
+        cli_module.cli,
+        ["run", "--config", str(config_path), "--allow-partial"],
+    )
+
+    assert default.exit_code == 1
+    assert allowed.exit_code == 0
+    assert calls[0] == calls[1]
+
+
+def test_no_input_files_has_distinct_issue_and_non_success_result(tmp_path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    config.paths.input_dir.mkdir()
+    monkeypatch.setattr(
+        pipeline_module,
+        "initialize_ocr_model",
+        lambda: pytest.fail("OCR must not initialize without input"),
+    )
+
+    result = pipeline_module.run_pipeline(config)
+
+    assert result.status == "failed"
+    assert result.issues[0].code == "no_input_files"
+    assert result.manifest_path is not None
+
+
+def test_unreadable_image_uses_read_issue_and_failed_namespace(tmp_path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    source = config.paths.input_dir / "broken.png"
+    source.parent.mkdir()
+    source.write_bytes(b"not an image")
+    monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
+
+    result = pipeline_module.run_pipeline(config)
+
+    page = result.pages[0]
+    assert page.status == "failed"
+    assert page.issues[0].code == "image_read_failed"
+    assert page.source_preserved
+    assert page.output_path == config.paths.output_dir / "failed" / "broken.source-preserved.png"
+    assert not (config.paths.output_dir / "broken.png").exists()
+
+
+@pytest.mark.parametrize(
+    ("error", "issue_code"),
+    [
+        (ImageEncodeError("encoder rejected image"), "image_encode_failed"),
+        (ImageWriteError("disk rejected bytes"), "output_write_failed"),
+    ],
+)
+def test_encode_and_output_write_failures_have_distinct_codes(
+    tmp_path,
+    monkeypatch,
+    error,
+    issue_code,
+) -> None:
+    config = _config(tmp_path)
+    source = config.paths.input_dir / "page.png"
+    _write_source(source)
+    monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
+    monkeypatch.setattr(
+        pipeline_module,
+        "process_single_page",
+        lambda image_path, *_args, **_kwargs: _success_page(image_path, "page-id"),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "write_image_or_raise",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+    )
+
+    result = pipeline_module.run_pipeline(config)
+
+    page = result.pages[0]
+    assert page.issues[0].code == issue_code
+    assert page.source_preserved
+    assert not (config.paths.output_dir / "page.png").exists()
+
+
+def test_api_failure_has_distinct_issue_and_preserves_group_text(monkeypatch) -> None:
+    config = _config(Path("."))
+    group = TextGroup(
+        id="g1",
+        region_ids=["r1"],
+        bbox=(0, 0, 10, 10),
+        vertical=True,
+        ocr_text="猫だ",
+        ocr_text_norm="猫だ",
+        ocr_confidence=1.0,
+        status="ocr_done",
+        mask=np.full((10, 10), 255, dtype=np.uint8),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_request_translations",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("API unavailable")),
+    )
+
+    issue = _translate_groups([group], "page-id", config, {})
+
+    assert issue is not None and issue.code == "translation_api_failed"
+    assert group.status == "translation_failed"
+    assert not group.translation_valid
+    assert group.translation == ""

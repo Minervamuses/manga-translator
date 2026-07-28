@@ -8,6 +8,14 @@ import cv2
 import numpy as np
 
 
+class ImageEncodeError(RuntimeError):
+    """OpenCV could not encode an output image."""
+
+
+class ImageWriteError(OSError):
+    """Encoded image bytes could not be persisted."""
+
+
 def read_image(path: str | Path, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
     path = Path(path)
     try:
@@ -20,16 +28,26 @@ def read_image(path: str | Path, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | 
 
 
 def write_image(path: str | Path, image: np.ndarray) -> bool:
+    try:
+        write_image_or_raise(path, image)
+        return True
+    except (ImageEncodeError, ImageWriteError):
+        return False
+
+
+def write_image_or_raise(path: str | Path, image: np.ndarray) -> None:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     suffix = path.suffix.lower() or ".png"
     if suffix == ".jpeg":
         suffix = ".jpg"
     try:
         ok, encoded = cv2.imencode(suffix, image)
-        if not ok:
-            return False
+    except cv2.error as error:
+        raise ImageEncodeError(f"無法編碼圖片：{path}") from error
+    if not ok:
+        raise ImageEncodeError(f"無法編碼圖片：{path}")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         encoded.tofile(str(path))
-        return True
-    except (OSError, cv2.error):
-        return False
+    except OSError as error:
+        raise ImageWriteError(f"無法寫入圖片：{path}") from error

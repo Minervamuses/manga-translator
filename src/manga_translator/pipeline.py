@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import shutil
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -15,13 +17,20 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 from .artifacts import dump_debug_artifacts
 from .config import AppConfig, PostprocessConfig
 from .contracts.mapping import (
+    MappingContractError,
     ValidatedTranslationBatch,
     bind_validated_values,
     build_request_map,
 )
 from .detector import DetectionResult, TextGroup, TextRegion, detect_text_regions
 from .geometry import center_distance, containment_ratio, iom, merge_bbox
-from .image_io import read_image, write_image
+from .image_io import (
+    ImageEncodeError,
+    ImageWriteError,
+    read_image,
+    write_image,
+    write_image_or_raise,
+)
 from .inpainter import inpaint_regions
 from .ocr import (
     OCRInitializationError,
@@ -30,6 +39,7 @@ from .ocr import (
     normalize_ocr_text,
     ocr_group_detailed,
 )
+from .result import BatchResult, PageResult, ResultIssue, derive_batch_status
 from .translator import (
     load_glossary,
     sanitize_translation_text,
@@ -821,7 +831,7 @@ def _translate_groups(
     page_id: str,
     config: AppConfig,
     glossary: dict[str, str],
-) -> None:
+) -> ResultIssue | None:
     translatable: list[TextGroup] = []
     for group in groups:
         if group.status == "ocr_rejected":
@@ -840,7 +850,7 @@ def _translate_groups(
         translatable.append(group)
 
     if not translatable:
-        return
+        return None
 
     for group in translatable:
         if not group.mapping_region_key:
@@ -855,7 +865,12 @@ def _translate_groups(
             group.translation_valid = False
             group.status = "translation_failed"
             group.skip_reason = str(error)
-        return
+        code = (
+            "translation_mapping_failed"
+            if isinstance(error, MappingContractError)
+            else "translation_api_failed"
+        )
+        return ResultIssue(code=code, message=str(error), stage="translation", page_id=page_id)
 
     for group in translatable:
         raw_translation = translations.by_region_key[group.mapping_region_key]
@@ -874,6 +889,7 @@ def _translate_groups(
             f"  [{group.id}] {group.ocr_text} → {group.translation or '[保留原文]'}",
             markup=False,
         )
+    return None
 
 
 def _dump_debug_artifacts(
@@ -900,6 +916,14 @@ def _dump_debug_artifacts(
     )
 
 
+def _page_id_for_path(image_path: Path) -> str:
+    try:
+        with image_path.open("rb") as source_file:
+            return hashlib.file_digest(source_file, "sha256").hexdigest()
+    except OSError:
+        return hashlib.sha256(str(image_path.resolve()).encode("utf-8")).hexdigest()
+
+
 def process_single_page(
     image_path: Path,
     config: AppConfig,
@@ -908,13 +932,26 @@ def process_single_page(
     dump_json: bool = False,
     save_intermediate: bool = False,
     prep_manual: bool = False,
-) -> tuple[np.ndarray, list[TextRegion], list[str], list[str]]:
+) -> PageResult:
+    page_id = _page_id_for_path(image_path)
     image = read_image(image_path)
     if image is None:
-        raise ValueError(f"無法讀取圖片：{image_path}")
+        message = f"無法讀取圖片：{image_path}"
+        return PageResult(
+            page_id=page_id,
+            source_path=image_path,
+            status="failed",
+            issues=[
+                ResultIssue(
+                    code="image_read_failed",
+                    message=message,
+                    stage="decode",
+                    page_id=page_id,
+                )
+            ],
+            stage_failure="decode",
+        )
     original = image.copy()
-    with image_path.open("rb") as source_file:
-        page_id = hashlib.file_digest(source_file, "sha256").hexdigest()
     console.print(f"\n[bold]處理：{image_path.name}[/]")
 
     detection = detect_text_regions(image, config.detection, config.postprocess)
@@ -927,9 +964,25 @@ def process_single_page(
     regions_by_id = {region.id: region for region in detection.regions_post}
     groups = list(detection.groups)
     if groups:
-        # Preflight once so a runtime/dependency incompatibility aborts the page
-        # instead of being retried and printed for every text region.
-        initialize_ocr_model()
+        try:
+            initialize_ocr_model()
+        except OCRInitializationError as error:
+            return PageResult(
+                page_id=page_id,
+                source_path=image_path,
+                status="blocked",
+                source_image=original,
+                regions=detection.regions_post,
+                issues=[
+                    ResultIssue(
+                        code="ocr_initialization_failed",
+                        message=str(error),
+                        stage="ocr",
+                        page_id=page_id,
+                    )
+                ],
+                stage_failure="ocr",
+            )
 
     for group in groups:
         try:
@@ -983,7 +1036,7 @@ def process_single_page(
 
     groups = _merge_duplicate_groups(groups, config.postprocess)
     groups = _refresh_group_order(groups, regions_by_id, config.postprocess)
-    _translate_groups(groups, page_id, config, glossary)
+    translation_issue = _translate_groups(groups, page_id, config, glossary)
     groups_after_translation = _merge_translation_duplicates(groups, config.postprocess)
     if len(groups_after_translation) != len(groups):
         console.print(
@@ -1078,11 +1131,18 @@ def process_single_page(
             dump_json=(dump_json or prep_manual),
         )
 
-    return (
-        result,
-        detection.regions_post,
-        [group.ocr_text for group in groups],
-        [group.translation for group in groups],
+    issues = [translation_issue] if translation_issue is not None else []
+    return PageResult(
+        page_id=page_id,
+        source_path=image_path,
+        status="blocked" if translation_issue is not None else "succeeded",
+        image=result,
+        source_image=original,
+        regions=detection.regions_post,
+        ocr_results=[group.ocr_text for group in groups],
+        translations=[group.translation for group in groups],
+        issues=issues,
+        stage_failure="translation" if translation_issue is not None else None,
     )
 
 
@@ -1092,26 +1152,59 @@ def run_pipeline(
     dump_json: bool = False,
     save_intermediate: bool = False,
     prep_manual: bool = False,
-) -> None:
-    config.paths.output_dir.mkdir(parents=True, exist_ok=True)
-    glossary = load_glossary(config.paths.glossary)
+) -> BatchResult:
+    output_dir = config.paths.output_dir
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        issue = ResultIssue(code="output_write_failed", message=str(error), stage="output")
+        return BatchResult(status="failed", pages=[], issues=[issue])
 
     image_files = get_image_files(config.paths.input_dir)
     if not image_files:
-        console.print(f"[red]在 {config.paths.input_dir} 找不到任何圖片檔[/]")
-        return
+        message = f"在 {config.paths.input_dir} 找不到任何圖片檔"
+        console.print(f"[red]{message}[/]")
+        batch = BatchResult(
+            status="failed",
+            pages=[],
+            issues=[ResultIssue(code="no_input_files", message=message, stage="input")],
+        )
+        _write_batch_manifest(batch, output_dir)
+        return batch
 
+    glossary = load_glossary(config.paths.glossary)
     console.print(f"[bold]找到 {len(image_files)} 張圖片[/]")
     console.print(f"[bold]模型：{config.openrouter.model}[/]")
-    console.print(f"[bold]輸出：{config.paths.output_dir}[/]")
+    console.print(f"[bold]輸出：{output_dir}[/]")
 
-    # Load exactly once before entering the batch.  This prevents a broken OCR
-    # backend from producing a full output folder of untouched pages while the
-    # command misleadingly reports zero failed pages.
-    initialize_ocr_model()
+    try:
+        initialize_ocr_model()
+    except OCRInitializationError as error:
+        pages = [
+            PageResult(
+                page_id=_page_id_for_path(image_path),
+                source_path=image_path,
+                status="blocked",
+                issues=[
+                    ResultIssue(
+                        code="ocr_initialization_failed",
+                        message=str(error),
+                        stage="ocr",
+                        page_id=_page_id_for_path(image_path),
+                    )
+                ],
+                stage_failure="ocr",
+            )
+            for image_path in image_files
+        ]
+        for page in pages:
+            _preserve_failed_source(page, output_dir)
+        batch = BatchResult(status=derive_batch_status(pages), pages=pages)
+        _write_batch_manifest(batch, output_dir)
+        console.print(f"[red]OCR 初始化失敗：{error}[/]")
+        return batch
 
-    total_regions = 0
-    failed_pages = 0
+    pages: list[PageResult] = []
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -1121,9 +1214,8 @@ def run_pipeline(
     ) as progress:
         task = progress.add_task("翻譯中...", total=len(image_files))
         for image_path in image_files:
-            output_path = config.paths.output_dir / image_path.name
             try:
-                result_img, regions, _, _ = process_single_page(
+                page = process_single_page(
                     image_path=image_path,
                     config=config,
                     glossary=glossary,
@@ -1132,21 +1224,129 @@ def run_pipeline(
                     save_intermediate=save_intermediate,
                     prep_manual=prep_manual,
                 )
-                total_regions += len(regions)
-                if not write_image(output_path, result_img):
-                    raise OSError(f"無法寫入圖片：{output_path}")
-            except Exception as error:  # noqa: BLE001 - batch boundary preserves failed pages
-                failed_pages += 1
-                console.print(f"[red]處理 {image_path.name} 時出錯：{error}[/]")
-                original = read_image(image_path)
-                if original is not None and write_image(output_path, original):
-                    console.print(
-                        f"[yellow]  已將原圖寫入輸出，避免整本漫畫缺頁：{output_path.name}[/]"
-                    )
+            except OCRInitializationError as error:
+                page = _failed_page_result(
+                    image_path,
+                    code="ocr_initialization_failed",
+                    stage="ocr",
+                    error=error,
+                    blocked=True,
+                )
+            except Exception as error:  # noqa: BLE001 - page boundary records typed failure
+                page = _failed_page_result(
+                    image_path,
+                    code="page_processing_failed",
+                    stage="pipeline",
+                    error=error,
+                )
+            _persist_page_result(page, output_dir)
+            page.image = None
+            page.source_image = None
+            pages.append(page)
             progress.advance(task)
 
+    batch = BatchResult(status=derive_batch_status(pages), pages=pages)
+    _write_batch_manifest(batch, output_dir)
+    total_regions = sum(len(page.regions) for page in pages)
     console.print(
-        f"\n[bold green]完成！共處理 {len(image_files)} 頁，{total_regions} 個文字區域，"
-        f"失敗 {failed_pages} 頁[/]"
+        f"\n[bold]批次狀態：{batch.status}；共處理 {len(pages)} 頁，"
+        f"{total_regions} 個文字區域，失敗／阻塞 {len(batch.failed_pages)} 頁[/]"
     )
-    console.print(f"[bold]輸出目錄：{config.paths.output_dir}[/]")
+    console.print(f"[bold]輸出目錄：{output_dir}[/]")
+    return batch
+
+
+def _failed_page_result(
+    image_path: Path,
+    *,
+    code: str,
+    stage: str,
+    error: Exception,
+    blocked: bool = False,
+) -> PageResult:
+    page_id = _page_id_for_path(image_path)
+    return PageResult(
+        page_id=page_id,
+        source_path=image_path,
+        status="blocked" if blocked else "failed",
+        issues=[ResultIssue(code=code, message=str(error), stage=stage, page_id=page_id)],
+        stage_failure=stage,
+    )
+
+
+def _failed_output_path(output_dir: Path, source_path: Path) -> Path:
+    return output_dir / "failed" / f"{source_path.stem}.source-preserved{source_path.suffix}"
+
+
+def _preserve_failed_source(page: PageResult, output_dir: Path) -> None:
+    fallback_path = _failed_output_path(output_dir, page.source_path)
+    try:
+        (output_dir / page.source_path.name).unlink(missing_ok=True)
+        fallback_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(page.source_path, fallback_path)
+    except OSError as error:
+        page.status = "failed"
+        page.stage_failure = "output"
+        page.issues.append(
+            ResultIssue(
+                code="output_write_failed",
+                message=str(error),
+                stage="output",
+                page_id=page.page_id,
+            )
+        )
+        page.output_path = None
+        page.source_preserved = False
+        return
+    page.output_path = fallback_path
+    page.source_preserved = True
+
+
+def _persist_page_result(page: PageResult, output_dir: Path) -> None:
+    if not page.succeeded:
+        _preserve_failed_source(page, output_dir)
+        return
+
+    output_path = output_dir / page.source_path.name
+    try:
+        if page.image is None:
+            raise ImageEncodeError(f"沒有可編碼的結果圖片：{page.source_path}")
+        write_image_or_raise(output_path, page.image)
+    except (ImageEncodeError, ImageWriteError) as error:
+        code = "image_encode_failed" if isinstance(error, ImageEncodeError) else "output_write_failed"
+        page.status = "failed"
+        page.stage_failure = "encode" if isinstance(error, ImageEncodeError) else "output"
+        page.issues.append(
+            ResultIssue(
+                code=code,
+                message=str(error),
+                stage=page.stage_failure,
+                page_id=page.page_id,
+            )
+        )
+        _preserve_failed_source(page, output_dir)
+        return
+    page.output_path = output_path
+
+
+def _write_batch_manifest(batch: BatchResult, output_dir: Path) -> None:
+    manifest_path = output_dir / "batch-manifest.json"
+    temporary_path = output_dir / ".batch-manifest.json.tmp"
+    try:
+        temporary_path.write_text(
+            json.dumps(batch.to_manifest(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(manifest_path)
+    except OSError as error:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        batch.issues.append(
+            ResultIssue(code="output_write_failed", message=str(error), stage="manifest")
+        )
+        batch.status = "failed"
+        batch.manifest_path = None
+        return
+    batch.manifest_path = manifest_path

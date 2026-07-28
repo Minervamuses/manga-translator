@@ -164,7 +164,6 @@ def test_geometry_collision_blocks_two_different_translations_at_same_position()
 
 def test_batch_aborts_once_when_ocr_runtime_cannot_initialize(tmp_path, monkeypatch) -> None:
     import cv2
-    import pytest
 
     from manga_translator import pipeline as pipeline_module
     from manga_translator.ocr import OCRInitializationError
@@ -203,11 +202,15 @@ detection:
     monkeypatch.setattr(pipeline_module, "initialize_ocr_model", fail_once)
     monkeypatch.setattr(pipeline_module, "process_single_page", lambda *args, **kwargs: None)
 
-    with pytest.raises(OCRInitializationError, match="single startup failure"):
-        pipeline_module.run_pipeline(config)
+    result = pipeline_module.run_pipeline(config)
 
     assert calls == 1
-    assert not output_dir.exists() or not any(output_dir.iterdir())
+    assert result.status == "blocked"
+    assert result.pages[0].issues[0].code == "ocr_initialization_failed"
+    assert result.pages[0].source_preserved
+    assert (output_dir / "failed" / "page1.source-preserved.png").is_file()
+    assert not (output_dir / "page1.png").exists()
+    assert (output_dir / "batch-manifest.json").is_file()
 
 
 def test_mask_containment_blocks_nested_column_even_with_tiny_area_ratio() -> None:

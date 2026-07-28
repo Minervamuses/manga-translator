@@ -56,6 +56,7 @@ def _apply_runtime_overrides(
 @click.option("--dump-json", is_flag=True, help="輸出每頁 debug manifest json")
 @click.option("--save-intermediate", is_flag=True, help="輸出中間圖（original/inpainted/blanked）")
 @click.option("--prep-manual", is_flag=True, help="輸出手動校正素材（會啟用 debug/json/intermediate）")
+@click.option("--allow-partial", is_flag=True, help="部分頁面失敗時仍以成功退出")
 @click.option("--no-grouping", is_flag=True, help="停用 grouping（回退舊模式）")
 @click.option("--page-context-mode", type=click.Choice(["window", "page"]), default=None)
 @click.option(
@@ -69,6 +70,7 @@ def run(
     dump_json: bool,
     save_intermediate: bool,
     prep_manual: bool,
+    allow_partial: bool,
     no_grouping: bool,
     page_context_mode: str | None,
     render_scope: str | None,
@@ -88,7 +90,7 @@ def run(
         dump_json = True
         save_intermediate = True
     try:
-        run_pipeline(
+        result = run_pipeline(
             cfg,
             debug=debug,
             dump_json=dump_json,
@@ -97,6 +99,8 @@ def run(
         )
     except OCRInitializationError as error:
         raise click.ClickException(str(error)) from error
+    if not result.succeeded and not (allow_partial and result.partial):
+        raise click.exceptions.Exit(1)
 
 
 @cli.command()
@@ -147,7 +151,7 @@ def test(
         return
 
     try:
-        result_img, _regions, _ocr_results, _translations = process_single_page(
+        page_result = process_single_page(
             image_path,
             cfg,
             glossary,
@@ -159,8 +163,12 @@ def test(
     except OCRInitializationError as error:
         raise click.ClickException(str(error)) from error
 
+    if not page_result.succeeded or page_result.image is None:
+        message = page_result.issues[0].message if page_result.issues else "頁面處理失敗"
+        raise click.ClickException(message)
+
     output_path = cfg.paths.output_dir / f"test_{image_path.name}"
-    if not write_image(output_path, result_img):
+    if not write_image(output_path, page_result.image):
         raise click.ClickException(f"無法寫入圖片：{output_path}")
     console.print(f"\n[bold green]測試完成，結果儲存於：{output_path}[/]")
 

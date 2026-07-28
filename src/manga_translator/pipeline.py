@@ -19,6 +19,7 @@ from .config import AppConfig, PostprocessConfig
 from .contracts.mapping import (
     MappingContractError,
     ValidatedTranslationBatch,
+    bind_validated_responses,
     bind_validated_values,
     build_request_map,
 )
@@ -44,9 +45,9 @@ from .result import BatchResult, PageResult, ResultIssue, derive_batch_status
 from .translator import (
     load_glossary,
     sanitize_translation_text,
-    translate_batch,
-    translate_page,
-    translate_with_context,
+    translate_batch_mapped,
+    translate_page_mapped,
+    translate_with_context_mapped,
     validate_translation,
 )
 from .typesetter import (
@@ -797,34 +798,52 @@ def _request_translations(
 
     if not config.postprocess.enable_group_translate:
         if config.openrouter.translation_mode == "context":
-            values = translate_with_context(
+            responses = translate_with_context_mapped(
                 texts,
                 config.openrouter,
                 glossary,
                 context_size=config.openrouter.context_size,
                 item_ids=item_ids,
+                artifact_root=config.paths.output_dir,
             )
         else:
-            values = translate_batch(
-                texts, config.openrouter, glossary, item_ids=item_ids
+            responses = translate_batch_mapped(
+                texts,
+                config.openrouter,
+                glossary,
+                item_ids=item_ids,
+                artifact_root=config.paths.output_dir,
             )
-        return bind_validated_values(request, values)
+        return bind_validated_responses(request, responses)
 
     total_chars = sum(len(text) for text in texts)
     should_fallback_window = total_chars > 6000 or len(texts) > 120
     if config.openrouter.page_context_mode == "page" and not should_fallback_window:
-        values = translate_page(texts, config.openrouter, glossary, item_ids=item_ids)
+        responses = translate_page_mapped(
+            texts,
+            config.openrouter,
+            glossary,
+            item_ids=item_ids,
+            artifact_root=config.paths.output_dir,
+        )
     elif config.openrouter.translation_mode == "context":
-        values = translate_with_context(
+        responses = translate_with_context_mapped(
             texts,
             config.openrouter,
             glossary,
             context_size=config.openrouter.context_size,
             item_ids=item_ids,
+            artifact_root=config.paths.output_dir,
         )
     else:
-        values = translate_batch(texts, config.openrouter, glossary, item_ids=item_ids)
-    return bind_validated_values(request, values)
+        responses = translate_batch_mapped(
+            texts,
+            config.openrouter,
+            glossary,
+            item_ids=item_ids,
+            artifact_root=config.paths.output_dir,
+        )
+    return bind_validated_responses(request, responses)
 
 
 def _translate_groups(

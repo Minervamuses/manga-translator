@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 import re
+import tempfile
 import time
 import unicodedata
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +19,15 @@ import httpx
 from rich.console import Console
 
 from .config import OpenRouterConfig
-from .contracts.mapping import request_map_from_ids, source_sha256
+from .contracts.mapping import (
+    MappingContractError,
+    MappingIssue,
+    RawResponseRef,
+    ResponseItem,
+    ValidatedTranslationBatch,
+    request_map_from_ids,
+    source_sha256,
+)
 from .contracts.translation import parse_translation_response
 from .profiling import profile_span, record_api_profile
 
@@ -43,6 +53,12 @@ _MOJIBAKE_REPLACEMENTS = {
 class TranslationValidation:
     valid: bool
     issues: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProviderResponse:
+    content: str
+    raw_response_ref: RawResponseRef
 
 
 def load_glossary(path: str | Path) -> dict[str, str]:
@@ -235,6 +251,36 @@ def _strip_code_fences(text: str) -> str:
     return stripped.strip()
 
 
+def _parse_response_batch(
+    response: ProviderResponse | str,
+    count: int,
+    *,
+    expected_ids: list[str] | None = None,
+    source_hashes: list[str] | None = None,
+) -> ValidatedTranslationBatch:
+    """Parse one exact-ID JSON response or reject the entire response."""
+    if count <= 0:
+        request = request_map_from_ids([], [])
+        return ValidatedTranslationBatch(request=request, responses=())
+    item_ids = expected_ids or [_item_id(index) for index in range(count)]
+    if source_hashes is None:
+        raise ValueError("source_hashes are required for response binding")
+    if len(item_ids) != count or len(source_hashes) != count:
+        raise ValueError("expected response metadata count mismatch")
+    request = request_map_from_ids(item_ids, source_hashes)
+    if isinstance(response, ProviderResponse):
+        response_text = response.content
+        raw_response_ref = response.raw_response_ref
+    else:
+        response_text = response
+        raw_response_ref = None
+    return parse_translation_response(
+        response_text,
+        request,
+        raw_response_ref=raw_response_ref,
+    )
+
+
 def _parse_response(
     response_text: str,
     count: int,
@@ -242,16 +288,12 @@ def _parse_response(
     expected_ids: list[str] | None = None,
     source_hashes: list[str] | None = None,
 ) -> list[str]:
-    """Parse one exact-ID JSON response or reject the entire response."""
-    if count <= 0:
-        return []
-    item_ids = expected_ids or [_item_id(index) for index in range(count)]
-    if source_hashes is None:
-        raise ValueError("source_hashes are required for response binding")
-    if len(item_ids) != count or len(source_hashes) != count:
-        raise ValueError("expected response metadata count mismatch")
-    request = request_map_from_ids(item_ids, source_hashes)
-    batch = parse_translation_response(response_text, request)
+    batch = _parse_response_batch(
+        response_text,
+        count,
+        expected_ids=expected_ids,
+        source_hashes=source_hashes,
+    )
     return [response.translation for response in batch.responses]
 
 
@@ -547,11 +589,51 @@ def _extract_content(data: dict[str, Any]) -> str:
     raise RuntimeError("OpenRouter response has no usable content")
 
 
+def _raw_response_ref(
+    payload: bytes,
+    *,
+    media_type: str,
+    artifact_root: Path | None,
+) -> RawResponseRef:
+    reference = RawResponseRef.from_bytes(payload, media_type=media_type)
+    if artifact_root is None:
+        return reference
+
+    relative_path = Path("artifacts") / "translation-responses" / f"{reference.sha256}.json"
+    destination = artifact_root / relative_path
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.is_file():
+            if destination.read_bytes() != payload:
+                raise RuntimeError(f"response artifact hash collision: {destination}")
+        else:
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{reference.sha256}.",
+                suffix=".tmp",
+                dir=destination.parent,
+            )
+            temporary_path = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                temporary_path.replace(destination)
+            except Exception:
+                temporary_path.unlink(missing_ok=True)
+                raise
+    except OSError as error:
+        raise RuntimeError(f"cannot persist translation response artifact: {error}") from error
+    return replace(reference, relative_path=relative_path.as_posix())
+
+
 async def _request_with_retry(
     client: httpx.AsyncClient,
     payload: dict[str, Any],
     cfg: OpenRouterConfig,
-) -> str:
+    *,
+    artifact_root: Path | None = None,
+) -> ProviderResponse:
     if not cfg.api_key.strip() or cfg.api_key.strip() == "YOUR_OPENROUTER_API_KEY":
         raise RuntimeError(
             "OpenRouter API key 尚未設定；請設定 OPENROUTER_API_KEY 或修改 config.yaml"
@@ -574,6 +656,13 @@ async def _request_with_retry(
                     },
                 )
 
+            media_type = response.headers.get("content-type", "application/json")
+            media_type = media_type.split(";", 1)[0].strip() or "application/json"
+            raw_response_ref = _raw_response_ref(
+                response.content,
+                media_type=media_type,
+                artifact_root=artifact_root,
+            )
             try:
                 data: dict[str, Any] | None = response.json()
             except ValueError:
@@ -613,7 +702,10 @@ async def _request_with_retry(
             response.raise_for_status()
             if data is None:
                 data = response.json()
-            return _extract_content(data)
+            return ProviderResponse(
+                content=_extract_content(data),
+                raw_response_ref=raw_response_ref,
+            )
 
         except httpx.RequestError as error:
             record_api_profile(
@@ -653,7 +745,7 @@ def _payload(
     }
 
 
-async def _repair_one_translation(
+async def _repair_one_response(
     client: httpx.AsyncClient,
     texts: list[str],
     index: int,
@@ -662,7 +754,8 @@ async def _repair_one_translation(
     previous_translations: dict[int, str] | None = None,
     previous_invalid: str = "",
     item_ids: list[str] | None = None,
-) -> str:
+    artifact_root: Path | None = None,
+) -> ResponseItem:
     resolved_ids = _normalized_item_ids(texts, item_ids)
     invalid = previous_invalid
     for _attempt in range(cfg.content_retries + 1):
@@ -675,43 +768,54 @@ async def _repair_one_translation(
             previous_invalid=invalid,
             item_ids=resolved_ids,
         )
-        response = await _request_with_retry(
+        provider_response = await _request_with_retry(
             client,
             _payload(prompt, cfg, retry=True, max_tokens=768),
             cfg,
+            artifact_root=artifact_root,
         )
-        result = _parse_response(
-            response,
+        response = _parse_response_batch(
+            provider_response,
             1,
             expected_ids=[resolved_ids[index]],
             source_hashes=[source_sha256(texts[index])],
-        )[0]
-        validation = validate_translation(texts[index], result, cfg)
+        ).responses[0]
+        candidate = sanitize_translation_text(response.translation, source=texts[index])
+        validation = validate_translation(texts[index], candidate, cfg)
         if validation.valid:
-            return sanitize_translation_text(result, source=texts[index])
-        invalid = result
-    return ""
+            return replace(response, translation=candidate)
+        invalid = candidate
+    raise MappingContractError(
+        [
+            MappingIssue(
+                "translation_validation_failed",
+                {"id": resolved_ids[index]},
+            )
+        ]
+    )
 
 
-async def _validate_and_repair_batch(
+async def _validate_and_repair_responses(
     client: httpx.AsyncClient,
     texts: list[str],
-    translations: list[str],
+    responses: tuple[ResponseItem, ...],
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None,
     item_ids: list[str] | None = None,
-) -> list[str]:
+    artifact_root: Path | None = None,
+) -> tuple[ResponseItem, ...]:
     resolved_ids = _normalized_item_ids(texts, item_ids)
-    repaired = list(translations[: len(texts)])
-    if len(repaired) < len(texts):
-        repaired.extend([""] * (len(texts) - len(repaired)))
+    response_by_id = {response.item_id: response for response in responses}
 
     known: dict[int, str] = {}
+    repaired: list[ResponseItem] = []
     for index, source in enumerate(texts):
-        candidate = sanitize_translation_text(repaired[index], source=source)
+        response = response_by_id[resolved_ids[index]]
+        candidate = sanitize_translation_text(response.translation, source=source)
         validation = validate_translation(source, candidate, cfg)
         if validation.valid:
-            repaired[index] = candidate
+            response = replace(response, translation=candidate)
+            repaired.append(response)
             known[index] = candidate
             continue
 
@@ -719,7 +823,7 @@ async def _validate_and_repair_batch(
         console.print(
             f"[yellow]翻譯項目 {resolved_ids[index]} 驗證失敗（{issue_text}），單句重試[/]"
         )
-        repaired[index] = await _repair_one_translation(
+        response = await _repair_one_response(
             client,
             texts,
             index,
@@ -728,28 +832,30 @@ async def _validate_and_repair_batch(
             previous_translations=known,
             previous_invalid=candidate,
             item_ids=resolved_ids,
+            artifact_root=artifact_root,
         )
-        if repaired[index]:
-            known[index] = repaired[index]
-    return repaired
+        repaired.append(response)
+        known[index] = response.translation
+    return tuple(repaired)
 
 
-async def translate_batch_async(
+async def translate_batch_mapped_async(
     texts: list[str],
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None = None,
     *,
     item_ids: list[str] | None = None,
-) -> list[str]:
+    artifact_root: Path | None = None,
+) -> tuple[ResponseItem, ...]:
     if not texts:
-        return []
+        return ()
     resolved_ids = _normalized_item_ids(texts, item_ids)
 
     indexed = [(index, text) for index, text in enumerate(texts) if text.strip()]
     if not indexed:
-        return [""] * len(texts)
+        return ()
 
-    all_translations = [""] * len(texts)
+    all_responses: dict[int, ResponseItem] = {}
     async with httpx.AsyncClient(timeout=cfg.request_timeout_sec) as client:
         for batch_start in range(0, len(indexed), cfg.batch_size):
             batch = indexed[batch_start : batch_start + cfg.batch_size]
@@ -757,83 +863,96 @@ async def translate_batch_async(
             batch_indices = [index for index, _ in batch]
             batch_ids = [resolved_ids[index] for index in batch_indices]
 
-            response = await _request_with_retry(
+            provider_response = await _request_with_retry(
                 client,
                 _payload(_build_prompt(batch_texts, glossary, item_ids=batch_ids), cfg),
                 cfg,
+                artifact_root=artifact_root,
             )
-            parsed = _parse_response(
-                response,
+            parsed = _parse_response_batch(
+                provider_response,
                 len(batch_texts),
                 expected_ids=batch_ids,
                 source_hashes=[source_sha256(text) for text in batch_texts],
             )
-            parsed = await _validate_and_repair_batch(
-                client, batch_texts, parsed, cfg, glossary, item_ids=batch_ids
+            repaired = await _validate_and_repair_responses(
+                client,
+                batch_texts,
+                parsed.responses,
+                cfg,
+                glossary,
+                item_ids=batch_ids,
+                artifact_root=artifact_root,
             )
             for local_index, original_index in enumerate(batch_indices):
-                all_translations[original_index] = parsed[local_index]
+                all_responses[original_index] = repaired[local_index]
 
             completed = min(batch_start + cfg.batch_size, len(indexed))
             console.print(f"[green]翻譯進度：{completed}/{len(indexed)}[/]")
-    return all_translations
+    return tuple(all_responses[index] for index, _text in indexed)
 
 
-async def translate_page_async(
+async def translate_page_mapped_async(
     texts: list[str],
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None = None,
     *,
     item_ids: list[str] | None = None,
-) -> list[str]:
+    artifact_root: Path | None = None,
+) -> tuple[ResponseItem, ...]:
     """整頁上下文翻譯；只對缺漏／可疑項目做單句修復。"""
     if not texts:
-        return []
+        return ()
 
     indexed = [(index, text) for index, text in enumerate(texts) if text.strip()]
     if not indexed:
-        return [""] * len(texts)
+        return ()
     nonempty_texts = [text for _, text in indexed]
     resolved_ids = _normalized_item_ids(texts, item_ids)
     nonempty_ids = [resolved_ids[index] for index, _text in indexed]
 
     async with httpx.AsyncClient(timeout=cfg.request_timeout_sec) as client:
-        response = await _request_with_retry(
+        provider_response = await _request_with_retry(
             client,
             _payload(
                 _build_page_prompt(nonempty_texts, glossary, item_ids=nonempty_ids), cfg
             ),
             cfg,
+            artifact_root=artifact_root,
         )
-        parsed = _parse_response(
-            response,
+        parsed = _parse_response_batch(
+            provider_response,
             len(nonempty_texts),
             expected_ids=nonempty_ids,
             source_hashes=[source_sha256(text) for text in nonempty_texts],
         )
-        parsed = await _validate_and_repair_batch(
-            client, nonempty_texts, parsed, cfg, glossary, item_ids=nonempty_ids
+        repaired = await _validate_and_repair_responses(
+            client,
+            nonempty_texts,
+            parsed.responses,
+            cfg,
+            glossary,
+            item_ids=nonempty_ids,
+            artifact_root=artifact_root,
         )
-
-    all_translations = [""] * len(texts)
-    for local_index, (original_index, _source) in enumerate(indexed):
-        all_translations[original_index] = parsed[local_index]
-    return all_translations
+    return repaired
 
 
-async def translate_with_context_async(
+async def translate_with_context_mapped_async(
     texts: list[str],
     cfg: OpenRouterConfig,
     glossary: dict[str, str] | None = None,
     context_size: int = 5,
     *,
     item_ids: list[str] | None = None,
-) -> list[str]:
+    artifact_root: Path | None = None,
+) -> tuple[ResponseItem, ...]:
     if not texts:
-        return []
+        return ()
     resolved_ids = _normalized_item_ids(texts, item_ids)
 
     translations: dict[int, str] = {}
+    responses: dict[int, ResponseItem] = {}
     nonempty_count = sum(bool(text.strip()) for text in texts)
     done = 0
 
@@ -853,34 +972,159 @@ async def translate_with_context_async(
                 glossary=glossary,
                 item_ids=resolved_ids,
             )
-            response = await _request_with_retry(
+            provider_response = await _request_with_retry(
                 client,
                 _payload(prompt, cfg, max_tokens=768),
                 cfg,
+                artifact_root=artifact_root,
             )
-            result = _parse_response(
-                response,
+            response = _parse_response_batch(
+                provider_response,
                 1,
                 expected_ids=[resolved_ids[index]],
                 source_hashes=[source_sha256(text)],
-            )[0]
-            validation = validate_translation(text, result, cfg)
+            ).responses[0]
+            candidate = sanitize_translation_text(response.translation, source=text)
+            validation = validate_translation(text, candidate, cfg)
             if not validation.valid:
-                result = await _repair_one_translation(
+                response = await _repair_one_response(
                     client,
                     texts,
                     index,
                     local_cfg,
                     glossary,
                     previous_translations=translations,
-                    previous_invalid=result,
+                    previous_invalid=candidate,
                     item_ids=resolved_ids,
+                    artifact_root=artifact_root,
                 )
-            translations[index] = sanitize_translation_text(result, source=text)
+            else:
+                response = replace(response, translation=candidate)
+            responses[index] = response
+            translations[index] = response.translation
             done += 1
             console.print(f"[green]翻譯進度：{done}/{nonempty_count}[/]")
 
-    return [translations.get(index, "") for index in range(len(texts))]
+    return tuple(responses[index] for index, text in enumerate(texts) if text.strip())
+
+
+def _response_values(
+    texts: list[str],
+    item_ids: list[str] | None,
+    responses: tuple[ResponseItem, ...],
+) -> list[str]:
+    resolved_ids = _normalized_item_ids(texts, item_ids)
+    response_by_id = {response.item_id: response.translation for response in responses}
+    return [response_by_id.get(resolved_ids[index], "") for index in range(len(texts))]
+
+
+async def translate_batch_async(
+    texts: list[str],
+    cfg: OpenRouterConfig,
+    glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
+) -> list[str]:
+    responses = await translate_batch_mapped_async(
+        texts,
+        cfg,
+        glossary,
+        item_ids=item_ids,
+    )
+    return _response_values(texts, item_ids, responses)
+
+
+async def translate_page_async(
+    texts: list[str],
+    cfg: OpenRouterConfig,
+    glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
+) -> list[str]:
+    responses = await translate_page_mapped_async(
+        texts,
+        cfg,
+        glossary,
+        item_ids=item_ids,
+    )
+    return _response_values(texts, item_ids, responses)
+
+
+async def translate_with_context_async(
+    texts: list[str],
+    cfg: OpenRouterConfig,
+    glossary: dict[str, str] | None = None,
+    context_size: int = 5,
+    *,
+    item_ids: list[str] | None = None,
+) -> list[str]:
+    responses = await translate_with_context_mapped_async(
+        texts,
+        cfg,
+        glossary,
+        context_size,
+        item_ids=item_ids,
+    )
+    return _response_values(texts, item_ids, responses)
+
+
+def translate_batch_mapped(
+    texts: list[str],
+    cfg: OpenRouterConfig,
+    glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
+    artifact_root: Path | None = None,
+) -> tuple[ResponseItem, ...]:
+    return asyncio.run(
+        translate_batch_mapped_async(
+            texts,
+            cfg,
+            glossary,
+            item_ids=item_ids,
+            artifact_root=artifact_root,
+        )
+    )
+
+
+def translate_page_mapped(
+    texts: list[str],
+    cfg: OpenRouterConfig,
+    glossary: dict[str, str] | None = None,
+    *,
+    item_ids: list[str] | None = None,
+    artifact_root: Path | None = None,
+) -> tuple[ResponseItem, ...]:
+    return asyncio.run(
+        translate_page_mapped_async(
+            texts,
+            cfg,
+            glossary,
+            item_ids=item_ids,
+            artifact_root=artifact_root,
+        )
+    )
+
+
+def translate_with_context_mapped(
+    texts: list[str],
+    cfg: OpenRouterConfig,
+    glossary: dict[str, str] | None = None,
+    context_size: int = 5,
+    *,
+    item_ids: list[str] | None = None,
+    artifact_root: Path | None = None,
+) -> tuple[ResponseItem, ...]:
+    return asyncio.run(
+        translate_with_context_mapped_async(
+            texts,
+            cfg,
+            glossary,
+            context_size,
+            item_ids=item_ids,
+            artifact_root=artifact_root,
+        )
+    )
 
 
 def translate_batch(

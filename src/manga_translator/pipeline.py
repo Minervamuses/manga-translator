@@ -118,6 +118,11 @@ from .typesetter import (
     plan_text_layout,
     render_text_into_group,
 )
+from .typography.safe_region import (
+    SAFE_REGION_MEDIA_TYPE,
+    build_safe_region,
+    encode_safe_region_artifacts,
+)
 
 console = Console()
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -525,13 +530,21 @@ def _paste_group_mask(
     if local is None:
         return
     canvas_x, canvas_y, _canvas_w, _canvas_h = canvas_bbox
-    x1 = group.x - canvas_x
-    y1 = group.y - canvas_y
-    x2 = x1 + group.w
-    y2 = y1 + group.h
-    if x1 < 0 or y1 < 0 or x2 > canvas.shape[1] or y2 > canvas.shape[0]:
+    page_x1 = max(group.x, canvas_x)
+    page_y1 = max(group.y, canvas_y)
+    page_x2 = min(group.x + group.w, canvas_x + canvas.shape[1])
+    page_y2 = min(group.y + group.h, canvas_y + canvas.shape[0])
+    if page_x2 <= page_x1 or page_y2 <= page_y1:
         return
-    canvas[y1:y2, x1:x2] = cv2.bitwise_or(canvas[y1:y2, x1:x2], local)
+    destination = canvas[
+        page_y1 - canvas_y : page_y2 - canvas_y,
+        page_x1 - canvas_x : page_x2 - canvas_x,
+    ]
+    source = local[
+        page_y1 - group.y : page_y2 - group.y,
+        page_x1 - group.x : page_x2 - group.x,
+    ]
+    destination[:] = cv2.bitwise_or(destination, source)
 
 
 def _group_mask_containment(inner: TextGroup, outer: TextGroup) -> float:
@@ -1781,11 +1794,96 @@ def _build_pipeline_stage_runners(
         )
 
     def safe_region_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
-        return adapter_state(
-            inputs,
-            stage=StageName.SAFE_REGION,
-            adapter="safe_region",
+        state = _read_stage_state(store, inputs, StageName.DETECT)
+        reference = _source_artifact(inputs)
+        if _source_ref_from_extras(state.extras) != reference:
+            raise ValueError("safe-region stage received inconsistent source lineage")
+        original = _decode_source_image(store, reference)
+        image_height, image_width = original.shape[:2]
+        regions_by_id = {region.id: region for region in state.detection.regions_post}
+        groups = list(state.detection.groups)
+        safe_region_index: dict[str, dict[str, object]] = {}
+        artifact_payloads: list[ArtifactPayload] = []
+
+        for group in groups:
+            local_mask = _local_group_mask(group)
+            if local_mask is None or not np.any(local_mask):
+                state.detection.issues.append(
+                    DetectorIssue(
+                        code="safe_region_missing_mask",
+                        message="safe region requires a real group text mask",
+                        details={"group_id": group.id},
+                    )
+                )
+                continue
+            font_hints = [
+                regions_by_id[region_id].font_size_hint
+                for region_id in group.region_ids
+                if region_id in regions_by_id
+            ]
+            preferred = float(np.median(font_hints)) if font_hints else float(max(1, group.h))
+            expand = (
+                min(
+                    config.typesetting.bubble_search_max_px,
+                    max(
+                        round(max(group.w, group.h) * config.typesetting.bubble_search_expand_ratio),
+                        round(preferred * 1.5),
+                    ),
+                )
+                if config.typesetting.adaptive_bubble_layout
+                else 0
+            )
+            left = max(0, group.x - expand)
+            top = max(0, group.y - expand)
+            right = min(image_width, group.x + group.w + expand)
+            bottom = min(image_height, group.y + group.h + expand)
+            roi_bbox = (left, top, right - left, bottom - top)
+            text_mask = np.zeros((roi_bbox[3], roi_bbox[2]), dtype=np.uint8)
+            _paste_group_mask(text_mask, group, roi_bbox)
+            if not np.any(text_mask):
+                raise ValueError(f"group {group.id} mask did not overlap its safe-region ROI")
+            other_text_mask = np.zeros_like(text_mask)
+            for other_group in groups:
+                if other_group.id != group.id:
+                    _paste_group_mask(other_text_mask, other_group, roi_bbox)
+            line_polygons = tuple(
+                tuple((x - left, y - top) for x, y in polygon)
+                for region_id in group.region_ids
+                if region_id in regions_by_id
+                for polygon in regions_by_id[region_id].line_polygons
+            )
+            artifacts = build_safe_region(
+                original[top:bottom, left:right],
+                text_mask,
+                line_polygons=line_polygons,
+                other_text_mask=other_text_mask,
+            )
+            payload = encode_safe_region_artifacts(artifacts)
+            artifact_ref = ArtifactRef(
+                sha256=hashlib.sha256(payload).hexdigest(),
+                media_type=SAFE_REGION_MEDIA_TYPE,
+                size_bytes=len(payload),
+            )
+            safe_region_index[group.id] = {
+                "artifact": artifact_ref.model_dump(mode="json"),
+                "confidence": artifacts.confidence,
+                "roi_bbox": list(roi_bbox),
+                "strategy": artifacts.strategy,
+            }
+            artifact_payloads.append(
+                ArtifactPayload(payload, SAFE_REGION_MEDIA_TYPE, f"safe_region:{group.id}")
+            )
+
+        encoded = encode_pipeline_state(
+            state.detection,
+            producer_stage=StageName.SAFE_REGION,
+            extras={
+                **state.extras,
+                "safe_region_adapter": "p2-protected-edge-v1",
+                "safe_regions": safe_region_index,
+            },
         )
+        return StageOutputs((*encoded.artifacts, *artifact_payloads))
 
     def ocr_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
         state = _read_stage_state(store, inputs, StageName.DETECT)
@@ -1968,6 +2066,22 @@ def _build_pipeline_stage_runners(
             raise ValueError("layout stage received inconsistent source lineage")
         if reference not in inputs.upstream[StageName.STYLE]:
             raise ValueError("layout reference is not a declared style-stage artifact")
+        declared_safe_artifacts = set(inputs.upstream[StageName.SAFE_REGION])
+        safe_regions = safe_region.extras.get("safe_regions")
+        if not isinstance(safe_regions, dict):
+            raise TypeError("layout stage is missing durable safe-region artifacts")
+        for group_id, payload in safe_regions.items():
+            if not isinstance(group_id, str) or not isinstance(payload, dict):
+                raise TypeError("safe-region index must map group IDs to objects")
+            artifact_payload = payload.get("artifact")
+            if not isinstance(artifact_payload, dict):
+                raise TypeError(f"safe-region entry {group_id} is missing its artifact")
+            artifact_ref = ArtifactRef.model_validate(artifact_payload)
+            if (
+                artifact_ref.media_type != SAFE_REGION_MEDIA_TYPE
+                or artifact_ref not in declared_safe_artifacts
+            ):
+                raise ValueError(f"safe-region entry {group_id} references an undeclared artifact")
         original = _decode_source_image(store, reference)
         detection = state.detection
         regions_by_id = {region.id: region for region in detection.regions_post}
@@ -1997,6 +2111,7 @@ def _build_pipeline_stage_runners(
             extras={
                 **state.extras,
                 "style_fingerprints": style.extras.get("style_fingerprints", {}),
+                "safe_regions": safe_regions,
                 "layout_plan_artifact": plan_reference.model_dump(mode="json"),
                 "mapping_snapshots": _merge_mapping_snapshot_payloads(
                     state.extras.get("mapping_snapshots"), groups

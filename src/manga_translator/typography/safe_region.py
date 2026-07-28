@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import struct
 from dataclasses import dataclass
 from typing import Literal
 
@@ -10,6 +12,8 @@ import numpy as np
 
 Point = tuple[float, float]
 Polygon = tuple[Point, ...]
+SAFE_REGION_MEDIA_TYPE = "application/vnd.manga-translator.safe-region+binary"
+_BUNDLE_MAGIC = b"MTSR1"
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,95 @@ class SafeRegionArtifacts:
 
     def accepts_alpha(self, alpha: np.ndarray, minimum: float = 0.995) -> bool:
         return self.alpha_containment(alpha) >= minimum
+
+
+def encode_safe_region_artifacts(artifacts: SafeRegionArtifacts) -> bytes:
+    """Encode ROI-local evidence without timestamps or platform-dependent metadata."""
+
+    shape = artifacts.safe_mask.shape
+    arrays = (
+        np.asarray(artifacts.safe_mask, dtype=np.uint8),
+        np.asarray(artifacts.render_mask, dtype=np.uint8),
+        np.asarray(artifacts.signed_distance, dtype="<f4"),
+        np.asarray(artifacts.protected_edges, dtype=np.uint8),
+    )
+    if len(shape) != 2 or any(array.shape != shape for array in arrays):
+        raise ValueError("safe-region arrays must share one non-empty 2D shape")
+    if not shape[0] or not shape[1]:
+        raise ValueError("safe-region arrays must not be empty")
+    header = json.dumps(
+        {
+            "confidence": artifacts.confidence,
+            "shape": list(shape),
+            "strategy": artifacts.strategy,
+            "version": 1,
+        },
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return b"".join(
+        (
+            _BUNDLE_MAGIC,
+            struct.pack(">I", len(header)),
+            header,
+            *(array.tobytes(order="C") for array in arrays),
+        )
+    )
+
+
+def decode_safe_region_artifacts(payload: bytes) -> SafeRegionArtifacts:
+    """Decode and strictly validate a deterministic safe-region artifact."""
+
+    prefix_size = len(_BUNDLE_MAGIC) + 4
+    if len(payload) < prefix_size or payload[: len(_BUNDLE_MAGIC)] != _BUNDLE_MAGIC:
+        raise ValueError("invalid safe-region artifact header")
+    header_size = struct.unpack(">I", payload[len(_BUNDLE_MAGIC) : prefix_size])[0]
+    header_end = prefix_size + header_size
+    try:
+        header = json.loads(payload[prefix_size:header_end])
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid safe-region artifact metadata") from error
+    if not isinstance(header, dict) or header.get("version") != 1:
+        raise ValueError("unsupported safe-region artifact version")
+    shape_value = header.get("shape")
+    if (
+        not isinstance(shape_value, list)
+        or len(shape_value) != 2
+        or any(not isinstance(value, int) or value <= 0 for value in shape_value)
+    ):
+        raise ValueError("invalid safe-region artifact shape")
+    height, width = shape_value
+    pixels = height * width
+    expected_size = header_end + pixels * 7
+    if len(payload) != expected_size:
+        raise ValueError("safe-region artifact payload length mismatch")
+    cursor = header_end
+
+    def read(dtype: str, size: int) -> np.ndarray:
+        nonlocal cursor
+        result = np.frombuffer(payload, dtype=dtype, count=pixels, offset=cursor)
+        cursor += pixels * size
+        return result.copy().reshape((height, width))
+
+    safe = read("u1", 1)
+    render = read("u1", 1)
+    distance = read("<f4", 4)
+    protected = read("u1", 1)
+    confidence = float(header.get("confidence"))
+    strategy = header.get("strategy")
+    if not 0.0 <= confidence <= 1.0:
+        raise ValueError("invalid safe-region artifact confidence")
+    if strategy not in {"connected_background", "original_text_vicinity"}:
+        raise ValueError("invalid safe-region artifact strategy")
+    return SafeRegionArtifacts(
+        safe_mask=safe,
+        render_mask=render,
+        signed_distance=distance,
+        protected_edges=protected,
+        confidence=confidence,
+        strategy=strategy,
+    )
 
 
 def _binary_mask(mask: np.ndarray, shape: tuple[int, int], name: str) -> np.ndarray:

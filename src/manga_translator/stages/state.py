@@ -161,7 +161,9 @@ _REQUIRED_EXTRAS: dict[StageName, frozenset[str]] = {
     StageName.STYLE: frozenset(
         {"source_artifact", "style_adapter", "style_fingerprints"}
     ),
-    StageName.SAFE_REGION: frozenset({"safe_region_adapter", "source_artifact"}),
+    StageName.SAFE_REGION: frozenset(
+        {"safe_region_adapter", "safe_regions", "source_artifact"}
+    ),
     StageName.OCR: frozenset({"ocr_adapter", "source_artifact"}),
     StageName.ORDER: frozenset(
         {"order_adapter", "ordered_region_ids", "reading_order", "source_artifact"}
@@ -170,7 +172,7 @@ _REQUIRED_EXTRAS: dict[StageName, frozenset[str]] = {
         {"mapping_snapshots", "provider_response_artifacts", "source_artifact"}
     ),
     StageName.LAYOUT: frozenset(
-        {"layout_plan_artifact", "mapping_snapshots", "source_artifact"}
+        {"layout_plan_artifact", "mapping_snapshots", "safe_regions", "source_artifact"}
     ),
     StageName.INPAINT_RENDER: frozenset(
         {

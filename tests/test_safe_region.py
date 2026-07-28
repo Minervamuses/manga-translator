@@ -4,7 +4,11 @@ import cv2
 import numpy as np
 import pytest
 
-from manga_translator.typography.safe_region import build_safe_region
+from manga_translator.typography.safe_region import (
+    build_safe_region,
+    decode_safe_region_artifacts,
+    encode_safe_region_artifacts,
+)
 
 
 def _shape_fixture(kind: str, *, dark: bool = False, gradient: bool = False):
@@ -98,3 +102,21 @@ def test_masks_must_be_roi_local_and_original_mask_must_be_real() -> None:
         build_safe_region(image, np.zeros((10, 10), dtype=np.uint8))
     with pytest.raises(ValueError, match="real text pixels"):
         build_safe_region(image, np.zeros((20, 30), dtype=np.uint8))
+
+
+def test_safe_region_bundle_round_trip_is_lossless_and_deterministic() -> None:
+    image, text, _expected = _shape_fixture("ellipse", gradient=True)
+    artifacts = build_safe_region(image, text)
+
+    first = encode_safe_region_artifacts(artifacts)
+    second = encode_safe_region_artifacts(artifacts)
+    decoded = decode_safe_region_artifacts(first)
+
+    assert first == second
+    assert decoded.confidence == artifacts.confidence
+    assert decoded.strategy == artifacts.strategy
+    for name in ("safe_mask", "render_mask", "signed_distance", "protected_edges"):
+        assert np.array_equal(getattr(decoded, name), getattr(artifacts, name))
+
+    with pytest.raises(ValueError, match="payload length"):
+        decode_safe_region_artifacts(first + b"unexpected")

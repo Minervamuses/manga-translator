@@ -23,12 +23,18 @@ from manga_translator.contracts.mapping import (
 )
 from manga_translator.detector import DetectionResult, MaskSource, TextGroup, TextRegion
 from manga_translator.domain.issues import IssueCode, StageName, StageStatus
+from manga_translator.domain.models import ArtifactRef
 from manga_translator.domain.serialization import canonical_document_bytes
 from manga_translator.manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from manga_translator.ocr import OCRCandidate, OCRResult
+from manga_translator.stages.state import decode_pipeline_state
 from manga_translator.storage import ArtifactStore, JobStore
 from manga_translator.translator import TranslationValidation
 from manga_translator.typesetter import TextLayoutPlan
+from manga_translator.typography.safe_region import (
+    SAFE_REGION_MEDIA_TYPE,
+    decode_safe_region_artifacts,
+)
 
 
 def _config(tmp_path: Path) -> AppConfig:
@@ -295,6 +301,57 @@ def test_region_mask_artifacts_require_canonical_png_and_bbox_dimensions(
         )
         with pytest.raises(ValueError, match="do not match bbox"):
             pipeline_module._read_local_mask_artifact(store, wrong_shape_ref, bbox)
+
+
+def test_safe_region_stage_persists_replayable_roi_artifacts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    _source(config)
+    state = tmp_path / "state"
+    _install_component_fakes(monkeypatch, config)
+    result = pipeline_module.run_pipeline(
+        config, job_id="job-1", state_dir=state, resume=True
+    )
+    page_id = result.pages[0].page_id
+
+    with JobStore(state / "jobs.sqlite3", ArtifactStore(state / "artifacts")) as store:
+        row = next(
+            item
+            for item in store.list_stage_runs(job_id="job-1", page_id=page_id)
+            if item[0] == StageName.SAFE_REGION.value
+        )
+        outputs = []
+        for sha256 in json.loads(row[4]):
+            artifact_row = store.connection.execute(
+                "SELECT media_type, size_bytes FROM artifacts WHERE sha256=?", (sha256,)
+            ).fetchone()
+            assert artifact_row is not None
+            outputs.append(
+                ArtifactRef(
+                    sha256=sha256,
+                    media_type=str(artifact_row[0]),
+                    size_bytes=int(artifact_row[1]),
+                )
+            )
+        safe_state = decode_pipeline_state(
+            outputs,
+            expected_stage=StageName.SAFE_REGION,
+            read_bytes=store.artifacts.read_bytes,
+        )
+        index = safe_state.extras["safe_regions"]
+        assert set(index) == {group.id for group in safe_state.detection.groups}
+        for entry in index.values():
+            reference = ArtifactRef.model_validate(entry["artifact"])
+            assert reference.media_type == SAFE_REGION_MEDIA_TYPE
+            assert reference in outputs
+            artifacts = decode_safe_region_artifacts(
+                store.artifacts.read_bytes(reference.sha256)
+            )
+            _x, _y, width, height = entry["roi_bbox"]
+            assert artifacts.safe_mask.shape == (height, width)
+            assert np.any(artifacts.safe_mask)
+            assert np.any(artifacts.render_mask)
 
 
 def test_component_stages_resume_without_reloading_models_or_provider(

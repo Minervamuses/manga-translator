@@ -16,6 +16,19 @@ env/
 .env
 .env.*
 
+# Sensitive local configuration / credentials
+config.local.yaml
+config.*.local.yaml
+secrets/
+credentials*.json
+service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
 # Editor / OS junk
 .vscode/
 .idea/

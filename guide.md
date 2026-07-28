@@ -2,7 +2,7 @@
 
 ## 目前環境
 
-- 專案位置（Windows）：`C:\Users\garyc\Documents\本\manga-translator`
+- 專案位置：請依實際解壓位置調整，以下以專案根目錄為基準
 - 執行環境：WSL `Ubuntu-24.04`
 - Conda 環境：`manga`
 - 翻譯服務：OpenRouter
@@ -14,7 +14,7 @@
 在 WSL 進入專案後執行：
 
 ```bash
-cd "/mnt/c/Users/garyc/Documents/本/manga-translator"
+cd "/path/to/manga-translator"
 conda env update -f environment.yml --prune
 conda activate manga
 python -m pip install -e . --no-deps --no-build-isolation
@@ -38,7 +38,7 @@ conda activate manga
 把要翻譯的圖片直接放進：
 
 ```text
-C:\Users\garyc\Documents\本\manga-translator\input
+<專案根目錄>\input
 ```
 
 支援 `.jpg`、`.jpeg`、`.png`、`.bmp`、`.webp`。程式只掃描 `input` 第一層，不會遞迴處理子資料夾。圖片依自然順序處理，例如 `page2.png` 會早於 `page10.png`。
@@ -55,7 +55,7 @@ WSL：
 
 ```bash
 conda activate manga
-cd "/mnt/c/Users/garyc/Documents/本/manga-translator"
+cd "/path/to/manga-translator"
 source ~/.bashrc
 ```
 
@@ -68,7 +68,7 @@ manga-translate run --config config.yaml
 結果位於：
 
 ```text
-C:\Users\garyc\Documents\本\manga-translator\output
+<專案根目錄>\output
 ```
 
 輸出檔名與輸入相同。

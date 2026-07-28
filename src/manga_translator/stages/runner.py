@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import sqlite3
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
+from threading import Event, Thread
+from time import sleep
 from typing import Any
 
 from ..domain.issues import StageName
 from ..domain.models import ArtifactRef
-from ..storage.job_store import JobStore
+from ..storage.job_store import (
+    JobStore,
+    ProviderResponseClaim,
+    ProviderResponseClaimLostError,
+)
 from .base import StageContext, StageInputs, StageOutputs, StageSpec
 from .fingerprint import stage_fingerprint
 
@@ -31,6 +39,8 @@ STAGE_DAG: dict[StageName, tuple[StageName, ...]] = {
 }
 
 TOPOLOGICAL_ORDER = tuple(STAGE_DAG)
+DEFAULT_PROVIDER_RESPONSE_LEASE_SECONDS = 30.0
+DEFAULT_PROVIDER_RESPONSE_POLL_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -73,6 +83,8 @@ class StageRunner:
         page_id: str,
         specs: Mapping[StageName, StageSpec],
         config: Mapping[str, Any],
+        provider_response_lease_seconds: float = DEFAULT_PROVIDER_RESPONSE_LEASE_SECONDS,
+        provider_response_poll_seconds: float = DEFAULT_PROVIDER_RESPONSE_POLL_SECONDS,
     ) -> None:
         missing = set(STAGE_DAG) - set(specs)
         if missing:
@@ -85,6 +97,85 @@ class StageRunner:
         self.page_id = page_id
         self.specs = dict(specs)
         self.config = config
+        if provider_response_lease_seconds <= 0:
+            raise ValueError("provider_response_lease_seconds must be positive")
+        if provider_response_poll_seconds <= 0:
+            raise ValueError("provider_response_poll_seconds must be positive")
+        self.provider_response_lease_seconds = provider_response_lease_seconds
+        self.provider_response_poll_seconds = provider_response_poll_seconds
+
+    def _cached_raw_response(self, owner_id: str) -> bytes | None:
+        cached = self.store.find_artifact(
+            owner_type="provider_response", owner_id=owner_id
+        )
+        if cached is None:
+            return None
+        return self.store.artifacts.read_bytes(
+            cached.sha256, expected_size=cached.size_bytes
+        )
+
+    @contextmanager
+    def _maintain_provider_response_claim(
+        self, claim: ProviderResponseClaim
+    ) -> Iterator[None]:
+        stopped = Event()
+        ready = Event()
+        failures: list[Exception] = []
+        interval = min(5.0, self.provider_response_lease_seconds / 3)
+
+        def heartbeat() -> None:
+            try:
+                with JobStore(self.store.database, self.store.artifacts) as lease_store:
+                    ready.set()
+                    while not stopped.wait(interval):
+                        lease_store.renew_provider_response_claim(
+                            claim,
+                            lease_seconds=self.provider_response_lease_seconds,
+                        )
+            except (OSError, RuntimeError, sqlite3.Error, ValueError) as error:
+                failures.append(error)
+                ready.set()
+
+        thread = Thread(
+            target=heartbeat,
+            name=f"provider-response-lease-{claim.claim_token[:8]}",
+            daemon=True,
+        )
+        thread.start()
+        if not ready.wait(timeout=5):
+            stopped.set()
+            thread.join(timeout=5)
+            raise ProviderResponseClaimLostError(
+                f"provider response lease heartbeat did not start for {claim.owner_id}"
+            )
+        if failures:
+            stopped.set()
+            thread.join(timeout=5)
+            raise ProviderResponseClaimLostError(
+                f"provider response lease heartbeat failed for {claim.owner_id}"
+            ) from failures[0]
+
+        try:
+            yield
+        except BaseException:
+            stopped.set()
+            thread.join(timeout=5)
+            raise
+        else:
+            stopped.set()
+            thread.join(timeout=5)
+            if thread.is_alive():
+                raise ProviderResponseClaimLostError(
+                    f"provider response lease heartbeat did not stop for {claim.owner_id}"
+                )
+            if failures:
+                raise ProviderResponseClaimLostError(
+                    f"provider response lease was lost for {claim.owner_id}"
+                ) from failures[0]
+            self.store.renew_provider_response_claim(
+                claim,
+                lease_seconds=self.provider_response_lease_seconds,
+            )
 
     def _raw_response(
         self,
@@ -94,19 +185,35 @@ class StageRunner:
         fetch: Callable[[], bytes],
     ) -> bytes:
         owner_id = f"{self.job_id}:{self.page_id}:{stage.value}:{fingerprint}:{request_key}"
-        cached = self.store.find_artifact(owner_type="provider_response", owner_id=owner_id)
-        if cached is not None:
-            return self.store.artifacts.read_bytes(cached.sha256)
-        response = fetch()
-        if not isinstance(response, bytes):
-            raise TypeError("provider response fetcher must return bytes")
-        self.store.store_artifact(
-            response,
-            media_type="application/octet-stream",
-            owner_type="provider_response",
-            owner_id=owner_id,
-        )
-        return response
+        while True:
+            cached = self._cached_raw_response(owner_id)
+            if cached is not None:
+                return cached
+            claim = self.store.acquire_provider_response_claim(
+                owner_id=owner_id,
+                lease_seconds=self.provider_response_lease_seconds,
+            )
+            if claim is None:
+                sleep(self.provider_response_poll_seconds)
+                continue
+            try:
+                cached = self._cached_raw_response(owner_id)
+                if cached is not None:
+                    self.store.release_provider_response_claim(claim)
+                    return cached
+                with self._maintain_provider_response_claim(claim):
+                    response = fetch()
+                    if not isinstance(response, bytes):
+                        raise TypeError("provider response fetcher must return bytes")
+                self.store.complete_provider_response_claim(
+                    claim,
+                    response,
+                    media_type="application/octet-stream",
+                )
+                return response
+            except BaseException:
+                self.store.release_provider_response_claim(claim)
+                raise
 
     def run(
         self,

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import multiprocessing
+import sqlite3
 from collections import Counter
 from dataclasses import replace
 from pathlib import Path
+from threading import Barrier, Event, Lock, Thread
 
 import pytest
 
@@ -20,6 +23,48 @@ from manga_translator.stages.base import (
 from manga_translator.stages.fingerprint import select_relevant_config, stage_fingerprint
 from manga_translator.stages.runner import STAGE_DAG, StageRunner
 from manga_translator.storage import ArtifactStore, JobStore
+
+
+def _provider_claim_process_worker(
+    database: str,
+    artifact_root: str,
+    page_id: str,
+    barrier,
+    fetch_started,
+    allow_fetch_to_finish,
+    provider_calls,
+    results,
+) -> None:
+    try:
+        with JobStore(database, ArtifactStore(artifact_root)) as store:
+            runner = StageRunner(
+                store=store,
+                job_id="job",
+                page_id=page_id,
+                specs=_specs(Counter()),
+                config={},
+                provider_response_lease_seconds=0.15,
+                provider_response_poll_seconds=0.01,
+            )
+            barrier.wait(timeout=10)
+
+            def fetch() -> bytes:
+                with provider_calls.get_lock():
+                    provider_calls.value += 1
+                fetch_started.set()
+                if not allow_fetch_to_finish.wait(timeout=10):
+                    raise TimeoutError("test did not release provider fetch")
+                return b'{"translation":"process-safe"}'
+
+            response = runner._raw_response(
+                StageName.TRANSLATE,
+                "p" * 64,
+                "process-request",
+                fetch,
+            )
+            results.put(("ok", response))
+    except (OSError, RuntimeError, sqlite3.Error, ValueError) as error:
+        results.put(("error", repr(error)))
 
 
 def _document(original_artifact: ArtifactRef | None = None) -> PageDocument:
@@ -88,13 +133,14 @@ def persisted_job(tmp_path: Path):
         store.close()
 
 
-def _runner(store, page_id, specs, config):
+def _runner(store, page_id, specs, config, **kwargs):
     return StageRunner(
         store=store,
         job_id="job",
         page_id=page_id,
         specs=specs,
         config=config,
+        **kwargs,
     )
 
 
@@ -199,6 +245,191 @@ def test_raw_provider_response_is_replayed_after_interrupted_stage(persisted_job
     assert outcomes[StageName.OCR].cache_hit
     assert store.artifacts.read_bytes(outcomes[StageName.TRANSLATE].outputs[0].sha256).startswith(
         b'{"translation"'
+    )
+
+
+def test_two_runners_share_one_provider_fetch_while_lease_is_renewed(
+    persisted_job,
+) -> None:
+    store, page_id = persisted_job
+    barrier = Barrier(3)
+    fetch_started = Event()
+    allow_fetch_to_finish = Event()
+    observation_delay = Event()
+    calls_lock = Lock()
+    provider_calls = 0
+    responses: list[bytes] = []
+    failures: list[Exception] = []
+
+    def fetch() -> bytes:
+        nonlocal provider_calls
+        with calls_lock:
+            provider_calls += 1
+        fetch_started.set()
+        if not allow_fetch_to_finish.wait(timeout=5):
+            raise TimeoutError("test did not release provider fetch")
+        return b'{"translation":"single-fetch"}'
+
+    def worker() -> None:
+        try:
+            with JobStore(store.database, ArtifactStore(store.artifacts.root)) as isolated:
+                runner = _runner(
+                    isolated,
+                    page_id,
+                    _specs(Counter()),
+                    {},
+                    provider_response_lease_seconds=0.12,
+                    provider_response_poll_seconds=0.01,
+                )
+                barrier.wait(timeout=5)
+                responses.append(
+                    runner._raw_response(
+                        StageName.TRANSLATE,
+                        "f" * 64,
+                        "same-request",
+                        fetch,
+                    )
+                )
+        except (OSError, RuntimeError, sqlite3.Error, ValueError) as error:
+            failures.append(error)
+
+    threads = [Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait(timeout=5)
+    fetch_observed = fetch_started.wait(timeout=5)
+    observation_delay.wait(timeout=0.4)
+    with calls_lock:
+        observed_calls = provider_calls
+    allow_fetch_to_finish.set()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert fetch_observed
+    assert observed_calls == 1
+    assert all(not thread.is_alive() for thread in threads)
+    assert not failures
+    assert responses == [b'{"translation":"single-fetch"}'] * 2
+    assert (
+        store.connection.execute(
+            "SELECT count(*) FROM provider_response_claims"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        store.connection.execute(
+            """
+            SELECT count(*) FROM artifact_references
+            WHERE owner_type='provider_response'
+            """
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_provider_fetch_claim_is_shared_across_processes(persisted_job) -> None:
+    store, page_id = persisted_job
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(3)
+    fetch_started = context.Event()
+    allow_fetch_to_finish = context.Event()
+    provider_calls = context.Value("i", 0)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_provider_claim_process_worker,
+            args=(
+                str(store.database),
+                str(store.artifacts.root),
+                page_id,
+                barrier,
+                fetch_started,
+                allow_fetch_to_finish,
+                provider_calls,
+                results,
+            ),
+        )
+        for _ in range(2)
+    ]
+    for process in processes:
+        process.start()
+    barrier.wait(timeout=10)
+    fetch_observed = fetch_started.wait(timeout=10)
+    Event().wait(timeout=0.5)
+    with provider_calls.get_lock():
+        observed_calls = provider_calls.value
+    allow_fetch_to_finish.set()
+    for process in processes:
+        process.join(timeout=10)
+
+    assert fetch_observed
+    assert observed_calls == 1
+    assert all(not process.is_alive() for process in processes)
+    assert [process.exitcode for process in processes] == [0, 0]
+    assert sorted(results.get(timeout=2) for _ in processes) == [
+        ("ok", b'{"translation":"process-safe"}'),
+        ("ok", b'{"translation":"process-safe"}'),
+    ]
+
+
+def test_failed_and_expired_provider_leases_are_recoverable(persisted_job) -> None:
+    store, page_id = persisted_job
+    runner = _runner(
+        store,
+        page_id,
+        _specs(Counter()),
+        {},
+        provider_response_lease_seconds=10,
+        provider_response_poll_seconds=0.01,
+    )
+    fingerprint = "e" * 64
+    expired_owner = (
+        f"job:{page_id}:{StageName.TRANSLATE.value}:{fingerprint}:expired-request"
+    )
+    expired = store.acquire_provider_response_claim(
+        owner_id=expired_owner, lease_seconds=60
+    )
+    assert expired is not None
+    store.connection.execute(
+        "UPDATE provider_response_claims SET lease_expires_at_ms=1 WHERE owner_id=?",
+        (expired_owner,),
+    )
+
+    assert (
+        runner._raw_response(
+            StageName.TRANSLATE,
+            fingerprint,
+            "expired-request",
+            lambda: b"recovered-expired",
+        )
+        == b"recovered-expired"
+    )
+    assert not store.release_provider_response_claim(expired)
+
+    def fail_fetch() -> bytes:
+        raise RuntimeError("simulated provider failure")
+
+    with pytest.raises(RuntimeError, match="simulated provider failure"):
+        runner._raw_response(
+            StageName.TRANSLATE,
+            fingerprint,
+            "failed-request",
+            fail_fetch,
+        )
+    assert (
+        store.connection.execute(
+            "SELECT count(*) FROM provider_response_claims"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        runner._raw_response(
+            StageName.TRANSLATE,
+            fingerprint,
+            "failed-request",
+            lambda: b"recovered-failure",
+        )
+        == b"recovered-failure"
     )
 
 

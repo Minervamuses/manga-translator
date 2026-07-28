@@ -103,48 +103,11 @@ def _verticalize_punctuation(text: str) -> str:
     return "".join(VERTICAL_PUNCT_MAP.get(ch, ch) for ch in text)
 
 
-@lru_cache(maxsize=8192)
-def _glyph_signature(
-    font_path: str,
-    size: int,
-    char: str,
-) -> tuple[object, tuple[int, int], bytes] | None:
-    try:
-        font = _load_font(font_path, size)
-        bbox = font.getbbox(char)
-        mask = font.getmask(char, mode="L")
-        return (bbox, mask.size, bytes(mask))
-    except (OSError, TypeError, ValueError):
-        return None
-
-
-@lru_cache(maxsize=512)
-def _missing_glyph_signatures(
-    font_path: str,
-    size: int,
-) -> frozenset[tuple[object, tuple[int, int], bytes]]:
-    signatures = {
-        signature
-        for sentinel in ("\u0378", "\u0380", "\U0010ffff")
-        if (signature := _glyph_signature(font_path, size, sentinel)) is not None
-    }
-    return frozenset(signatures)
-
-
 def _has_glyph(font_path: str, size: int, char: str) -> bool:
-    """Compare against the font's .notdef bitmap instead of trusting getbbox()."""
+    del size
+    from .typography.fonts import font_has_glyph
 
-    if not char:
-        return False
-    if char.isspace():
-        return True
-    signature = _glyph_signature(font_path, size, char)
-    if signature is None:
-        return False
-    bbox = signature[0]
-    if bbox is None or (bbox[2] - bbox[0]) <= 0:
-        return False
-    return signature not in _missing_glyph_signatures(font_path, size)
+    return font_has_glyph(font_path, char)
 
 
 def _get_font_and_char(

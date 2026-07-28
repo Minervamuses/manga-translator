@@ -1,0 +1,13 @@
+roles:
+  neutral_sans:
+    - fonts/NotoSansCJKtc-Regular.otf
+    - fonts/Iansui-Regular.ttf
+  formal_serif:
+    - fonts/NotoSansCJKtc-Regular.otf
+    - fonts/Iansui-Regular.ttf
+  handwritten:
+    - fonts/Iansui-Regular.ttf
+    - fonts/NotoSansCJKtc-Regular.otf
+  rounded:
+    - fonts/NotoSansCJKtc-Regular.otf
+    - fonts/Iansui-Regular.ttf

@@ -8,6 +8,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .contracts.mapping import normalize_mapping_chain
 from .domain.models import PageDocument
 from .domain.serialization import canonical_document_bytes
 from .image_io import write_image
@@ -46,7 +47,23 @@ def _group_to_dict(group: Any) -> dict[str, Any]:
         "translation_valid": bool(getattr(group, "translation_valid", False)),
         "status": getattr(group, "status", ""),
         "skip_reason": getattr(group, "skip_reason", ""),
-        "mapping_chain": getattr(group, "mapping_chain", {}),
+        "duplicate_of": getattr(group, "duplicate_of", None),
+        "layout_bbox": (
+            {
+                "x": int(group.layout_bbox[0]),
+                "y": int(group.layout_bbox[1]),
+                "w": int(group.layout_bbox[2]),
+                "h": int(group.layout_bbox[3]),
+            }
+            if getattr(group, "layout_bbox", None) is not None
+            else None
+        ),
+        "rendered_font_size": int(getattr(group, "rendered_font_size", 0)),
+        "rendered_direction": getattr(group, "rendered_direction", ""),
+        "layout_mode": getattr(group, "layout_mode", ""),
+        "layout_info": getattr(group, "layout_info", {}),
+        "mapping_region_key": getattr(group, "mapping_region_key", ""),
+        "mapping_chain": normalize_mapping_chain(getattr(group, "mapping_chain", {})),
     }
 
 

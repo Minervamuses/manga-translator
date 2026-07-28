@@ -9,10 +9,11 @@ import os
 import platform
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 MANIFEST_RELATIVE_PATH = Path("benchmarks/baseline/v0.3.2/manifest.json")
 LEGACY_TEST_EXCLUDES = {"tests/test_baseline_manifest.py"}
@@ -261,6 +262,21 @@ def build_manifest(root: Path, archive_sha256: str) -> dict[str, Any]:
         "python": {
             "implementation": platform.python_implementation(),
             "version": platform.python_version(),
+            "purpose": "historical_capture_metadata",
+        },
+        "runtime_contract": {
+            "environment": {
+                "manager": "conda",
+                "definition": {
+                    "path": "environment.yml",
+                    "sha256": sha256_file(root / "environment.yml"),
+                },
+            },
+            "python": {
+                "implementation": "CPython",
+                "major": 3,
+                "minor": 11,
+            },
         },
         "tests": {
             "unit": {
@@ -295,16 +311,53 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
-def verify_manifest(root: Path, manifest: dict[str, Any]) -> list[str]:
+def _verify_runtime_contract(root: Path, manifest: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    current = fingerprint_tree(root)
-    expected_tree = manifest.get("source_tree", {})
-    if current.sha256 != expected_tree.get("sha256"):
-        differences = compare_tree(expected_tree.get("files", []), current)
-        details = "; ".join(
-            f"{kind}={','.join(paths)}" for kind, paths in differences.items() if paths
+    contract = manifest.get("runtime_contract")
+    if not isinstance(contract, dict):
+        expected_python = manifest.get("python", {})
+        if expected_python.get("implementation") != platform.python_implementation():
+            errors.append("Python implementation differs from baseline")
+        if expected_python.get("version") != platform.python_version():
+            errors.append(
+                f"Python version differs: expected {expected_python.get('version')}, "
+                f"got {platform.python_version()}"
+            )
+        return errors
+
+    environment = contract.get("environment", {})
+    if environment.get("manager") != "conda":
+        errors.append("runtime environment manager must be conda")
+    elif not os.environ.get("CONDA_PREFIX"):
+        errors.append("active Conda environment required")
+    if os.environ.get("VIRTUAL_ENV"):
+        errors.append("virtualenv must not be active when Conda manages the runtime")
+
+    definition = environment.get("definition", {})
+    definition_path = root / str(definition.get("path", ""))
+    if not definition_path.is_file():
+        errors.append(f"missing runtime definition: {definition.get('path')}")
+    elif sha256_file(definition_path) != definition.get("sha256"):
+        errors.append(f"changed runtime definition: {definition.get('path')}")
+
+    expected_python = contract.get("python", {})
+    if expected_python.get("implementation") != platform.python_implementation():
+        errors.append("Python implementation differs from runtime contract")
+    expected_version = (expected_python.get("major"), expected_python.get("minor"))
+    actual_version = sys.version_info[:2]
+    if expected_version != actual_version:
+        errors.append(
+            "Python major/minor differs from runtime contract: "
+            f"expected {expected_version[0]}.{expected_version[1]}, "
+            f"got {actual_version[0]}.{actual_version[1]}"
         )
-        errors.append(f"source tree fingerprint mismatch: {details or 'unknown difference'}")
+    return errors
+
+
+def verify_regression_manifest(root: Path, manifest: dict[str, Any]) -> list[str]:
+    """Verify immutable baseline evidence while allowing committed source evolution."""
+
+    errors: list[str] = []
 
     for section in ("assets", "layout_fixtures"):
         for item in manifest.get(section, []):
@@ -336,41 +389,100 @@ def verify_manifest(root: Path, manifest: dict[str, Any]) -> list[str]:
             f"missing={','.join(missing_tests)}"
         )
 
-    expected_python = manifest.get("python", {})
-    if expected_python.get("implementation") != platform.python_implementation():
-        errors.append("Python implementation differs from baseline")
-    if expected_python.get("version") != platform.python_version():
-        errors.append(
-            f"Python version differs: expected {expected_python.get('version')}, "
-            f"got {platform.python_version()}"
-        )
+    errors.extend(_verify_runtime_contract(root, manifest))
     return errors
 
 
-def run_baseline_verification(root: Path | None = None) -> int:
+def verify_snapshot_manifest(root: Path, manifest: dict[str, Any]) -> list[str]:
+    """Verify the exact historical P0-01 source snapshot and its evidence."""
+
+    errors = verify_regression_manifest(root, manifest)
+    current = fingerprint_tree(root)
+    expected_tree = manifest.get("source_tree", {})
+    if current.sha256 != expected_tree.get("sha256"):
+        differences = compare_tree(expected_tree.get("files", []), current)
+        details = "; ".join(
+            f"{kind}={','.join(paths)}" for kind, paths in differences.items() if paths
+        )
+        errors.insert(0, f"source tree fingerprint mismatch: {details or 'unknown difference'}")
+    return errors
+
+
+def verify_manifest(
+    root: Path,
+    manifest: dict[str, Any],
+    *,
+    mode: Literal["snapshot", "regression"] = "snapshot",
+) -> list[str]:
+    if mode == "snapshot":
+        return verify_snapshot_manifest(root, manifest)
+    if mode == "regression":
+        return verify_regression_manifest(root, manifest)
+    raise ValueError(f"unknown baseline verification mode: {mode}")
+
+
+def run_baseline_verification(
+    root: Path | None = None,
+    *,
+    mode: Literal["snapshot", "regression"] = "snapshot",
+) -> int:
     root = (root or project_root()).resolve()
     manifest_path = root / MANIFEST_RELATIVE_PATH
     manifest = load_manifest(manifest_path)
-    errors = verify_manifest(root, manifest)
+    errors = verify_manifest(root, manifest, mode=mode)
     if errors:
         for error in errors:
             print(f"FAIL: {error}", file=sys.stderr)
         return 1
 
-    commands = (
-        [sys.executable, "-m", "compileall", "-q", "src", "tests"],
-        [sys.executable, "-m", "pytest", "-q"],
-    )
-    for command in commands:
-        result = subprocess.run(command, cwd=root, check=False)
-        if result.returncode:
-            return result.returncode
+    with tempfile.TemporaryDirectory(prefix="manga-baseline-") as temporary:
+        temporary_root = Path(temporary)
+        commands = (
+            (
+                [
+                    sys.executable,
+                    "-X",
+                    f"pycache_prefix={temporary_root / 'pycache'}",
+                    "-m",
+                    "compileall",
+                    "-q",
+                    "src",
+                    "tests",
+                ],
+                os.environ.copy(),
+            ),
+            (
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-p",
+                    "no:cacheprovider",
+                    "--basetemp",
+                    str(temporary_root / "pytest"),
+                    "-q",
+                ],
+                {
+                    **os.environ,
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONPATH": str(root / "src"),
+                },
+            ),
+        )
+        for command, environment in commands:
+            result = subprocess.run(command, cwd=root, check=False, env=environment)
+            if result.returncode:
+                return result.returncode
 
     unit = manifest["tests"]["unit"]
     print(
-        f"Baseline verified: {unit['legacy_count']}/{unit['legacy_count']} legacy tests present; "
-        f"tree={manifest['source_tree']['sha256']}"
+        f"Baseline {mode} verification passed: "
+        f"{unit['legacy_count']}/{unit['legacy_count']} legacy tests present"
     )
+    if mode == "snapshot":
+        print(f"historical_tree={manifest['source_tree']['sha256']}")
+    else:
+        print("historical source-tree comparison: skipped (regression mode)")
     print("model_integration: not run (opt-in)")
     print("api_integration: not run (opt-in)")
     return 0

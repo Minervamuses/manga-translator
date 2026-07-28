@@ -18,9 +18,12 @@ from .artifacts import dump_debug_artifacts, dump_page_document
 from .config import AppConfig, PostprocessConfig
 from .contracts.mapping import (
     MappingContractError,
+    RequestMap,
     ValidatedTranslationBatch,
+    bind_validated_responses,
     bind_validated_values,
     build_request_map,
+    mapping_chain_template,
 )
 from .detector import DetectionResult, TextGroup, TextRegion, detect_text_regions
 from .domain.issues import Issue, IssueCode, IssueSeverity, StageName, StageStatus
@@ -53,16 +56,22 @@ from .ocr import (
     ocr_group_detailed,
 )
 from .profiling import profile_page, profile_span, set_page_profile_metrics
-from .result import BatchResult, PageResult, ResultIssue, derive_batch_status
+from .result import (
+    BatchResult,
+    GroupMappingSnapshot,
+    PageResult,
+    ResultIssue,
+    derive_batch_status,
+)
 from .stages.legacy import build_legacy_stage_specs, stage_config
 from .stages.runner import StageOutcome, StageRunner
 from .storage import ArtifactStore, JobStore
 from .translator import (
     load_glossary,
     sanitize_translation_text,
-    translate_batch,
-    translate_page,
-    translate_with_context,
+    translate_batch_mapped,
+    translate_page_mapped,
+    translate_with_context_mapped,
     validate_translation,
 )
 from .typesetter import (
@@ -363,10 +372,8 @@ def _best_ocr_group(a: TextGroup, b: TextGroup) -> TextGroup:
     )
 
 
-def _merge_group_objects(a: TextGroup, b: TextGroup) -> TextGroup:
-    best = _best_ocr_group(a, b)
-    merged_bbox = merge_bbox([a, b])
-    translation_best = max(
+def _best_translation_group(a: TextGroup, b: TextGroup) -> TextGroup:
+    return max(
         (a, b),
         key=lambda group: (
             bool(group.translation_valid and group.translation.strip()),
@@ -374,6 +381,18 @@ def _merge_group_objects(a: TextGroup, b: TextGroup) -> TextGroup:
             group.ocr_confidence,
         ),
     )
+
+
+def _merge_group_objects(
+    a: TextGroup,
+    b: TextGroup,
+    *,
+    identity_source: TextGroup | None = None,
+) -> TextGroup:
+    best = _best_ocr_group(a, b)
+    merged_bbox = merge_bbox([a, b])
+    translation_best = _best_translation_group(a, b)
+    identity_source = identity_source or a
     merged_candidates: list[dict[str, object]] = []
     seen_candidates: set[tuple[str, str]] = set()
     for candidate in a.ocr_candidates + b.ocr_candidates:
@@ -384,7 +403,7 @@ def _merge_group_objects(a: TextGroup, b: TextGroup) -> TextGroup:
         merged_candidates.append(candidate)
 
     return TextGroup(
-        id=a.id,
+        id=identity_source.id,
         region_ids=list(dict.fromkeys(a.region_ids + b.region_ids)),
         bbox=merged_bbox,
         vertical=a.vertical if _group_area(a) >= _group_area(b) else b.vertical,
@@ -493,14 +512,27 @@ def _merge_translation_duplicates(
         if consumed[index]:
             continue
         current = group
+        members = [group]
         for other_index in range(index + 1, len(groups)):
             if consumed[other_index]:
                 continue
             other = groups[other_index]
             if not _are_translation_duplicates(current, other, cfg):
                 continue
-            other.duplicate_of = current.id
-            current = _merge_group_objects(current, other)
+            survivor = _best_translation_group(current, other)
+            survivor_request = survivor.mapping_chain.get("request_item")
+            members.append(other)
+            for member in members:
+                member.duplicate_of = (
+                    None
+                    if member.mapping_chain.get("request_item") == survivor_request
+                    else survivor.id
+                )
+            current = _merge_group_objects(
+                current,
+                other,
+                identity_source=survivor,
+            )
             consumed[other_index] = True
         kept.append(current)
     return kept
@@ -738,6 +770,12 @@ def _preflight_layout_plans(
     return plans
 
 
+def _record_mapping_layout_plans(groups: list[TextGroup]) -> None:
+    for group in groups:
+        if group.layout_info and group.mapping_chain:
+            group.mapping_chain["layout_plan"] = f"layout:{group.id}"
+
+
 def _refresh_group_order(
     groups: list[TextGroup],
     regions_by_id: dict[str, TextRegion],
@@ -794,53 +832,79 @@ def _mapping_region_key(page_id: str, group: TextGroup) -> str:
     return "group:" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
 
 
-def _request_translations(
+def _build_translation_request(
     groups: list[TextGroup],
     page_id: str,
-    config: AppConfig,
-    glossary: dict[str, str],
-) -> ValidatedTranslationBatch:
+) -> tuple[list[TextGroup], list[str], RequestMap]:
     ordered, texts = _build_page_translation_units(groups)
-    if not texts:
-        return bind_validated_values(build_request_map(page_id, []), [])
     for group in ordered:
         if not group.mapping_region_key:
             group.mapping_region_key = _mapping_region_key(page_id, group)
     request = build_request_map(
         page_id, ((group.mapping_region_key, group.ocr_text) for group in ordered)
     )
+    return ordered, texts, request
+
+
+def _request_translations(
+    groups: list[TextGroup],
+    page_id: str,
+    config: AppConfig,
+    glossary: dict[str, str],
+) -> ValidatedTranslationBatch:
+    _ordered, texts, request = _build_translation_request(groups, page_id)
+    if not texts:
+        return bind_validated_values(request, [])
     item_ids = [item.item_id for item in request.items]
 
     if not config.postprocess.enable_group_translate:
         if config.openrouter.translation_mode == "context":
-            values = translate_with_context(
+            responses = translate_with_context_mapped(
                 texts,
                 config.openrouter,
                 glossary,
                 context_size=config.openrouter.context_size,
                 item_ids=item_ids,
+                artifact_root=config.paths.output_dir,
             )
         else:
-            values = translate_batch(
-                texts, config.openrouter, glossary, item_ids=item_ids
+            responses = translate_batch_mapped(
+                texts,
+                config.openrouter,
+                glossary,
+                item_ids=item_ids,
+                artifact_root=config.paths.output_dir,
             )
-        return bind_validated_values(request, values)
+        return bind_validated_responses(request, responses)
 
     total_chars = sum(len(text) for text in texts)
     should_fallback_window = total_chars > 6000 or len(texts) > 120
     if config.openrouter.page_context_mode == "page" and not should_fallback_window:
-        values = translate_page(texts, config.openrouter, glossary, item_ids=item_ids)
+        responses = translate_page_mapped(
+            texts,
+            config.openrouter,
+            glossary,
+            item_ids=item_ids,
+            artifact_root=config.paths.output_dir,
+        )
     elif config.openrouter.translation_mode == "context":
-        values = translate_with_context(
+        responses = translate_with_context_mapped(
             texts,
             config.openrouter,
             glossary,
             context_size=config.openrouter.context_size,
             item_ids=item_ids,
+            artifact_root=config.paths.output_dir,
         )
     else:
-        values = translate_batch(texts, config.openrouter, glossary, item_ids=item_ids)
-    return bind_validated_values(request, values)
+        responses = translate_batch_mapped(
+            texts,
+            config.openrouter,
+            glossary,
+            item_ids=item_ids,
+            artifact_root=config.paths.output_dir,
+        )
+    return bind_validated_responses(request, responses)
 
 
 def _translate_groups(
@@ -851,7 +915,13 @@ def _translate_groups(
 ) -> ResultIssue | None:
     translatable: list[TextGroup] = []
     for group in groups:
-        if group.status == "ocr_rejected":
+        if not group.mapping_region_key:
+            group.mapping_region_key = _mapping_region_key(page_id, group)
+        group.mapping_chain = mapping_chain_template(
+            region_key=group.mapping_region_key,
+            ocr_record=f"ocr:{group.mapping_region_key}",
+        )
+        if group.status in {"ocr_rejected", "ocr_failed"}:
             continue
         accepted = bool(group.ocr_text_norm) and (
             group.ocr_confidence >= config.ocr.min_quality_score
@@ -869,11 +939,11 @@ def _translate_groups(
     if not translatable:
         return None
 
-    for group in translatable:
-        if not group.mapping_region_key:
-            group.mapping_region_key = _mapping_region_key(page_id, group)
-
     try:
+        _ordered, _texts, request = _build_translation_request(translatable, page_id)
+        for group in translatable:
+            request_item = request.by_region_key[group.mapping_region_key]
+            group.mapping_chain["request_item"] = request_item.item_id
         translations = _request_translations(translatable, page_id, config, glossary)
     except Exception as error:  # noqa: BLE001 - page boundary must preserve source on failure
         console.print(f"[red]本頁翻譯失敗，保留原文：{error}[/]")
@@ -887,19 +957,35 @@ def _translate_groups(
             if isinstance(error, MappingContractError)
             else "translation_api_failed"
         )
-        return ResultIssue(code=code, message=str(error), stage="translation", page_id=page_id)
+        details: dict[str, object] = {}
+        raw_response_refs = getattr(error, "raw_response_refs", ())
+        if raw_response_refs:
+            details["raw_response_artifacts"] = [
+                reference.to_dict() for reference in raw_response_refs
+            ]
+        return ResultIssue(
+            code=code,
+            message=str(error),
+            stage="translation",
+            page_id=page_id,
+            details=details,
+        )
 
     for group in translatable:
         raw_translation = translations.by_region_key[group.mapping_region_key]
         translation = sanitize_translation_text(raw_translation, source=group.ocr_text)
         validation = validate_translation(group.ocr_text, translation, config.openrouter)
+        group.mapping_chain = translations.chain_for(group.mapping_region_key)
         group.translation = translation if validation.valid else ""
         group.translation_valid = validation.valid
         if validation.valid:
-            group.mapping_chain = translations.chain_for(group.mapping_region_key)
+            group.mapping_chain["validated_translation"] = hashlib.sha256(
+                group.translation.encode("utf-8")
+            ).hexdigest()
             group.status = "ready"
             group.skip_reason = ""
         else:
+            group.mapping_chain["validated_translation"] = None
             group.status = "translation_rejected"
             group.skip_reason = ",".join(validation.issues) or "empty_translation"
         console.print(
@@ -907,6 +993,60 @@ def _translate_groups(
             markup=False,
         )
     return None
+
+
+def _mapping_snapshots(
+    request_groups: list[TextGroup],
+    final_groups: list[TextGroup],
+) -> list[GroupMappingSnapshot]:
+    """Preserve every request outcome while enriching surviving groups downstream."""
+
+    def identity(group: TextGroup) -> tuple[str, str]:
+        request_item = group.mapping_chain.get("request_item")
+        if isinstance(request_item, str) and request_item:
+            return ("request_item", request_item)
+        if group.mapping_region_key:
+            return ("region", group.mapping_region_key)
+        return ("group", group.id)
+
+    tracked = {identity(group): group for group in request_groups}
+    for group in final_groups:
+        tracked[identity(group)] = group
+    return [GroupMappingSnapshot.from_group(group) for group in tracked.values()]
+
+
+def _group_failure_issues(
+    groups: list[TextGroup],
+    page_id: str,
+) -> list[ResultIssue]:
+    failure_kinds = {
+        "ocr_failed": ("ocr_group_failed", "ocr"),
+        "translation_rejected": ("translation_rejected", "translation"),
+        "layout_rejected": ("layout_rejected", "layout"),
+        "layout_collision_rejected": ("layout_collision_rejected", "layout"),
+    }
+    issues: list[ResultIssue] = []
+    for group in groups:
+        failure = failure_kinds.get(group.status)
+        if failure is None:
+            continue
+        code, stage = failure
+        reason = group.skip_reason or group.status
+        issues.append(
+            ResultIssue(
+                code=code,
+                message=reason,
+                stage=stage,
+                page_id=page_id,
+                details={
+                    "group_id": group.id,
+                    "group_status": group.status,
+                    "reason": reason,
+                    "region_ids": list(group.region_ids),
+                },
+            )
+        )
+    return issues
 
 
 def _dump_debug_artifacts(
@@ -1277,8 +1417,10 @@ def process_single_page(
     dump_json: bool = False,
     save_intermediate: bool = False,
     prep_manual: bool = False,
+    *,
+    page_id: str | None = None,
 ) -> PageResult:
-    page_id = _page_id_for_path(image_path)
+    page_id = page_id or _page_id_for_path(image_path)
     with profile_page(page_id, str(image_path)):
         return _process_single_page_impl(
             image_path,
@@ -1360,6 +1502,7 @@ def _process_single_page_impl(
                 status="blocked",
                 source_image=original,
                 regions=detection.regions_post,
+                mapping_chains=[GroupMappingSnapshot.from_group(group) for group in groups],
                 issues=[
                     *detection_issues,
                     ResultIssue(
@@ -1427,6 +1570,7 @@ def _process_single_page_impl(
     groups = _refresh_group_order(groups, regions_by_id, config.postprocess)
     with profile_span("translation", group_count=len(groups)):
         translation_issue = _translate_groups(groups, page_id, config, glossary)
+    mapping_outcomes = list(groups)
     groups_after_translation = _merge_translation_duplicates(groups, config.postprocess)
     if len(groups_after_translation) != len(groups):
         console.print(
@@ -1460,9 +1604,7 @@ def _process_single_page_impl(
             regions_by_id,
             config,
         )
-    for group in groups:
-        if group.id in layout_plans and group.mapping_chain:
-            group.mapping_chain["layout_plan"] = f"layout:{group.id}"
+    _record_mapping_layout_plans(groups)
     layout_rejected = sum(
         group.status in {"layout_rejected", "layout_collision_rejected"}
         for group in groups
@@ -1523,22 +1665,25 @@ def _process_single_page_impl(
             final_img=result if debug else None,
         )
 
-    issues = list(detection_issues)
+    group_issues = _group_failure_issues(groups, page_id)
+    issues = [*detection_issues, *group_issues]
     if translation_issue is not None:
         issues.append(translation_issue)
+    blocking_issue = translation_issue or (group_issues[0] if group_issues else None)
     set_page_profile_metrics(page_id, final_groups=len(groups), renderable_groups=len(renderable))
     return PageResult(
         page_id=page_id,
         source_path=image_path,
-        status="blocked" if translation_issue is not None else "succeeded",
+        status="blocked" if blocking_issue is not None else "succeeded",
         image=result,
         source_image=original,
         regions=detection.regions_post,
         ocr_results=[group.ocr_text for group in groups],
         translations=[group.translation for group in groups],
         groups=groups,
+        mapping_chains=_mapping_snapshots(mapping_outcomes, groups),
         issues=issues,
-        stage_failure="translation" if translation_issue is not None else None,
+        stage_failure=blocking_issue.stage if blocking_issue is not None else None,
     )
 
 
@@ -1625,47 +1770,50 @@ def run_pipeline(
     ) as progress:
         task = progress.add_task("翻譯中...", total=len(image_files))
         for image_path in image_files:
-            try:
-                if durable_store is None:
-                    page = process_single_page(
-                        image_path=image_path,
-                        config=config,
-                        glossary=glossary,
-                        debug=debug,
-                        dump_json=dump_json,
-                        save_intermediate=save_intermediate,
-                        prep_manual=prep_manual,
+            page_id = _page_id_for_path(image_path)
+            with profile_page(page_id, str(image_path)):
+                try:
+                    if durable_store is None:
+                        page = process_single_page(
+                            image_path=image_path,
+                            config=config,
+                            glossary=glossary,
+                            debug=debug,
+                            dump_json=dump_json,
+                            save_intermediate=save_intermediate,
+                            prep_manual=prep_manual,
+                            page_id=page_id,
+                        )
+                    else:
+                        page = process_single_page_staged(
+                            image_path=image_path,
+                            config=config,
+                            glossary=glossary,
+                            store=durable_store,
+                            job_id=job_id,
+                            resume=resume,
+                            force_stage=force_stage,
+                            debug=debug,
+                            dump_json=dump_json,
+                            save_intermediate=save_intermediate,
+                            prep_manual=prep_manual,
+                        )
+                except OCRInitializationError as error:
+                    page = _failed_page_result(
+                        image_path,
+                        code="ocr_initialization_failed",
+                        stage="ocr",
+                        error=error,
+                        blocked=True,
                     )
-                else:
-                    page = process_single_page_staged(
-                        image_path=image_path,
-                        config=config,
-                        glossary=glossary,
-                        store=durable_store,
-                        job_id=job_id,
-                        resume=resume,
-                        force_stage=force_stage,
-                        debug=debug,
-                        dump_json=dump_json,
-                        save_intermediate=save_intermediate,
-                        prep_manual=prep_manual,
+                except Exception as error:  # noqa: BLE001 - page boundary records typed failure
+                    page = _failed_page_result(
+                        image_path,
+                        code="page_processing_failed",
+                        stage="pipeline",
+                        error=error,
                     )
-            except OCRInitializationError as error:
-                page = _failed_page_result(
-                    image_path,
-                    code="ocr_initialization_failed",
-                    stage="ocr",
-                    error=error,
-                    blocked=True,
-                )
-            except Exception as error:  # noqa: BLE001 - page boundary records typed failure
-                page = _failed_page_result(
-                    image_path,
-                    code="page_processing_failed",
-                    stage="pipeline",
-                    error=error,
-                )
-            _persist_page_result(page, output_dir)
+                _persist_page_result(page, output_dir)
             page.image = None
             page.source_image = None
             pages.append(page)

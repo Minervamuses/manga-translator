@@ -94,13 +94,15 @@ OpenRouter 固定 ID 翻譯 + 來源感知標點清洗 + 品質驗證
 
 ## Conda 環境
 
-專案使用 Conda，不建立 venv，也不需要 Poetry。
+專案只用 Conda 建立與啟用 `manga` 環境；專案的 Python 套件一律由 Poetry
+依 `poetry.lock` 管理。專案已停用 Poetry virtualenv，不會在 repo 內建立 `.venv`。
 
 建立環境：
 
 ```bash
 conda env create -f environment.yml
 conda activate manga
+poetry install --with dev
 ```
 
 更新既有環境：
@@ -108,13 +110,11 @@ conda activate manga
 ```bash
 conda env update -f environment.yml --prune
 conda activate manga
+poetry install --with dev
 ```
 
-將 CLI 安裝到目前 Conda 環境：
-
-```bash
-python -m pip install -e . --no-deps --no-build-isolation
-```
+`poetry install` 會把 CLI 與鎖定的專案依賴安裝到目前啟用的 Conda 環境；
+請勿使用 `pip`、`venv`、`uv` 或讓 Poetry 另建 virtualenv。
 
 完整 ZIP 已包含 comic-text-detector 模型與中文字體；manga-ocr 權重沿用 Hugging Face 本機快取，首次使用時下載，之後直接重用。
 

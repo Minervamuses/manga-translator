@@ -9,6 +9,7 @@
   "regions": [
     {
       "region_key": "d6a2c70d9472:g000",
+      "page_sha256": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
       "legacy_group_id": "g000",
       "bbox": {
         "x": 2187,
@@ -33,6 +34,7 @@
     },
     {
       "region_key": "d6a2c70d9472:g001",
+      "page_sha256": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
       "legacy_group_id": "g001",
       "bbox": {
         "x": 1977,
@@ -57,6 +59,7 @@
     },
     {
       "region_key": "d6a2c70d9472:g002",
+      "page_sha256": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
       "legacy_group_id": "g002",
       "bbox": {
         "x": 1983,
@@ -81,6 +84,7 @@
     },
     {
       "region_key": "d6a2c70d9472:g003",
+      "page_sha256": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
       "legacy_group_id": "g003",
       "bbox": {
         "x": 1338,
@@ -105,6 +109,7 @@
     },
     {
       "region_key": "d6a2c70d9472:g004",
+      "page_sha256": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
       "legacy_group_id": "g004",
       "bbox": {
         "x": 934,
@@ -129,6 +134,7 @@
     },
     {
       "region_key": "d6a2c70d9472:g005",
+      "page_sha256": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
       "legacy_group_id": "g005",
       "bbox": {
         "x": 180,
@@ -153,6 +159,7 @@
     },
     {
       "region_key": "d6a2c70d9472:g006",
+      "page_sha256": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
       "legacy_group_id": "g006",
       "bbox": {
         "x": 50,

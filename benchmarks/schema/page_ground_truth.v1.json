@@ -33,6 +33,7 @@
       "additionalProperties": false,
       "required": [
         "region_key",
+        "page_sha256",
         "legacy_group_id",
         "bbox",
         "reading_order_index",
@@ -45,6 +46,7 @@
       ],
       "properties": {
         "region_key": {"type": "string", "minLength": 1},
+        "page_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "legacy_group_id": {"type": "string", "minLength": 1},
         "bbox": {
           "type": "object",
@@ -78,7 +80,7 @@
         },
         "fixed_translation": {"type": "string", "minLength": 1},
         "source_crop_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "verified_by": {"type": ["string", "null"]},
+        "verified_by": {"type": ["string", "null"], "minLength": 1},
         "verified_at": {"type": ["string", "null"], "format": "date"},
         "provenance": {
           "type": "object",

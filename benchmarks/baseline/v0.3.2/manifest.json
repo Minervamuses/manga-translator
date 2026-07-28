@@ -498,7 +498,22 @@
   ],
   "python": {
     "implementation": "CPython",
-    "version": "3.12.10"
+    "version": "3.12.10",
+    "purpose": "historical_capture_metadata"
+  },
+  "runtime_contract": {
+    "environment": {
+      "manager": "conda",
+      "definition": {
+        "path": "environment.yml",
+        "sha256": "3e5f1146937b217dd27e50598d242c1706848f20229acedc092a46ad721babd9"
+      }
+    },
+    "python": {
+      "implementation": "CPython",
+      "major": 3,
+      "minor": 11
+    }
   },
   "tests": {
     "unit": {

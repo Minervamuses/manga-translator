@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .issues import Issue, StageName, StageStatus
+from .issues import Issue, StageName, StageStatus, ensure_json_object
 
 SCHEMA_VERSION = "1.0"
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -50,13 +50,81 @@ class Polygon(DomainModel):
 
     @model_validator(mode="after")
     def validate_area(self) -> Polygon:
+        coordinates = tuple((point.x, point.y) for point in self.points)
+        if len(set(coordinates)) != len(coordinates):
+            raise ValueError("polygon vertices must be distinct and must not repeat the first point")
         area = 0.0
         for index, point in enumerate(self.points):
             following = self.points[(index + 1) % len(self.points)]
             area += point.x * following.y - following.x * point.y
         if abs(area) <= 1e-9:
             raise ValueError("polygon must have non-zero area")
+        if _polygon_has_self_intersection(coordinates):
+            raise ValueError("polygon must not self-intersect")
         return self
+
+
+def _polygon_has_self_intersection(points: tuple[tuple[float, float], ...]) -> bool:
+    def cross(
+        first: tuple[float, float],
+        second: tuple[float, float],
+        third: tuple[float, float],
+    ) -> float:
+        return (second[0] - first[0]) * (third[1] - first[1]) - (
+            second[1] - first[1]
+        ) * (third[0] - first[0])
+
+    def on_segment(
+        first: tuple[float, float],
+        second: tuple[float, float],
+        point: tuple[float, float],
+    ) -> bool:
+        return (
+            min(first[0], second[0]) <= point[0] <= max(first[0], second[0])
+            and min(first[1], second[1]) <= point[1] <= max(first[1], second[1])
+        )
+
+    def intersects(
+        left_start: tuple[float, float],
+        left_end: tuple[float, float],
+        right_start: tuple[float, float],
+        right_end: tuple[float, float],
+    ) -> bool:
+        values = (
+            cross(left_start, left_end, right_start),
+            cross(left_start, left_end, right_end),
+            cross(right_start, right_end, left_start),
+            cross(right_start, right_end, left_end),
+        )
+        if (values[0] > 0 > values[1] or values[0] < 0 < values[1]) and (
+            values[2] > 0 > values[3] or values[2] < 0 < values[3]
+        ):
+            return True
+        return any(
+            value == 0.0 and on_segment(segment_start, segment_end, point)
+            for value, segment_start, segment_end, point in (
+                (values[0], left_start, left_end, right_start),
+                (values[1], left_start, left_end, right_end),
+                (values[2], right_start, right_end, left_start),
+                (values[3], right_start, right_end, left_end),
+            )
+        )
+
+    edge_count = len(points)
+    for left_index in range(edge_count):
+        left_end = (left_index + 1) % edge_count
+        for right_index in range(left_index + 1, edge_count):
+            right_end = (right_index + 1) % edge_count
+            if left_index in (right_index, right_end) or left_end in (right_index, right_end):
+                continue
+            if intersects(
+                points[left_index],
+                points[left_end],
+                points[right_index],
+                points[right_end],
+            ):
+                return True
+    return False
 
 
 class SourcePage(DomainModel):
@@ -197,6 +265,11 @@ class EntityRecord(DomainModel):
     canonical_name: str = Field(min_length=1)
     attributes: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("attributes")
+    @classmethod
+    def attributes_are_json_safe(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return ensure_json_object(value, field_name="attributes")
+
 
 class PageDocument(DomainModel):
     schema_version: Literal["1.0"] = SCHEMA_VERSION
@@ -246,6 +319,20 @@ class PageDocument(DomainModel):
             *self.translations,
             *self.layout_plans,
         ):
-            if record.region_id not in identities or record.revision_id not in revisions:
+            revision = revisions.get(record.revision_id)
+            if record.region_id not in identities or revision is None:
                 raise ValueError("record references unknown region revision")
+            if revision.region_id != record.region_id:
+                raise ValueError("record revision must belong to record region")
+        for issue in self.issues:
+            if issue.page_id is not None and issue.page_id != self.source.page_id:
+                raise ValueError("issue references a different source page")
+            if issue.region_id is not None and issue.region_id not in identities:
+                raise ValueError("issue references unknown region")
+        for translation in self.translations:
+            for issue in translation.issues:
+                if issue.page_id is not None and issue.page_id != self.source.page_id:
+                    raise ValueError("translation issue references a different source page")
+                if issue.region_id is not None and issue.region_id != translation.region_id:
+                    raise ValueError("translation issue references a different region")
         return self

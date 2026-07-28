@@ -10,7 +10,10 @@ from manga_translator.domain.issues import Issue, IssueCode, IssueSeverity, Stag
 from manga_translator.domain.models import (
     ArtifactRef,
     BoundingBox,
+    EntityRecord,
     Lineage,
+    OCRCandidate,
+    OCRRecord,
     PageDocument,
     Point,
     Polygon,
@@ -29,7 +32,9 @@ from manga_translator.domain.serialization import (
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
+SHA_C = "c" * 64
 REGION_ID = UUID("12345678-1234-5678-1234-567812345678")
+OTHER_REGION_ID = UUID("87654321-4321-8765-4321-876543218765")
 
 
 def _artifact(sha256: str = SHA_A) -> ArtifactRef:
@@ -142,6 +147,25 @@ def test_invalid_geometry_and_out_of_page_geometry_are_rejected() -> None:
     with pytest.raises(DocumentSchemaError, match="outside source page"):
         parse_document(json.dumps(payload))
 
+    with pytest.raises(ValidationError, match="vertices must be distinct"):
+        Polygon(
+            points=(
+                Point(x=0.0, y=0.0),
+                Point(x=2.0, y=0.0),
+                Point(x=0.0, y=2.0),
+                Point(x=0.0, y=0.0),
+            )
+        )
+    with pytest.raises(ValidationError, match="must not self-intersect"):
+        Polygon(
+            points=(
+                Point(x=0.0, y=0.0),
+                Point(x=4.0, y=0.0),
+                Point(x=0.0, y=3.0),
+                Point(x=3.0, y=3.0),
+            )
+        )
+
 
 def test_issue_code_is_typed_and_machine_readable() -> None:
     issue = _document().issues[0]
@@ -160,3 +184,80 @@ def test_non_finite_numbers_are_rejected() -> None:
         Point(x=float("nan"), y=0.0)
     with pytest.raises(ValidationError):
         Point(x=float("inf"), y=0.0)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"payload": b"raw bytes"},
+        {"nested": [1, {"value": float("nan")}]},
+        {"not": ("a", "JSON array")},
+        {1: "non-string key"},
+    ],
+)
+def test_issue_details_and_entity_attributes_must_be_json_safe(invalid: object) -> None:
+    with pytest.raises(ValidationError, match="JSON|keys must be strings|NaN|valid string"):
+        Issue(
+            code=IssueCode.OCR_REJECTED,
+            severity=IssueSeverity.WARNING,
+            stage=StageName.OCR,
+            details=invalid,
+        )
+    with pytest.raises(ValidationError, match="JSON|keys must be strings|NaN|valid string"):
+        EntityRecord(
+            entity_id="entity",
+            kind="test",
+            canonical_name="entity",
+            attributes=invalid,
+        )
+
+
+def test_records_must_reference_a_revision_owned_by_the_same_region() -> None:
+    document = _document()
+    other_revision = document.region_revisions[0].model_copy(
+        update={"revision_id": SHA_C, "region_id": OTHER_REGION_ID}
+    )
+    candidate = OCRCandidate(
+        raw_text="text",
+        normalized_text="text",
+        confidence=0.9,
+        confidence_kind="model",
+        source_view="original",
+    )
+    with pytest.raises(ValidationError, match="revision must belong"):
+        PageDocument(
+            source=document.source,
+            region_identities=(
+                *document.region_identities,
+                RegionIdentity(region_id=OTHER_REGION_ID, active_revision_id=SHA_C),
+            ),
+            region_revisions=(*document.region_revisions, other_revision),
+            ocr_records=(
+                OCRRecord(
+                    region_id=REGION_ID,
+                    revision_id=SHA_C,
+                    candidates=(candidate,),
+                    selected_index=0,
+                    model_revision="model",
+                    preprocess_version="preprocess",
+                ),
+            ),
+        )
+
+
+def test_issue_scope_must_belong_to_the_document() -> None:
+    document = _document()
+    with pytest.raises(ValidationError, match="different source page"):
+        PageDocument(
+            source=document.source,
+            region_identities=document.region_identities,
+            region_revisions=document.region_revisions,
+            issues=(
+                Issue(
+                    code=IssueCode.OCR_REJECTED,
+                    severity=IssueSeverity.WARNING,
+                    stage=StageName.OCR,
+                    page_id=SHA_C,
+                ),
+            ),
+        )

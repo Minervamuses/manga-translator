@@ -9,7 +9,7 @@ from typing import Any
 from ..domain.issues import StageName
 from ..domain.models import ArtifactRef
 from ..storage.job_store import JobStore
-from .base import StageContext, StageInputs, StageSpec
+from .base import StageContext, StageInputs, StageOutputs, StageSpec
 from .fingerprint import stage_fingerprint
 
 STAGE_DAG: dict[StageName, tuple[StageName, ...]] = {
@@ -130,6 +130,8 @@ class StageRunner:
                 continue
             spec = self.specs[name]
             upstream = {dependency: outcomes[dependency].outputs for dependency in spec.dependencies}
+            for dependency, contract in spec.input_contracts.items():
+                contract.validate_refs(upstream[dependency], dependency=dependency)
             upstream_hashes = tuple(
                 dependency_hash
                 for dependency in spec.dependencies
@@ -171,6 +173,15 @@ class StageRunner:
             )
             try:
                 produced = spec.run(context, StageInputs(upstream))
+                if not isinstance(produced, StageOutputs):
+                    raise TypeError("stage function must return StageOutputs")
+                if spec.output_contract is not None:
+                    spec.output_contract.validate_payloads(produced.artifacts)
+                for payload in produced.artifacts:
+                    if not isinstance(payload.data, bytes):
+                        raise TypeError("stage artifact payload data must be bytes")
+                    if not payload.media_type or not payload.role:
+                        raise ValueError("stage artifact media_type and role must not be empty")
                 artifacts = tuple(
                     self.store.store_artifact(
                         payload.data,

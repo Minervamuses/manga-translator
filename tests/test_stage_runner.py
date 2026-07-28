@@ -10,12 +10,14 @@ from manga_translator.domain.ids import page_id_from_bytes
 from manga_translator.domain.issues import StageName
 from manga_translator.domain.models import ArtifactRef, PageDocument, SourcePage
 from manga_translator.stages.base import (
+    ArtifactContract,
     ArtifactPayload,
+    ArtifactSetContract,
     FingerprintDependencies,
     StageOutputs,
     StageSpec,
 )
-from manga_translator.stages.fingerprint import stage_fingerprint
+from manga_translator.stages.fingerprint import select_relevant_config, stage_fingerprint
 from manga_translator.stages.runner import STAGE_DAG, StageRunner
 from manga_translator.storage import ArtifactStore, JobStore
 
@@ -228,3 +230,37 @@ def test_every_declared_dependency_participates_in_fingerprint() -> None:
         ),
     )
     assert stage_fingerprint(changed, upstream_output_hashes=("a" * 64,), config={}) != baseline
+
+
+def test_missing_config_path_cannot_collide_with_real_mapping_value() -> None:
+    missing = select_relevant_config({}, ("provider.capability",))
+    present = select_relevant_config(
+        {"provider": {"capability": {"missing": True}}},
+        ("provider.capability",),
+    )
+
+    assert missing == {"provider.capability": {"present": False, "value": None}}
+    assert present == {
+        "provider.capability": {"present": True, "value": {"missing": True}}
+    }
+    assert missing != present
+
+
+def test_stage_output_must_match_typed_artifact_contract(persisted_job) -> None:
+    store, page_id = persisted_job
+    specs = _specs(Counter())
+    specs[StageName.SOURCE] = replace(
+        specs[StageName.SOURCE],
+        output_contract=ArtifactSetContract(
+            required=(ArtifactContract("source", "application/octet-stream"),)
+        ),
+    )
+
+    with pytest.raises(ValueError, match="output contract mismatch"):
+        _runner(store, page_id, specs, {}).run(target=StageName.SOURCE)
+
+    status = store.connection.execute(
+        "SELECT status FROM stage_runs WHERE job_id='job' AND page_id=? AND stage='source'",
+        (page_id,),
+    ).fetchone()[0]
+    assert status == "failed"

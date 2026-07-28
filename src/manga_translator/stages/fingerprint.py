@@ -14,12 +14,14 @@ def select_relevant_config(config: Mapping[str, Any], keys: Sequence[str]) -> di
     selected: dict[str, Any] = {}
     for key in sorted(keys):
         value: Any = config
+        present = True
         for component in key.split("."):
             if not isinstance(value, Mapping) or component not in value:
-                value = {"missing": True}
+                value = None
+                present = False
                 break
             value = value[component]
-        selected[key] = value
+        selected[key] = {"present": present, "value": value}
     return selected
 
 

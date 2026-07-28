@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manga-translator"
+version = "0.3.2"
+description = "日漫翻譯工具：日文對白轉繁體中文，本地 OCR、精確遮罩修復與排版"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "Gary"}]
+dependencies = [
+    "torch==2.7.1",
+    "transformers>=4.45,<6",
+    "fugashi>=1.3,<2",
+    "unidic-lite>=1.0.8,<2",
+    "torchvision==0.22.1",
+    "numpy>=1.26,<2",
+    "opencv-python-headless==4.9.0.80",
+    "shapely>=2.0,<3",
+    "pyclipper>=1.3,<2",
+    "Pillow>=10.2,<12",
+    "httpx>=0.27,<1",
+    "requests>=2.32,<3",
+    "pydantic>=2.6,<3",
+    "pydantic-settings>=2.2,<3",
+    "rich>=13.7,<15",
+    "PyYAML>=6.0,<7",
+    "click>=8.1,<9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.3",
+]
+
+[project.scripts]
+manga-translate = "manga_translator.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["manga_translator*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

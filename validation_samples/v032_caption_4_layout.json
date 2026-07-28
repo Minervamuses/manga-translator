@@ -1,0 +1,262 @@
+[
+  {
+    "id": "g000",
+    "bbox": [
+      2078,
+      1927,
+      244,
+      708
+    ],
+    "source": "“鶴禿ゴンゾウ”…この学校の校長だ",
+    "translation": "「鶴禿剛藏」…他是這所學校的校長",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 2036,
+        "y": 1913,
+        "w": 316,
+        "h": 736
+      },
+      "direction": "vertical",
+      "font_size": 75,
+      "chunks": [
+        "「鶴禿剛藏」…他",
+        "是這所學校的校長"
+      ],
+      "primary_step": 155.463,
+      "secondary_step": 88.286,
+      "center_x": 164.5,
+      "center_y": 373.5,
+      "block_width": 230.463,
+      "block_height": 685.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.04474,
+      "block_bbox": {
+        "x": 2085,
+        "y": 1944,
+        "w": 231,
+        "h": 685
+      }
+    }
+  },
+  {
+    "id": "g001",
+    "bbox": [
+      1810,
+      84,
+      571,
+      655
+    ],
+    "source": "この学校内で密かに違法薬物の売買がされている情報を掴んだ",
+    "translation": "掌握了校內有人暗中買賣違法藥物的情報",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1797,
+        "y": 71,
+        "w": 597,
+        "h": 687
+      },
+      "direction": "vertical",
+      "font_size": 73,
+      "chunks": [
+        "掌握了校內有",
+        "人暗中買賣違",
+        "法藥物的情報"
+      ],
+      "primary_step": 171.55,
+      "secondary_step": 112.847,
+      "center_x": 296.5,
+      "center_y": 342.5,
+      "block_width": 416.1,
+      "block_height": 629.234,
+      "fits": true,
+      "reason": "",
+      "score": -0.37966,
+      "block_bbox": {
+        "x": 1885,
+        "y": 98,
+        "w": 417,
+        "h": 631
+      }
+    }
+  },
+  {
+    "id": "g002",
+    "bbox": [
+      1075,
+      1080,
+      395,
+      568
+    ],
+    "source": "生徒達に流通させている人物がいるのだ",
+    "translation": "有人正把這些藥物流通給學生",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1049,
+        "y": 1067,
+        "w": 434,
+        "h": 594
+      },
+      "direction": "vertical",
+      "font_size": 72,
+      "chunks": [
+        "有人正把這",
+        "些藥物流",
+        "通給學生"
+      ],
+      "primary_step": 154.023,
+      "secondary_step": 110.128,
+      "center_x": 226.0,
+      "center_y": 295.0,
+      "block_width": 380.045,
+      "block_height": 505.51,
+      "fits": true,
+      "reason": "",
+      "score": -0.15367,
+      "block_bbox": {
+        "x": 1084,
+        "y": 1109,
+        "w": 382,
+        "h": 506
+      }
+    }
+  },
+  {
+    "id": "g003",
+    "bbox": [
+      114,
+      1151,
+      400,
+      497
+    ],
+    "source": "…そしてその元締めも判明している",
+    "translation": "…而且幕後黑手也已經查明",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 89,
+        "y": 1137,
+        "w": 439,
+        "h": 533
+      },
+      "direction": "vertical",
+      "font_size": 78,
+      "chunks": [
+        "…而且幕",
+        "後黑手也",
+        "已經查明"
+      ],
+      "primary_step": 153.268,
+      "secondary_step": 121.004,
+      "center_x": 229.0,
+      "center_y": 261.5,
+      "block_width": 384.536,
+      "block_height": 432.013,
+      "fits": true,
+      "reason": "",
+      "score": -0.23042,
+      "block_bbox": {
+        "x": 125,
+        "y": 1182,
+        "w": 386,
+        "h": 433
+      }
+    }
+  },
+  {
+    "id": "g004",
+    "bbox": [
+      215,
+      3030,
+      87,
+      304
+    ],
+    "source": "…校長室",
+    "translation": "…校長室",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 171,
+        "y": 3016,
+        "w": 172,
+        "h": 347
+      },
+      "direction": "vertical",
+      "font_size": 74,
+      "chunks": [
+        "…校長室"
+      ],
+      "primary_step": 0.0,
+      "secondary_step": 76.138,
+      "center_x": 90.5,
+      "center_y": 171.0,
+      "block_width": 74.0,
+      "block_height": 294.413,
+      "fits": true,
+      "reason": "",
+      "score": -0.10224,
+      "block_bbox": {
+        "x": 224,
+        "y": 3039,
+        "w": 75,
+        "h": 296
+      }
+    }
+  },
+  {
+    "id": "g005",
+    "bbox": [
+      134,
+      1880,
+      235,
+      723
+    ],
+    "source": "あとは証拠となる資料を集めるだけだ",
+    "translation": "接下來只要收集能當證據的資料就行了",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 103,
+        "y": 1867,
+        "w": 300,
+        "h": 749
+      },
+      "direction": "vertical",
+      "font_size": 70,
+      "chunks": [
+        "接下來只要收集能當",
+        "證據的資料就行了"
+      ],
+      "primary_step": 153.86,
+      "secondary_step": 80.875,
+      "center_x": 152.5,
+      "center_y": 373.0,
+      "block_width": 223.86,
+      "block_height": 710.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.02717,
+      "block_bbox": {
+        "x": 143,
+        "y": 1885,
+        "w": 225,
+        "h": 710
+      }
+    }
+  }
+]

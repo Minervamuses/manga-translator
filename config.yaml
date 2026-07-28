@@ -1,0 +1,194 @@
+# ===== manga-translator 設定檔 =====
+
+# OpenRouter API
+openrouter:
+  api_key: "YOUR_OPENROUTER_API_KEY"
+  # 目前使用: x-ai/grok-4.5
+  # 替代: google/gemini-2.5-flash
+  # 兜底: deepseek/deepseek-chat-v3
+  model: "x-ai/grok-4.5"
+  base_url: "https://openrouter.ai/api/v1/chat/completions"
+  # 每次送幾句一起翻譯（減少 API 呼叫次數）
+  batch_size: 20
+  # 翻譯 temperature（低 = 更穩定）
+  temperature: 0.2
+  # 格式／內容驗證失敗時，以更低溫度單句重試
+  retry_temperature: 0.0
+  content_retries: 2
+  request_timeout_sec: 90
+  validate_translation: true
+  max_output_length_ratio: 4.0
+  # "batch" = 舊模式（快）；"context" = 上下文視窗（慢但品質較好）
+  translation_mode: "context"
+  # context 模式下，前後各帶幾句上下文
+  context_size: 5
+  # 上下文單位："window"=滑動視窗，"page"=整頁
+  page_context_mode: "page"
+
+# 路徑設定
+paths:
+  input_dir: "./input"          # 放原始漫畫圖片
+  output_dir: "./output"        # 翻譯完成的圖片
+  glossary: "./glossary.json"   # 專有名詞字典
+  font: "./fonts/Iansui-Regular.ttf"
+  font_fallback: "./fonts/NotoSansCJKtc-Regular.otf"
+
+# 偵測設定
+detection:
+  # comic-text-detector 權重路徑
+  model_path: "./models/comictextdetector.pt"
+  # "cuda" | "cpu"
+  device: "cuda"
+  # 主模型輸入尺寸（正方形）
+  input_size: 1024
+  # 額外高解析度偵測；可提高小字／美術字召回，但會增加推論時間。
+  # 顯存不足時程式會略過額外 pass；追求速度可改成 []。
+  additional_input_sizes: [1536]
+  # CUDA 下可開啟 FP16
+  half: false
+  # 偵測後處理參數
+  nms_thresh: 0.35
+  conf_thresh: 0.30
+  mask_thresh: 0.3
+  # annotation refinement 不保留 detector 框外像素，避免臉部／線稿被納入遮罩。
+  keep_undetected_mask: false
+  # refined mask 還必須受到 raw segmentation 支持；只向外補少量描邊。
+  raw_support_threshold: 30
+  raw_support_dilate: 2
+  # 從 segmentation mask 回收「有文字像素、但 YOLO 沒形成框」的候選。
+  # 漫畫線稿極易造成誤判，預設關閉。必要時建議逐頁 debug 後再開。
+  mask_fallback_enabled: false
+  mask_fallback_primary_only: true
+  mask_fallback_threshold: 80
+  mask_fallback_min_area: 48
+  mask_fallback_max_area_ratio: 0.20
+  mask_fallback_padding: 4
+  mask_fallback_min_density: 0.012
+  mask_fallback_min_components: 2
+
+# 偵測後處理
+postprocess:
+  min_region_area: 36
+  drop_thin_ratio: 0.015
+  same_text_iom_thresh: 0.55
+  containment_ratio_thresh: 0.82
+  substring_match_enabled: true
+  fuzzy_text_similarity_thresh: 0.78
+  duplicate_near_gap_ratio: 0.22
+  group_center_dist_ratio: 1.2
+  group_iom_thresh: 0.15
+  reading_order: "jp_vertical"
+  enable_ocr_dedup: true
+  enable_grouping: true
+  enable_group_translate: true
+  # 最後一道幾何保險：兩段譯文即使 OCR 不同，也不能寫到同一位置。
+  enable_render_collision_filter: true
+  render_collision_mask_iou: 0.48
+  # 小欄位 mask 幾乎全落在整句 mask 內時，即使 IoU 很低也視為衝突。
+  render_collision_mask_containment: 0.72
+  render_collision_iom: 0.78
+  render_collision_containment: 0.88
+  nested_fragment_containment: 0.92
+  nested_fragment_text_coverage: 0.62
+
+# OCR 設定
+ocr:
+  # 擴張 crop，避免描邊、小假名或傾斜字被框切掉
+  crop_padding_ratio: 0.08
+  crop_padding_min_px: 4
+  # 小框先放大再辨識
+  upscale_min_side: 160
+  upscale_max_factor: 3.0
+  # off | adaptive | always；adaptive 固定比較 raw/mask，只有分歧或低信心時再跑完整視圖
+  ensemble_mode: "adaptive"
+  use_mask_isolation: true
+  use_contrast_variant: true
+  use_threshold_variant: true
+  use_region_fallback: true
+  min_quality_score: 0.46
+  short_text_min_quality: 0.66
+  fallback_min_quality_score: 0.74
+  fallback_min_japanese_chars: 2
+  fallback_min_candidate_agreement: 0.70
+  reject_non_japanese_noise: true
+  reject_symbol_only: true
+
+# 排版設定
+typesetting:
+  # 文字方向: "vertical" | "horizontal" | "auto"
+  # auto = 優先使用 detector 的 vertical 資訊
+  direction: "auto"
+  # 這是絕對安全上下限，不再把 2K/4K 漫畫原本 90–130 px 的字硬壓到 80 px。
+  font_size_min: 10
+  font_size_max: 180
+  text_color: "auto"
+  line_spacing: 1.02
+  render_scope: "group_mask"
+
+  # 先由原字形 mask 找到原本的文字位置與字級，再向同一個對話框的安全留白
+  # 擴張；只有擴張、增加欄數後仍放不下，才有限度縮字。
+  layout_from_mask: true
+  layout_mask_dilate: 2
+  layout_padding_px: 2
+  layout_mode: "preserve"
+  layout_padding_ratio: 0.18
+  font_size_scale: 1.0
+  max_font_growth_ratio: 1.15
+  # 原字級附近能排下就鎖在 92% 以上；只有確實放不下才允許縮至 85%。
+  min_font_scale: 0.85
+  hard_min_font_scale: 0.62
+  font_preserve_floor_scale: 0.92
+  adaptive_bubble_layout: true
+  bubble_search_expand_ratio: 0.72
+  bubble_search_max_px: 720
+  bubble_background_tolerance: 34
+  bubble_background_min_luma: 160
+  bubble_background_dominant_ratio: 0.62
+  bubble_inner_margin_ratio: 0.07
+  bubble_max_invalid_ratio: 0.004
+
+  # 直排採平衡換欄並置中，避免某一欄塞滿、其他欄大量留白。
+  vertical_char_spacing: 1.03
+  balance_columns: true
+  min_char_spacing_ratio: 0.88
+  max_char_spacing_ratio: 1.32
+  min_column_spacing_ratio: 0.92
+  max_column_spacing_ratio: 2.35
+  min_chars_per_column: 2
+  reject_unreadable_layout: true
+
+  # 中文字形不能拿日文字形像素裁切，否則會缺筆。
+  clip_render: false
+  outline_width: 0
+  outline_color: "auto"
+  min_gap_px: 4
+  use_font_metrics: true
+  vertical_punct_map: true
+  replace_unsupported_glyphs: true
+  inner_padding: 2
+
+# 修復設定
+inpainting:
+  # 方法: "white" | "telea" | "navier_stokes" | "hybrid"
+  # white = 直接填白（最快，適合白底對話框）
+  # telea / navier_stokes = OpenCV 修復演算法（背景複雜時較好）
+  # hybrid = 先判斷平坦背景並補抓反鋸齒邊緣，再用小半徑 Telea 局部修復（推薦）
+  method: "hybrid"
+  # 只補字體描邊，不再把 5+2 px 大範圍線稿送進修復。
+  mask_dilate: 1
+  use_group_union_mask: true
+  extra_mask_dilate: 0
+  inpaint_radius: 2.0
+  # 無可靠像素 mask 時保留原文，禁止整個矩形框擦除。
+  allow_bbox_fallback: false
+  hybrid_ring_radius: 5
+  hybrid_flat_std_threshold: 18.0
+  hybrid_dominant_color_tolerance: 18
+  hybrid_dominant_color_ratio: 0.78
+  hybrid_min_ring_pixels: 24
+  # 只在已確認是平坦底色的對話框內補抓文字反鋸齒邊緣；不向人物／線稿擴張。
+  hybrid_flat_edge_expand: 3
+  hybrid_flat_edge_contrast: 10
+  hybrid_flat_edge_max_growth: 3.2
+  # OCR／翻譯失敗時保留原文，不產生空白對話框
+  only_translated_groups: true

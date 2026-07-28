@@ -1,0 +1,42 @@
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments / local env files
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Editor / OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local runtime assets (images are local-only)
+input/**
+output/**
+!input/.gitkeep
+!output/.gitkeep
+!output/debug/.gitkeep
+
+# Extra generated debug/test images in project root
+detect_*.jpg
+detect_*.png
+test_*.jpg
+test_*.png
+debug_*.jpg
+debug_*.png
+
+# Agent-generated docs / scratch files
+AGENTS.md
+SPEC-*.md

@@ -1,0 +1,56 @@
+[
+  {
+    "group": "g000",
+    "source_bbox": [
+      946,
+      36,
+      82,
+      209
+    ],
+    "tight_layout_bbox": [
+      947,
+      34,
+      83,
+      212
+    ],
+    "preferred_font_size": 29.0,
+    "translation": "看來是魅力十足的海王呢",
+    "mask_pixels": 5707
+  },
+  {
+    "group": "g001",
+    "source_bbox": [
+      328,
+      58,
+      171,
+      328
+    ],
+    "tight_layout_bbox": [
+      327,
+      60,
+      169,
+      328
+    ],
+    "preferred_font_size": 27.0,
+    "translation": "不只才華洋溢、聲名卓著，身為畫家也相當活躍",
+    "mask_pixels": 15417
+  },
+  {
+    "group": "g002",
+    "source_bbox": [
+      120,
+      245,
+      129,
+      361
+    ],
+    "tight_layout_bbox": [
+      122,
+      246,
+      128,
+      358
+    ],
+    "preferred_font_size": 26.0,
+    "translation": "該說是氣質與美貌兼備，還是她的言談特別高雅呢",
+    "mask_pixels": 17265
+  }
+]

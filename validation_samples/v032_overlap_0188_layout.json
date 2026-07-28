@@ -1,0 +1,478 @@
+[
+  {
+    "id": "g000",
+    "bbox": [
+      1222,
+      1288,
+      23,
+      140
+    ],
+    "source": "…無茶言うな",
+    "translation": "…別說傻話",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1218,
+        "y": 1278,
+        "w": 33,
+        "h": 172
+      },
+      "direction": "vertical",
+      "font_size": 21,
+      "chunks": [
+        "…別說傻話"
+      ],
+      "primary_step": 0.0,
+      "secondary_step": 29.25,
+      "center_x": 16.5,
+      "center_y": 82.0,
+      "block_width": 21.0,
+      "block_height": 136.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.04327,
+      "block_bbox": {
+        "x": 1224,
+        "y": 1292,
+        "w": 21,
+        "h": 136
+      }
+    }
+  },
+  {
+    "id": "g001",
+    "bbox": [
+      1162,
+      86,
+      60,
+      144
+    ],
+    "source": "いい加減人質を放せ！",
+    "translation": "夠了,快放人質!",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1157,
+        "y": 81,
+        "w": 71,
+        "h": 154
+      },
+      "direction": "vertical",
+      "font_size": 26,
+      "chunks": [
+        "夠了,快",
+        "放人質!"
+      ],
+      "primary_step": 30.784,
+      "secondary_step": 37.667,
+      "center_x": 36.5,
+      "center_y": 78.0,
+      "block_width": 56.784,
+      "block_height": 136.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.16783,
+      "block_bbox": {
+        "x": 1165,
+        "y": 91,
+        "w": 57,
+        "h": 136
+      }
+    }
+  },
+  {
+    "id": "g002",
+    "bbox": [
+      953,
+      209,
+      55,
+      166
+    ],
+    "source": "逃げ切れるはずないだろう！",
+    "translation": "你不可能逃得掉!",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 947,
+        "y": 205,
+        "w": 67,
+        "h": 174
+      },
+      "direction": "vertical",
+      "font_size": 22,
+      "chunks": [
+        "你不可能",
+        "逃得掉!"
+      ],
+      "primary_step": 31.779,
+      "secondary_step": 33.99,
+      "center_x": 35.0,
+      "center_y": 87.5,
+      "block_width": 53.779,
+      "block_height": 121.97,
+      "fits": true,
+      "reason": "",
+      "score": -0.59106,
+      "block_bbox": {
+        "x": 955,
+        "y": 231,
+        "w": 54,
+        "h": 123
+      }
+    }
+  },
+  {
+    "id": "g003",
+    "bbox": [
+      762,
+      526,
+      91,
+      237
+    ],
+    "source": "俺はちょっと…ここの酒の味に文句を言いにきただけなんだ",
+    "translation": "我只是稍微…來抱怨這裡的酒不好喝而已",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 758,
+        "y": 514,
+        "w": 99,
+        "h": 253
+      },
+      "direction": "vertical",
+      "font_size": 24,
+      "chunks": [
+        "我只是稍微…來抱怨",
+        "這裡的酒不好喝而已"
+      ],
+      "primary_step": 38.896,
+      "secondary_step": 26.0,
+      "center_x": 51.5,
+      "center_y": 131.5,
+      "block_width": 62.896,
+      "block_height": 229.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.42152,
+      "block_bbox": {
+        "x": 778,
+        "y": 531,
+        "w": 63,
+        "h": 229
+      }
+    }
+  },
+  {
+    "id": "g004",
+    "bbox": [
+      579,
+      1061,
+      92,
+      260
+    ],
+    "source": "男が酒場で騒いでいると通報を受けてこの始末ならどうなってこうなっただろう？",
+    "translation": "接到有人在酒館鬧事的通報,結果怎麼會變成這樣?",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 572,
+        "y": 1054,
+        "w": 103,
+        "h": 271
+      },
+      "direction": "vertical",
+      "font_size": 24,
+      "chunks": [
+        "接到有人在酒館鬧",
+        "事的通報,結果怎",
+        "麼會變成這樣?"
+      ],
+      "primary_step": 30.548,
+      "secondary_step": 32.857,
+      "center_x": 56.5,
+      "center_y": 138.5,
+      "block_width": 85.095,
+      "block_height": 251.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.47017,
+      "block_bbox": {
+        "x": 585,
+        "y": 1067,
+        "w": 87,
+        "h": 251
+      }
+    }
+  },
+  {
+    "id": "g005",
+    "bbox": [
+      406,
+      1111,
+      146,
+      212
+    ],
+    "source": "私は…三番街自衛騎士団所属センリ・キャンベルだ",
+    "translation": "我是…第三街自衛騎士團所屬的塞西莉・坎貝爾",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 402,
+        "y": 1107,
+        "w": 160,
+        "h": 220
+      },
+      "direction": "vertical",
+      "font_size": 24,
+      "chunks": [
+        "我是…第三",
+        "街自衛騎",
+        "士團所屬",
+        "的塞西莉",
+        "・坎貝爾"
+      ],
+      "primary_step": 31.685,
+      "secondary_step": 38.069,
+      "center_x": 78.0,
+      "center_y": 112.5,
+      "block_width": 150.74,
+      "block_height": 173.275,
+      "fits": true,
+      "reason": "",
+      "score": -0.37414,
+      "block_bbox": {
+        "x": 404,
+        "y": 1132,
+        "w": 152,
+        "h": 175
+      }
+    }
+  },
+  {
+    "id": "g006",
+    "bbox": [
+      238,
+      1670,
+      56,
+      161
+    ],
+    "source": "へー…そうかお前があの…",
+    "translation": "喔…這樣啊,你就是那個…",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 234,
+        "y": 1666,
+        "w": 64,
+        "h": 169
+      },
+      "direction": "vertical",
+      "font_size": 23,
+      "chunks": [
+        "喔…這樣啊,",
+        "你就是那個…"
+      ],
+      "primary_step": 31.099,
+      "secondary_step": 27.6,
+      "center_x": 34.0,
+      "center_y": 85.0,
+      "block_width": 54.099,
+      "block_height": 158.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.05347,
+      "block_bbox": {
+        "x": 240,
+        "y": 1672,
+        "w": 56,
+        "h": 158
+      }
+    }
+  },
+  {
+    "id": "g007",
+    "bbox": [
+      119,
+      155,
+      54,
+      164
+    ],
+    "source": "…うるせー！黙ってろッ",
+    "translation": "…吵死了!給我閉嘴!",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 116,
+        "y": 139,
+        "w": 73,
+        "h": 183
+      },
+      "direction": "vertical",
+      "font_size": 20,
+      "chunks": [
+        "…吵死了!",
+        "給我閉嘴!"
+      ],
+      "primary_step": 31.713,
+      "secondary_step": 31.271,
+      "center_x": 31.5,
+      "center_y": 99.0,
+      "block_width": 51.713,
+      "block_height": 143.083,
+      "fits": true,
+      "reason": "",
+      "score": -0.317,
+      "block_bbox": {
+        "x": 121,
+        "y": 166,
+        "w": 53,
+        "h": 144
+      }
+    }
+  },
+  {
+    "id": "g008",
+    "bbox": [
+      52,
+      530,
+      143,
+      368
+    ],
+    "source": "それなのに何だテメェはいきなり剣を向けやがって怖えじゃねーか！俺は繊細なんだよ",
+    "translation": "結果你這傢伙突然拿劍指著我,這不是很可怕嗎!我可是很纖細的!",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 48,
+        "y": 526,
+        "w": 151,
+        "h": 376
+      },
+      "direction": "vertical",
+      "font_size": 24,
+      "chunks": [
+        "結果你這傢伙突然拿劍",
+        "指著我,這不是很可怕",
+        "嗎!我可是很纖細的!"
+      ],
+      "primary_step": 45.68,
+      "secondary_step": 38.0,
+      "center_x": 76.5,
+      "center_y": 188.5,
+      "block_width": 115.36,
+      "block_height": 363.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.31192,
+      "block_bbox": {
+        "x": 66,
+        "y": 533,
+        "w": 117,
+        "h": 363
+      }
+    }
+  },
+  {
+    "id": "g009",
+    "bbox": [
+      106,
+      1191,
+      23,
+      142
+    ],
+    "source": "…センリ？",
+    "translation": "…塞西莉?",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 99,
+        "y": 1177,
+        "w": 37,
+        "h": 165
+      },
+      "direction": "vertical",
+      "font_size": 20,
+      "chunks": [
+        "…塞西莉?"
+      ],
+      "primary_step": 0.0,
+      "secondary_step": 29.25,
+      "center_x": 20.0,
+      "center_y": 86.5,
+      "block_width": 20.0,
+      "block_height": 135.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.02831,
+      "block_bbox": {
+        "x": 109,
+        "y": 1196,
+        "w": 20,
+        "h": 135
+      }
+    }
+  },
+  {
+    "id": "g010",
+    "bbox": [
+      71,
+      1717,
+      58,
+      139
+    ],
+    "source": "有名なセンリかぁ",
+    "translation": "有名的塞西莉啊",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 66,
+        "y": 1712,
+        "w": 68,
+        "h": 149
+      },
+      "direction": "vertical",
+      "font_size": 25,
+      "chunks": [
+        "有名的塞",
+        "西莉啊"
+      ],
+      "primary_step": 30.687,
+      "secondary_step": 37.333,
+      "center_x": 37.5,
+      "center_y": 76.0,
+      "block_width": 55.687,
+      "block_height": 134.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.13916,
+      "block_bbox": {
+        "x": 75,
+        "y": 1721,
+        "w": 57,
+        "h": 134
+      }
+    }
+  }
+]

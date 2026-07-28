@@ -1,0 +1,301 @@
+[
+  {
+    "id": "g000",
+    "bbox": [
+      2187,
+      1642,
+      251,
+      648
+    ],
+    "source": "今は日本の学校に潜入している",
+    "translation": "現在正潛入日本的學校",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 2170,
+        "y": 1629,
+        "w": 287,
+        "h": 674
+      },
+      "direction": "vertical",
+      "font_size": 74,
+      "chunks": [
+        "現在正潛入",
+        "日本的學校"
+      ],
+      "primary_step": 153.646,
+      "secondary_step": 114.206,
+      "center_x": 143.5,
+      "center_y": 339.0,
+      "block_width": 227.646,
+      "block_height": 522.826,
+      "fits": true,
+      "reason": "",
+      "score": -0.32246,
+      "block_bbox": {
+        "x": 2199,
+        "y": 1706,
+        "w": 229,
+        "h": 524
+      }
+    }
+  },
+  {
+    "id": "g001",
+    "bbox": [
+      1977,
+      111,
+      331,
+      792
+    ],
+    "source": "私の名前は「霜月シロエ」…",
+    "translation": "我的名字是「霜月白」…",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1959,
+        "y": 92,
+        "w": 384,
+        "h": 830
+      },
+      "direction": "vertical",
+      "font_size": 98,
+      "chunks": [
+        "我的名字是「",
+        "霜月白」…"
+      ],
+      "primary_step": 191.205,
+      "secondary_step": 135.6,
+      "center_x": 190.5,
+      "center_y": 419.0,
+      "block_width": 289.205,
+      "block_height": 766.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.05609,
+      "block_bbox": {
+        "x": 2004,
+        "y": 128,
+        "w": 291,
+        "h": 766
+      }
+    }
+  },
+  {
+    "id": "g002",
+    "bbox": [
+      1983,
+      985,
+      58,
+      292
+    ],
+    "source": "偽名だけど…",
+    "translation": "雖然是假名…",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1974,
+        "y": 976,
+        "w": 76,
+        "h": 310
+      },
+      "direction": "vertical",
+      "font_size": 49,
+      "chunks": [
+        "雖然是假名…"
+      ],
+      "primary_step": 0.0,
+      "secondary_step": 50.758,
+      "center_x": 41.5,
+      "center_y": 156.5,
+      "block_width": 49.0,
+      "block_height": 297.792,
+      "fits": true,
+      "reason": "",
+      "score": -0.12604,
+      "block_bbox": {
+        "x": 1991,
+        "y": 983,
+        "w": 49,
+        "h": 299
+      }
+    }
+  },
+  {
+    "id": "g003",
+    "bbox": [
+      1338,
+      1703,
+      112,
+      494
+    ],
+    "source": "退屈な授業…",
+    "translation": "無聊的課…",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1326,
+        "y": 1691,
+        "w": 146,
+        "h": 531
+      },
+      "direction": "vertical",
+      "font_size": 69,
+      "chunks": [
+        "無聊的課…"
+      ],
+      "primary_step": 0.0,
+      "secondary_step": 97.75,
+      "center_x": 72.0,
+      "center_y": 257.0,
+      "block_width": 69.0,
+      "block_height": 452.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.13235,
+      "block_bbox": {
+        "x": 1363,
+        "y": 1722,
+        "w": 70,
+        "h": 452
+      }
+    }
+  },
+  {
+    "id": "g004",
+    "bbox": [
+      934,
+      1632,
+      251,
+      916
+    ],
+    "source": "私はデザイナーベイビーとして生まれ…",
+    "translation": "我是作為設計師嬰兒出生的…",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 920,
+        "y": 1618,
+        "w": 279,
+        "h": 951
+      },
+      "direction": "vertical",
+      "font_size": 77,
+      "chunks": [
+        "我是作為設計師",
+        "嬰兒出生的…"
+      ],
+      "primary_step": 158.473,
+      "secondary_step": 118.285,
+      "center_x": 136.0,
+      "center_y": 475.0,
+      "block_width": 235.473,
+      "block_height": 777.711,
+      "fits": true,
+      "reason": "",
+      "score": -0.27524,
+      "block_bbox": {
+        "x": 938,
+        "y": 1704,
+        "w": 236,
+        "h": 778
+      }
+    }
+  },
+  {
+    "id": "g005",
+    "bbox": [
+      180,
+      765,
+      301,
+      625
+    ],
+    "source": "某国の潜入捜査官だ",
+    "translation": "某國的潛入搜查官",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 161,
+        "y": 747,
+        "w": 338,
+        "h": 662
+      },
+      "direction": "vertical",
+      "font_size": 100,
+      "chunks": [
+        "某國的潛",
+        "入搜查官"
+      ],
+      "primary_step": 189.47,
+      "secondary_step": 152.275,
+      "center_x": 173.5,
+      "center_y": 329.5,
+      "block_width": 289.47,
+      "block_height": 545.826,
+      "fits": true,
+      "reason": "",
+      "score": -0.18624,
+      "block_bbox": {
+        "x": 189,
+        "y": 803,
+        "w": 291,
+        "h": 547
+      }
+    }
+  },
+  {
+    "id": "g006",
+    "bbox": [
+      50,
+      2227,
+      231,
+      562
+    ],
+    "source": "あらゆる訓練を受け育った",
+    "translation": "接受了各種訓練長大了",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 23,
+        "y": 2207,
+        "w": 284,
+        "h": 641
+      },
+      "direction": "vertical",
+      "font_size": 72,
+      "chunks": [
+        "接受了各種",
+        "訓練長大了"
+      ],
+      "primary_step": 154.293,
+      "secondary_step": 110.128,
+      "center_x": 143.5,
+      "center_y": 301.5,
+      "block_width": 226.293,
+      "block_height": 505.51,
+      "fits": true,
+      "reason": "",
+      "score": -0.18636,
+      "block_bbox": {
+        "x": 53,
+        "y": 2255,
+        "w": 227,
+        "h": 507
+      }
+    }
+  }
+]

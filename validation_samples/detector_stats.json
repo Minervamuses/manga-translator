@@ -1,0 +1,24 @@
+{
+  "#Uf021#Uf014#Uf01a#Ueff9_#Uf01a#Uf008#Uf030__#Ueed3#Uf008__6_#Ue834#Ue7cc_1_0002.jpg": {
+    "regions_raw": 6,
+    "regions_post": 6,
+    "groups": 3,
+    "sources": {
+      "ctd": 3,
+      "ctd_multiscale": 3,
+      "mask_fallback": 0
+    },
+    "zero_mask_groups": 0
+  },
+  "0188_ive_hwa002.jpg": {
+    "regions_raw": 27,
+    "regions_post": 27,
+    "groups": 11,
+    "sources": {
+      "ctd": 13,
+      "ctd_multiscale": 14,
+      "mask_fallback": 0
+    },
+    "zero_mask_groups": 0
+  }
+}

@@ -1,0 +1,1342 @@
+{
+  "version": "0.3.2",
+  "samples": {
+    "__#Uf008_#Ueff9#Ue7cc (3).jpg": {
+      "groups": [
+        {
+          "group_id": "g000",
+          "source": "今は日本の学校に潜入している",
+          "translation": "現在正潛入日本的學校",
+          "direction": "vertical",
+          "original_text_bbox": [
+            2200,
+            1653,
+            227,
+            630
+          ],
+          "layout_bbox": [
+            2170,
+            1629,
+            287,
+            674
+          ],
+          "planned_block_bbox": [
+            2199,
+            1706,
+            229,
+            524
+          ],
+          "estimated_original_font_size": 74.18,
+          "planned_font_size": 74,
+          "font_ratio": 0.998,
+          "block_width_ratio_to_original": 1.009,
+          "block_height_ratio_to_original": 0.832,
+          "columns_or_lines": 2,
+          "chunks": [
+            "現在正潛入",
+            "日本的學校"
+          ]
+        },
+        {
+          "group_id": "g001",
+          "source": "私の名前は「霜月シロエ」…",
+          "translation": "我的名字是「霜月白」…",
+          "direction": "vertical",
+          "original_text_bbox": [
+            2007,
+            128,
+            285,
+            766
+          ],
+          "layout_bbox": [
+            1959,
+            92,
+            384,
+            830
+          ],
+          "planned_block_bbox": [
+            2004,
+            128,
+            291,
+            766
+          ],
+          "estimated_original_font_size": 98.08,
+          "planned_font_size": 98,
+          "font_ratio": 0.999,
+          "block_width_ratio_to_original": 1.021,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "我的名字是「",
+            "霜月白」…"
+          ]
+        },
+        {
+          "group_id": "g002",
+          "source": "偽名だけど…",
+          "translation": "雖然是假名…",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1992,
+            991,
+            47,
+            283
+          ],
+          "layout_bbox": [
+            1974,
+            976,
+            76,
+            310
+          ],
+          "planned_block_bbox": [
+            1991,
+            983,
+            49,
+            299
+          ],
+          "estimated_original_font_size": 49.32,
+          "planned_font_size": 49,
+          "font_ratio": 0.994,
+          "block_width_ratio_to_original": 1.043,
+          "block_height_ratio_to_original": 1.057,
+          "columns_or_lines": 1,
+          "chunks": [
+            "雖然是假名…"
+          ]
+        },
+        {
+          "group_id": "g003",
+          "source": "退屈な授業…",
+          "translation": "無聊的課…",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1361,
+            1722,
+            74,
+            452
+          ],
+          "layout_bbox": [
+            1326,
+            1691,
+            146,
+            531
+          ],
+          "planned_block_bbox": [
+            1363,
+            1722,
+            70,
+            452
+          ],
+          "estimated_original_font_size": 69.12,
+          "planned_font_size": 69,
+          "font_ratio": 0.998,
+          "block_width_ratio_to_original": 0.946,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 1,
+          "chunks": [
+            "無聊的課…"
+          ]
+        },
+        {
+          "group_id": "g004",
+          "source": "私はデザイナーベイビーとして生まれ…",
+          "translation": "我是作為設計師嬰兒出生的…",
+          "direction": "vertical",
+          "original_text_bbox": [
+            941,
+            1646,
+            230,
+            894
+          ],
+          "layout_bbox": [
+            920,
+            1618,
+            279,
+            951
+          ],
+          "planned_block_bbox": [
+            938,
+            1704,
+            236,
+            778
+          ],
+          "estimated_original_font_size": 76.64,
+          "planned_font_size": 77,
+          "font_ratio": 1.005,
+          "block_width_ratio_to_original": 1.026,
+          "block_height_ratio_to_original": 0.87,
+          "columns_or_lines": 2,
+          "chunks": [
+            "我是作為設計師",
+            "嬰兒出生的…"
+          ]
+        },
+        {
+          "group_id": "g005",
+          "source": "某国の潜入捜査官だ",
+          "translation": "某國的潛入搜查官",
+          "direction": "vertical",
+          "original_text_bbox": [
+            192,
+            781,
+            285,
+            591
+          ],
+          "layout_bbox": [
+            161,
+            747,
+            338,
+            662
+          ],
+          "planned_block_bbox": [
+            189,
+            803,
+            291,
+            547
+          ],
+          "estimated_original_font_size": 99.66,
+          "planned_font_size": 100,
+          "font_ratio": 1.003,
+          "block_width_ratio_to_original": 1.021,
+          "block_height_ratio_to_original": 0.926,
+          "columns_or_lines": 2,
+          "chunks": [
+            "某國的潛",
+            "入搜查官"
+          ]
+        },
+        {
+          "group_id": "g006",
+          "source": "あらゆる訓練を受け育った",
+          "translation": "接受了各種訓練長大了",
+          "direction": "vertical",
+          "original_text_bbox": [
+            53,
+            2233,
+            227,
+            551
+          ],
+          "layout_bbox": [
+            23,
+            2207,
+            284,
+            641
+          ],
+          "planned_block_bbox": [
+            53,
+            2255,
+            227,
+            507
+          ],
+          "estimated_original_font_size": 71.44,
+          "planned_font_size": 72,
+          "font_ratio": 1.008,
+          "block_width_ratio_to_original": 1.0,
+          "block_height_ratio_to_original": 0.92,
+          "columns_or_lines": 2,
+          "chunks": [
+            "接受了各種",
+            "訓練長大了"
+          ]
+        }
+      ],
+      "all_groups_planned": true,
+      "planned_count": 7,
+      "group_count": 7
+    },
+    "__#Uf008_#Ueff9#Ue7cc (5).jpg": {
+      "groups": [
+        {
+          "group_id": "g000",
+          "source": "顧客リストや取り引き相手の情報があればいいのだけど…",
+          "translation": "要是有顧客名單或交易對象的資訊就好了…",
+          "direction": "vertical",
+          "original_text_bbox": [
+            2086,
+            2170,
+            228,
+            1031
+          ],
+          "layout_bbox": [
+            2021,
+            2139,
+            325,
+            1117
+          ],
+          "planned_block_bbox": [
+            2084,
+            2170,
+            232,
+            1031
+          ],
+          "estimated_original_font_size": 77.34,
+          "planned_font_size": 77,
+          "font_ratio": 0.996,
+          "block_width_ratio_to_original": 1.018,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "要是有顧客名單或交易",
+            "對象的資訊就好了…"
+          ]
+        },
+        {
+          "group_id": "g001",
+          "source": "異常な警備体制のこの部屋…",
+          "translation": "異常警備體制下的這個房間…",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1996,
+            92,
+            381,
+            391
+          ],
+          "layout_bbox": [
+            1976,
+            71,
+            418,
+            474
+          ],
+          "planned_block_bbox": [
+            1994,
+            92,
+            385,
+            391
+          ],
+          "estimated_original_font_size": 72.0,
+          "planned_font_size": 72,
+          "font_ratio": 1.0,
+          "block_width_ratio_to_original": 1.01,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 3,
+          "chunks": [
+            "異常警備體",
+            "制下的這",
+            "個房間…"
+          ]
+        },
+        {
+          "group_id": "g002",
+          "source": "…この部屋に存在する可能性が高い",
+          "translation": "…很可能就在這個房間裡",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1725,
+            1087,
+            222,
+            615
+          ],
+          "layout_bbox": [
+            1702,
+            1066,
+            264,
+            656
+          ],
+          "planned_block_bbox": [
+            1724,
+            1087,
+            224,
+            615
+          ],
+          "estimated_original_font_size": 75.04,
+          "planned_font_size": 75,
+          "font_ratio": 0.999,
+          "block_width_ratio_to_original": 1.009,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "…很可能就在",
+            "這個房間裡"
+          ]
+        },
+        {
+          "group_id": "g003",
+          "source": "セキュリティは全て解除してある",
+          "translation": "保全系統已經全部解除了",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1304,
+            57,
+            227,
+            630
+          ],
+          "layout_bbox": [
+            1245,
+            39,
+            329,
+            697
+          ],
+          "planned_block_bbox": [
+            1300,
+            57,
+            235,
+            630
+          ],
+          "estimated_original_font_size": 74.62,
+          "planned_font_size": 75,
+          "font_ratio": 1.005,
+          "block_width_ratio_to_original": 1.035,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "保全系統已經",
+            "全部解除了"
+          ]
+        },
+        {
+          "group_id": "g004",
+          "source": "…あった！！おそらくコレね",
+          "translation": "…有了!!大概就是這個吧",
+          "direction": "vertical",
+          "original_text_bbox": [
+            754,
+            2160,
+            226,
+            553
+          ],
+          "layout_bbox": [
+            710,
+            2121,
+            295,
+            623
+          ],
+          "planned_block_bbox": [
+            753,
+            2160,
+            228,
+            553
+          ],
+          "estimated_original_font_size": 74.48,
+          "planned_font_size": 74,
+          "font_ratio": 0.994,
+          "block_width_ratio_to_original": 1.009,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "…有了!!大",
+            "概就是這個吧"
+          ]
+        },
+        {
+          "group_id": "g005",
+          "source": "しかもこの時間は誰もこの部屋に近づかない…",
+          "translation": "而且這個時間沒有人會靠近這個房間…",
+          "direction": "vertical",
+          "original_text_bbox": [
+            159,
+            1204,
+            383,
+            630
+          ],
+          "layout_bbox": [
+            133,
+            1174,
+            428,
+            682
+          ],
+          "planned_block_bbox": [
+            160,
+            1211,
+            381,
+            616
+          ],
+          "estimated_original_font_size": 71.72,
+          "planned_font_size": 72,
+          "font_ratio": 1.004,
+          "block_width_ratio_to_original": 0.995,
+          "block_height_ratio_to_original": 0.978,
+          "columns_or_lines": 3,
+          "chunks": [
+            "而且這個時間",
+            "沒有人會靠近",
+            "這個房間…"
+          ]
+        },
+        {
+          "group_id": "g006",
+          "source": "こ…これは！！まさか…！",
+          "translation": "這、這是!!難道…!",
+          "direction": "vertical",
+          "original_text_bbox": [
+            113,
+            2944,
+            224,
+            467
+          ],
+          "layout_bbox": [
+            58,
+            2896,
+            305,
+            573
+          ],
+          "planned_block_bbox": [
+            109,
+            2944,
+            232,
+            467
+          ],
+          "estimated_original_font_size": 77.94,
+          "planned_font_size": 78,
+          "font_ratio": 1.001,
+          "block_width_ratio_to_original": 1.036,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "這、這是!",
+            "!難道…!"
+          ]
+        }
+      ],
+      "all_groups_planned": true,
+      "planned_count": 7,
+      "group_count": 7
+    },
+    "0188_ive_hwa002.jpg": {
+      "groups": [
+        {
+          "group_id": "g000",
+          "source": "…無茶言うな",
+          "translation": "…別說傻話",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1224,
+            1292,
+            21,
+            136
+          ],
+          "layout_bbox": [
+            1218,
+            1278,
+            33,
+            172
+          ],
+          "planned_block_bbox": [
+            1224,
+            1292,
+            21,
+            136
+          ],
+          "estimated_original_font_size": 21.0,
+          "planned_font_size": 21,
+          "font_ratio": 1.0,
+          "block_width_ratio_to_original": 1.0,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 1,
+          "chunks": [
+            "…別說傻話"
+          ]
+        },
+        {
+          "group_id": "g001",
+          "source": "いい加減人質を放せ！",
+          "translation": "夠了,快放人質!",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1167,
+            91,
+            53,
+            136
+          ],
+          "layout_bbox": [
+            1157,
+            81,
+            71,
+            154
+          ],
+          "planned_block_bbox": [
+            1165,
+            91,
+            57,
+            136
+          ],
+          "estimated_original_font_size": 26.18,
+          "planned_font_size": 26,
+          "font_ratio": 0.993,
+          "block_width_ratio_to_original": 1.075,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "夠了,快",
+            "放人質!"
+          ]
+        },
+        {
+          "group_id": "g002",
+          "source": "逃げ切れるはずないだろう！",
+          "translation": "你不可能逃得掉!",
+          "direction": "vertical",
+          "original_text_bbox": [
+            956,
+            212,
+            52,
+            161
+          ],
+          "layout_bbox": [
+            947,
+            205,
+            67,
+            174
+          ],
+          "planned_block_bbox": [
+            955,
+            231,
+            54,
+            123
+          ],
+          "estimated_original_font_size": 21.58,
+          "planned_font_size": 22,
+          "font_ratio": 1.019,
+          "block_width_ratio_to_original": 1.038,
+          "block_height_ratio_to_original": 0.764,
+          "columns_or_lines": 2,
+          "chunks": [
+            "你不可能",
+            "逃得掉!"
+          ]
+        },
+        {
+          "group_id": "g003",
+          "source": "俺はちょっと…ここの酒の味に文句を言いにきただけなんだ",
+          "translation": "我只是稍微…來抱怨這裡的酒不好喝而已",
+          "direction": "vertical",
+          "original_text_bbox": [
+            768,
+            531,
+            83,
+            229
+          ],
+          "layout_bbox": [
+            758,
+            514,
+            99,
+            253
+          ],
+          "planned_block_bbox": [
+            778,
+            531,
+            63,
+            229
+          ],
+          "estimated_original_font_size": 23.6,
+          "planned_font_size": 24,
+          "font_ratio": 1.017,
+          "block_width_ratio_to_original": 0.759,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "我只是稍微…來抱怨",
+            "這裡的酒不好喝而已"
+          ]
+        },
+        {
+          "group_id": "g004",
+          "source": "男が酒場で騒いでいると通報を受けてこの始末ならどうなってこうなっただろう？",
+          "translation": "接到有人在酒館鬧事的通報,結果怎麼會變成這樣?",
+          "direction": "vertical",
+          "original_text_bbox": [
+            587,
+            1067,
+            83,
+            251
+          ],
+          "layout_bbox": [
+            572,
+            1054,
+            103,
+            271
+          ],
+          "planned_block_bbox": [
+            585,
+            1067,
+            87,
+            251
+          ],
+          "estimated_original_font_size": 24.16,
+          "planned_font_size": 24,
+          "font_ratio": 0.993,
+          "block_width_ratio_to_original": 1.048,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 3,
+          "chunks": [
+            "接到有人在酒館鬧",
+            "事的通報,結果怎",
+            "麼會變成這樣?"
+          ]
+        },
+        {
+          "group_id": "g005",
+          "source": "私は…三番街自衛騎士団所属センリ・キャンベルだ",
+          "translation": "我是…第三街自衛騎士團所屬的塞西莉・坎貝爾",
+          "direction": "vertical",
+          "original_text_bbox": [
+            408,
+            1117,
+            144,
+            205
+          ],
+          "layout_bbox": [
+            402,
+            1107,
+            160,
+            220
+          ],
+          "planned_block_bbox": [
+            404,
+            1132,
+            152,
+            175
+          ],
+          "estimated_original_font_size": 23.6,
+          "planned_font_size": 24,
+          "font_ratio": 1.017,
+          "block_width_ratio_to_original": 1.056,
+          "block_height_ratio_to_original": 0.854,
+          "columns_or_lines": 5,
+          "chunks": [
+            "我是…第三",
+            "街自衛騎",
+            "士團所屬",
+            "的塞西莉",
+            "・坎貝爾"
+          ]
+        },
+        {
+          "group_id": "g006",
+          "source": "へー…そうかお前があの…",
+          "translation": "喔…這樣啊,你就是那個…",
+          "direction": "vertical",
+          "original_text_bbox": [
+            242,
+            1672,
+            52,
+            158
+          ],
+          "layout_bbox": [
+            234,
+            1666,
+            64,
+            169
+          ],
+          "planned_block_bbox": [
+            240,
+            1672,
+            56,
+            158
+          ],
+          "estimated_original_font_size": 23.02,
+          "planned_font_size": 23,
+          "font_ratio": 0.999,
+          "block_width_ratio_to_original": 1.077,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "喔…這樣啊,",
+            "你就是那個…"
+          ]
+        },
+        {
+          "group_id": "g007",
+          "source": "…うるせー！黙ってろッ",
+          "translation": "…吵死了!給我閉嘴!",
+          "direction": "vertical",
+          "original_text_bbox": [
+            122,
+            158,
+            51,
+            160
+          ],
+          "layout_bbox": [
+            116,
+            139,
+            73,
+            183
+          ],
+          "planned_block_bbox": [
+            121,
+            166,
+            53,
+            144
+          ],
+          "estimated_original_font_size": 19.44,
+          "planned_font_size": 20,
+          "font_ratio": 1.029,
+          "block_width_ratio_to_original": 1.039,
+          "block_height_ratio_to_original": 0.9,
+          "columns_or_lines": 2,
+          "chunks": [
+            "…吵死了!",
+            "給我閉嘴!"
+          ]
+        },
+        {
+          "group_id": "g008",
+          "source": "それなのに何だテメェはいきなり剣を向けやがって怖えじゃねーか！俺は繊細なんだよ",
+          "translation": "結果你這傢伙突然拿劍指著我,這不是很可怕嗎!我可是很纖細的!",
+          "direction": "vertical",
+          "original_text_bbox": [
+            56,
+            533,
+            137,
+            363
+          ],
+          "layout_bbox": [
+            48,
+            526,
+            151,
+            376
+          ],
+          "planned_block_bbox": [
+            66,
+            533,
+            117,
+            363
+          ],
+          "estimated_original_font_size": 24.32,
+          "planned_font_size": 24,
+          "font_ratio": 0.987,
+          "block_width_ratio_to_original": 0.854,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 3,
+          "chunks": [
+            "結果你這傢伙突然拿劍",
+            "指著我,這不是很可怕",
+            "嗎!我可是很纖細的!"
+          ]
+        },
+        {
+          "group_id": "g009",
+          "source": "…センリ？",
+          "translation": "…塞西莉?",
+          "direction": "vertical",
+          "original_text_bbox": [
+            109,
+            1196,
+            20,
+            135
+          ],
+          "layout_bbox": [
+            99,
+            1177,
+            37,
+            165
+          ],
+          "planned_block_bbox": [
+            109,
+            1196,
+            20,
+            135
+          ],
+          "estimated_original_font_size": 19.88,
+          "planned_font_size": 20,
+          "font_ratio": 1.006,
+          "block_width_ratio_to_original": 1.0,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 1,
+          "chunks": [
+            "…塞西莉?"
+          ]
+        },
+        {
+          "group_id": "g010",
+          "source": "有名なセンリかぁ",
+          "translation": "有名的塞西莉啊",
+          "direction": "vertical",
+          "original_text_bbox": [
+            78,
+            1721,
+            51,
+            134
+          ],
+          "layout_bbox": [
+            66,
+            1712,
+            68,
+            149
+          ],
+          "planned_block_bbox": [
+            75,
+            1721,
+            57,
+            134
+          ],
+          "estimated_original_font_size": 25.18,
+          "planned_font_size": 25,
+          "font_ratio": 0.993,
+          "block_width_ratio_to_original": 1.118,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "有名的塞",
+            "西莉啊"
+          ]
+        }
+      ],
+      "all_groups_planned": true,
+      "planned_count": 11,
+      "group_count": 11
+    },
+    "__#Uf008_#Ueff9#Ue7cc (4).jpg": {
+      "groups": [
+        {
+          "group_id": "g000",
+          "source": "“鶴禿ゴンゾウ”…この学校の校長だ",
+          "translation": "「鶴禿剛藏」…他是這所學校的校長",
+          "direction": "vertical",
+          "original_text_bbox": [
+            2086,
+            1944,
+            229,
+            685
+          ],
+          "layout_bbox": [
+            2036,
+            1913,
+            316,
+            736
+          ],
+          "planned_block_bbox": [
+            2085,
+            1944,
+            231,
+            685
+          ],
+          "estimated_original_font_size": 75.18,
+          "planned_font_size": 75,
+          "font_ratio": 0.998,
+          "block_width_ratio_to_original": 1.009,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "「鶴禿剛藏」…他",
+            "是這所學校的校長"
+          ]
+        },
+        {
+          "group_id": "g001",
+          "source": "この学校内で密かに違法薬物の売買がされている情報を掴んだ",
+          "translation": "掌握了校內有人暗中買賣違法藥物的情報",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1825,
+            98,
+            537,
+            631
+          ],
+          "layout_bbox": [
+            1797,
+            71,
+            597,
+            687
+          ],
+          "planned_block_bbox": [
+            1885,
+            98,
+            417,
+            631
+          ],
+          "estimated_original_font_size": 72.42,
+          "planned_font_size": 73,
+          "font_ratio": 1.008,
+          "block_width_ratio_to_original": 0.777,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 3,
+          "chunks": [
+            "掌握了校內有",
+            "人暗中買賣違",
+            "法藥物的情報"
+          ]
+        },
+        {
+          "group_id": "g002",
+          "source": "生徒達に流通させている人物がいるのだ",
+          "translation": "有人正把這些藥物流通給學生",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1084,
+            1087,
+            382,
+            550
+          ],
+          "layout_bbox": [
+            1049,
+            1067,
+            434,
+            594
+          ],
+          "planned_block_bbox": [
+            1084,
+            1109,
+            382,
+            506
+          ],
+          "estimated_original_font_size": 72.0,
+          "planned_font_size": 72,
+          "font_ratio": 1.0,
+          "block_width_ratio_to_original": 1.0,
+          "block_height_ratio_to_original": 0.92,
+          "columns_or_lines": 3,
+          "chunks": [
+            "有人正把這",
+            "些藥物流",
+            "通給學生"
+          ]
+        },
+        {
+          "group_id": "g003",
+          "source": "…そしてその元締めも判明している",
+          "translation": "…而且幕後黑手也已經查明",
+          "direction": "vertical",
+          "original_text_bbox": [
+            128,
+            1162,
+            380,
+            473
+          ],
+          "layout_bbox": [
+            89,
+            1137,
+            439,
+            533
+          ],
+          "planned_block_bbox": [
+            125,
+            1182,
+            386,
+            433
+          ],
+          "estimated_original_font_size": 77.84,
+          "planned_font_size": 78,
+          "font_ratio": 1.002,
+          "block_width_ratio_to_original": 1.016,
+          "block_height_ratio_to_original": 0.915,
+          "columns_or_lines": 3,
+          "chunks": [
+            "…而且幕",
+            "後黑手也",
+            "已經查明"
+          ]
+        },
+        {
+          "group_id": "g004",
+          "source": "…校長室",
+          "translation": "…校長室",
+          "direction": "vertical",
+          "original_text_bbox": [
+            225,
+            3044,
+            73,
+            286
+          ],
+          "layout_bbox": [
+            171,
+            3016,
+            172,
+            347
+          ],
+          "planned_block_bbox": [
+            224,
+            3039,
+            75,
+            296
+          ],
+          "estimated_original_font_size": 74.6,
+          "planned_font_size": 74,
+          "font_ratio": 0.992,
+          "block_width_ratio_to_original": 1.027,
+          "block_height_ratio_to_original": 1.035,
+          "columns_or_lines": 1,
+          "chunks": [
+            "…校長室"
+          ]
+        },
+        {
+          "group_id": "g005",
+          "source": "あとは証拠となる資料を集めるだけだ",
+          "translation": "接下來只要收集能當證據的資料就行了",
+          "direction": "vertical",
+          "original_text_bbox": [
+            142,
+            1885,
+            227,
+            710
+          ],
+          "layout_bbox": [
+            103,
+            1867,
+            300,
+            749
+          ],
+          "planned_block_bbox": [
+            143,
+            1885,
+            225,
+            710
+          ],
+          "estimated_original_font_size": 70.14,
+          "planned_font_size": 70,
+          "font_ratio": 0.998,
+          "block_width_ratio_to_original": 0.991,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 2,
+          "chunks": [
+            "接下來只要收集能當",
+            "證據的資料就行了"
+          ]
+        }
+      ],
+      "all_groups_planned": true,
+      "planned_count": 6,
+      "group_count": 6
+    },
+    "0211_t_11takamatic006.jpg": {
+      "groups": [
+        {
+          "group_id": "g000",
+          "source": "高町教導官！",
+          "translation": "高町教導官!",
+          "direction": "vertical",
+          "original_text_bbox": [
+            1237,
+            566,
+            27,
+            171
+          ],
+          "layout_bbox": [
+            1226,
+            553,
+            56,
+            195
+          ],
+          "planned_block_bbox": [
+            1237,
+            566,
+            27,
+            171
+          ],
+          "estimated_original_font_size": 26.56,
+          "planned_font_size": 27,
+          "font_ratio": 1.017,
+          "block_width_ratio_to_original": 1.0,
+          "block_height_ratio_to_original": 1.0,
+          "columns_or_lines": 1,
+          "chunks": [
+            "高町教導官!"
+          ]
+        },
+        {
+          "group_id": "g001",
+          "source": "数日前",
+          "translation": "數日前",
+          "direction": "horizontal",
+          "original_text_bbox": [
+            1171,
+            75,
+            82,
+            26
+          ],
+          "layout_bbox": [
+            1165,
+            68,
+            93,
+            38
+          ],
+          "planned_block_bbox": [
+            1171,
+            73,
+            82,
+            30
+          ],
+          "estimated_original_font_size": 25.28,
+          "planned_font_size": 25,
+          "font_ratio": 0.989,
+          "block_width_ratio_to_original": 1.0,
+          "block_height_ratio_to_original": 1.154,
+          "columns_or_lines": 1,
+          "chunks": [
+            "數日前"
+          ]
+        },
+        {
+          "group_id": "g002",
+          "source": "はい",
+          "translation": "是",
+          "direction": "vertical",
+          "original_text_bbox": [
+            619,
+            1543,
+            25,
+            51
+          ],
+          "layout_bbox": [
+            597,
+            1528,
+            62,
+            89
+          ],
+          "planned_block_bbox": [
+            614,
+            1553,
+            35,
+            31
+          ],
+          "estimated_original_font_size": 33.64,
+          "planned_font_size": 34,
+          "font_ratio": 1.011,
+          "block_width_ratio_to_original": 1.4,
+          "block_height_ratio_to_original": 0.608,
+          "columns_or_lines": 1,
+          "chunks": [
+            "是"
+          ]
+        },
+        {
+          "group_id": "g003",
+          "source": "それじゃあ今日の訓練はこれで終了ッ！",
+          "translation": "那麼今天的訓練就到此結束!",
+          "direction": "vertical",
+          "original_text_bbox": [
+            518,
+            119,
+            85,
+            163
+          ],
+          "layout_bbox": [
+            511,
+            112,
+            96,
+            177
+          ],
+          "planned_block_bbox": [
+            517,
+            122,
+            87,
+            157
+          ],
+          "estimated_original_font_size": 21.72,
+          "planned_font_size": 22,
+          "font_ratio": 1.013,
+          "block_width_ratio_to_original": 1.024,
+          "block_height_ratio_to_original": 0.963,
+          "columns_or_lines": 3,
+          "chunks": [
+            "那麼今天的",
+            "訓練就到",
+            "此結束!"
+          ]
+        },
+        {
+          "group_id": "g004",
+          "source": "ありがとうございましたーッ",
+          "translation": "謝謝指導!",
+          "direction": "vertical",
+          "original_text_bbox": [
+            526,
+            844,
+            64,
+            247
+          ],
+          "layout_bbox": [
+            511,
+            832,
+            86,
+            269
+          ],
+          "planned_block_bbox": [
+            541,
+            849,
+            34,
+            237
+          ],
+          "estimated_original_font_size": 32.48,
+          "planned_font_size": 33,
+          "font_ratio": 1.016,
+          "block_width_ratio_to_original": 0.531,
+          "block_height_ratio_to_original": 0.96,
+          "columns_or_lines": 1,
+          "chunks": [
+            "謝謝指導!"
+          ]
+        },
+        {
+          "group_id": "g005",
+          "source": "みんなお疲れさまっ",
+          "translation": "大家辛苦了!",
+          "direction": "vertical",
+          "original_text_bbox": [
+            520,
+            1598,
+            63,
+            164
+          ],
+          "layout_bbox": [
+            509,
+            1584,
+            84,
+            189
+          ],
+          "planned_block_bbox": [
+            517,
+            1611,
+            69,
+            138
+          ],
+          "estimated_original_font_size": 33.78,
+          "planned_font_size": 34,
+          "font_ratio": 1.007,
+          "block_width_ratio_to_original": 1.095,
+          "block_height_ratio_to_original": 0.841,
+          "columns_or_lines": 2,
+          "chunks": [
+            "大家辛",
+            "苦了!"
+          ]
+        },
+        {
+          "group_id": "g006",
+          "source": "この場所で",
+          "translation": "在這裡",
+          "direction": "horizontal",
+          "original_text_bbox": [
+            97,
+            145,
+            248,
+            117
+          ],
+          "layout_bbox": [
+            90,
+            138,
+            288,
+            156
+          ],
+          "planned_block_bbox": [
+            148,
+            180,
+            146,
+            47
+          ],
+          "estimated_original_font_size": 39.5,
+          "planned_font_size": 40,
+          "font_ratio": 1.013,
+          "block_width_ratio_to_original": 0.589,
+          "block_height_ratio_to_original": 0.402,
+          "columns_or_lines": 1,
+          "chunks": [
+            "在這裡"
+          ]
+        }
+      ],
+      "all_groups_planned": true,
+      "planned_count": 7,
+      "group_count": 7
+    }
+  },
+  "summary": {
+    "group_count": 38,
+    "font_ratio_min": 0.987,
+    "font_ratio_median": 1.0,
+    "font_ratio_max": 1.029,
+    "width_ratio_median": 1.013,
+    "height_ratio_median": 1.0,
+    "note": "Manual validation translations; geometry and rendering use the real detector/masks. No external translation API was called."
+  }
+}

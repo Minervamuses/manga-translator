@@ -1,0 +1,305 @@
+[
+  {
+    "id": "g000",
+    "bbox": [
+      2068,
+      2153,
+      255,
+      1050
+    ],
+    "source": "顧客リストや取り引き相手の情報があればいいのだけど…",
+    "translation": "要是有顧客名單或交易對象的資訊就好了…",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 2021,
+        "y": 2139,
+        "w": 325,
+        "h": 1117
+      },
+      "direction": "vertical",
+      "font_size": 77,
+      "chunks": [
+        "要是有顧客名單或交易",
+        "對象的資訊就好了…"
+      ],
+      "primary_step": 153.488,
+      "secondary_step": 107.0,
+      "center_x": 179.0,
+      "center_y": 546.5,
+      "block_width": 230.488,
+      "block_height": 1031.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.08619,
+      "block_bbox": {
+        "x": 2084,
+        "y": 2170,
+        "w": 232,
+        "h": 1031
+      }
+    }
+  },
+  {
+    "id": "g001",
+    "bbox": [
+      1989,
+      84,
+      392,
+      402
+    ],
+    "source": "異常な警備体制のこの部屋…",
+    "translation": "異常警備體制下的這個房間…",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1976,
+        "y": 71,
+        "w": 418,
+        "h": 474
+      },
+      "direction": "vertical",
+      "font_size": 72,
+      "chunks": [
+        "異常警備體",
+        "制下的這",
+        "個房間…"
+      ],
+      "primary_step": 155.693,
+      "secondary_step": 81.5,
+      "center_x": 210.5,
+      "center_y": 216.5,
+      "block_width": 383.386,
+      "block_height": 391.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.01109,
+      "block_bbox": {
+        "x": 1994,
+        "y": 92,
+        "w": 385,
+        "h": 391
+      }
+    }
+  },
+  {
+    "id": "g002",
+    "bbox": [
+      1716,
+      1080,
+      236,
+      628
+    ],
+    "source": "…この部屋に存在する可能性が高い",
+    "translation": "…很可能就在這個房間裡",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1702,
+        "y": 1066,
+        "w": 264,
+        "h": 656
+      },
+      "direction": "vertical",
+      "font_size": 75,
+      "chunks": [
+        "…很可能就在",
+        "這個房間裡"
+      ],
+      "primary_step": 148.533,
+      "secondary_step": 109.6,
+      "center_x": 134.0,
+      "center_y": 328.5,
+      "block_width": 223.533,
+      "block_height": 615.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.07358,
+      "block_bbox": {
+        "x": 1724,
+        "y": 1087,
+        "w": 224,
+        "h": 615
+      }
+    }
+  },
+  {
+    "id": "g003",
+    "bbox": [
+      1297,
+      52,
+      237,
+      644
+    ],
+    "source": "セキュリティは全て解除してある",
+    "translation": "保全系統已經全部解除了",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 1245,
+        "y": 39,
+        "w": 329,
+        "h": 697
+      },
+      "direction": "vertical",
+      "font_size": 75,
+      "chunks": [
+        "保全系統已經",
+        "全部解除了"
+      ],
+      "primary_step": 158.865,
+      "secondary_step": 112.6,
+      "center_x": 172.5,
+      "center_y": 333.0,
+      "block_width": 233.865,
+      "block_height": 630.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.11872,
+      "block_bbox": {
+        "x": 1300,
+        "y": 57,
+        "w": 235,
+        "h": 630
+      }
+    }
+  },
+  {
+    "id": "g004",
+    "bbox": [
+      744,
+      2155,
+      242,
+      567
+    ],
+    "source": "…あった！！おそらくコレね",
+    "translation": "…有了!!大概就是這個吧",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 710,
+        "y": 2121,
+        "w": 295,
+        "h": 623
+      },
+      "direction": "vertical",
+      "font_size": 74,
+      "chunks": [
+        "…有了!!大",
+        "概就是這個吧"
+      ],
+      "primary_step": 152.566,
+      "secondary_step": 97.4,
+      "center_x": 157.0,
+      "center_y": 315.5,
+      "block_width": 226.566,
+      "block_height": 553.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.06847,
+      "block_bbox": {
+        "x": 753,
+        "y": 2160,
+        "w": 228,
+        "h": 553
+      }
+    }
+  },
+  {
+    "id": "g005",
+    "bbox": [
+      146,
+      1187,
+      402,
+      656
+    ],
+    "source": "しかもこの時間は誰もこの部屋に近づかない…",
+    "translation": "而且這個時間沒有人會靠近這個房間…",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 133,
+        "y": 1174,
+        "w": 428,
+        "h": 682
+      },
+      "direction": "vertical",
+      "font_size": 72,
+      "chunks": [
+        "而且這個時間",
+        "沒有人會靠近",
+        "這個房間…"
+      ],
+      "primary_step": 154.012,
+      "secondary_step": 110.128,
+      "center_x": 217.5,
+      "center_y": 345.0,
+      "block_width": 380.024,
+      "block_height": 615.638,
+      "fits": true,
+      "reason": "",
+      "score": -0.08919,
+      "block_bbox": {
+        "x": 160,
+        "y": 1211,
+        "w": 381,
+        "h": 616
+      }
+    }
+  },
+  {
+    "id": "g006",
+    "bbox": [
+      98,
+      2927,
+      246,
+      505
+    ],
+    "source": "こ…これは！！まさか…！",
+    "translation": "這、這是!!難道…!",
+    "valid": true,
+    "status": "ready",
+    "skip_reason": "",
+    "layout": {
+      "bbox": {
+        "x": 58,
+        "y": 2896,
+        "w": 305,
+        "h": 573
+      },
+      "direction": "vertical",
+      "font_size": 78,
+      "chunks": [
+        "這、這是!",
+        "!難道…!"
+      ],
+      "primary_step": 153.959,
+      "secondary_step": 99.5,
+      "center_x": 167.0,
+      "center_y": 281.5,
+      "block_width": 231.959,
+      "block_height": 467.0,
+      "fits": true,
+      "reason": "",
+      "score": -0.08766,
+      "block_bbox": {
+        "x": 109,
+        "y": 2944,
+        "w": 232,
+        "h": 467
+      }
+    }
+  }
+]

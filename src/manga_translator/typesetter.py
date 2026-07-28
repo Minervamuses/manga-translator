@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable
 
 import cv2
 import numpy as np
@@ -15,7 +15,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .config import TypesettingConfig
 from .detector import TextGroup, TextRegion
-
 
 VERTICAL_PUNCT_MAP = {
     "(": "︵",
@@ -94,8 +93,8 @@ def _get_font_metrics(font: ImageFont.FreeTypeFont) -> tuple[int, int, int]:
 
 def _measure_char_advance(font: ImageFont.FreeTypeFont, char: str) -> int:
     try:
-        return max(1, int(round(font.getlength(char))))
-    except Exception:
+        return max(1, round(font.getlength(char)))
+    except (OSError, TypeError, ValueError):
         bbox = font.getbbox(char)
         return max(1, int(bbox[2] - bbox[0]))
 
@@ -115,7 +114,7 @@ def _glyph_signature(
         bbox = font.getbbox(char)
         mask = font.getmask(char, mode="L")
         return (bbox, mask.size, bytes(mask))
-    except Exception:
+    except (OSError, TypeError, ValueError):
         return None
 
 
@@ -220,9 +219,9 @@ def _font_bounds(cfg: TypesettingConfig, preferred_font_size: float | None) -> t
     low_scale = cfg.min_font_scale if cfg.reject_unreadable_layout else cfg.hard_min_font_scale
     high = min(
         cfg.font_size_max,
-        max(cfg.font_size_min, int(math.ceil(preferred * cfg.max_font_growth_ratio))),
+        max(cfg.font_size_min, math.ceil(preferred * cfg.max_font_growth_ratio)),
     )
-    low = min(high, max(cfg.font_size_min, int(math.floor(preferred * low_scale))))
+    low = min(high, max(cfg.font_size_min, math.floor(preferred * low_scale)))
     return low, high
 
 
@@ -252,14 +251,14 @@ def _calculate_font_size(
         font = _load_font(font_path, mid)
         _ascent, _descent, line_h = _get_font_metrics(font)
         if direction == "vertical":
-            char_step = max(1, int(round(line_h * cfg.vertical_char_spacing)))
-            col_step = max(1, int(round(mid * cfg.line_spacing)))
+            char_step = max(1, round(line_h * cfg.vertical_char_spacing))
+            col_step = max(1, round(mid * cfg.line_spacing))
             chars_per_col = max(1, available_h // char_step)
             cols_needed = math.ceil(len(text) / chars_per_col)
             fits = mid + max(0, cols_needed - 1) * col_step <= available_w
         else:
             lines = _wrap_horizontal(text, font, available_w)
-            line_step = max(1, int(round(line_h * cfg.line_spacing)))
+            line_step = max(1, round(line_h * cfg.line_spacing))
             total_h = line_h + max(0, len(lines) - 1) * line_step
             fits = total_h <= available_h
         if fits:
@@ -401,12 +400,12 @@ def _mask_font_size_hint(mask: np.ndarray, direction: str) -> float | None:
     if profile.size == 0 or float(profile.max()) <= 0:
         return None
 
-    window = max(3, min(11, int(round(profile.size * 0.012))))
+    window = max(3, min(11, round(profile.size * 0.012)))
     if window % 2 == 0:
         window += 1
     smooth = np.convolve(profile, np.ones(window, dtype=float), mode="same")
     active = (smooth >= max(1.0, float(smooth.max()) * 0.07)).astype(np.uint8)
-    close = max(1, int(round(profile.size * 0.006)))
+    close = max(1, round(profile.size * 0.006))
     active = cv2.morphologyEx(
         active[None, :] * 255,
         cv2.MORPH_CLOSE,
@@ -472,7 +471,7 @@ def _runs_from_projection(
         return []
     threshold = max(2.0, cross_size * 0.003)
     active = (projection >= threshold).astype(np.uint8)[None, :] * 255
-    kernel_size = max(1, int(round(preferred * 0.22)))
+    kernel_size = max(1, round(preferred * 0.22))
     if kernel_size % 2 == 0:
         kernel_size += 1
     active = cv2.morphologyEx(
@@ -580,7 +579,7 @@ def _infer_original_geometry(
 
     if len(centers) > 1:
         sorted_centers = sorted(centers)
-        steps = [right - left for left, right in zip(sorted_centers, sorted_centers[1:])]
+        steps = [right - left for left, right in itertools.pairwise(sorted_centers)]
         primary_step = float(np.median(steps))
     else:
         primary_step = preferred * 1.08
@@ -612,10 +611,10 @@ def _clip_bbox(
 ) -> tuple[int, int, int, int]:
     image_h, image_w = image_shape
     x, y, w, h = bbox
-    x = max(0, min(int(round(x)), max(0, image_w - 1)))
-    y = max(0, min(int(round(y)), max(0, image_h - 1)))
-    x2 = max(x + 1, min(int(round(x + w)), image_w))
-    y2 = max(y + 1, min(int(round(y + h)), image_h))
+    x = max(0, min(round(x), max(0, image_w - 1)))
+    y = max(0, min(round(y), max(0, image_h - 1)))
+    x2 = max(x + 1, min(round(x + w), image_w))
+    y2 = max(y + 1, min(round(y + h), image_h))
     return (x, y, x2 - x, y2 - y)
 
 
@@ -677,8 +676,8 @@ def _safe_background_bbox(
     expand = min(
         cfg.bubble_search_max_px,
         max(
-            int(round(max(seed_w, seed_h) * cfg.bubble_search_expand_ratio)),
-            int(round(preferred * 1.5)),
+            round(max(seed_w, seed_h) * cfg.bubble_search_expand_ratio),
+            round(preferred * 1.5),
         ),
     )
     search = _clip_bbox(
@@ -694,7 +693,7 @@ def _safe_background_bbox(
     group_mask = _build_group_local_mask(group, regions_by_id, group.bbox)
     if np.any(group_mask):
         _paste_mask_into_roi(text_mask, group_mask, group.bbox, search)
-    radius = max(2, int(round(preferred * 0.22)))
+    radius = max(2, round(preferred * 0.22))
     kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE,
         (radius * 2 + 1, radius * 2 + 1),
@@ -735,7 +734,7 @@ def _safe_background_bbox(
 
     x1, y1 = max(0, lx1), max(0, ly1)
     x2, y2 = min(rw, lx2), min(rh, ly2)
-    step = max(1, int(round(preferred * 0.04)))
+    step = max(1, round(preferred * 0.04))
     required_ratio = 1.0 - cfg.bubble_max_invalid_ratio
 
     def strip_ok(strip: np.ndarray) -> bool:
@@ -770,7 +769,7 @@ def _safe_background_bbox(
     if candidate[2] <= seed_w and candidate[3] <= seed_h:
         return None
 
-    margin = max(1, int(round(min(candidate[2], candidate[3]) * cfg.bubble_inner_margin_ratio)))
+    margin = max(1, round(min(candidate[2], candidate[3]) * cfg.bubble_inner_margin_ratio))
     cx1 = min(seed_x, candidate[0] + margin)
     cy1 = min(seed_y, candidate[1] + margin)
     cx2 = max(seed_x + seed_w, candidate[0] + candidate[2] - margin)
@@ -805,7 +804,7 @@ def _select_layout_bbox(
     base = _bbox_union(tight, group.bbox) if reasonable_group else tight
     dynamic_padding = max(
         cfg.layout_padding_px,
-        int(round(geometry.font_size * cfg.layout_padding_ratio)),
+        round(geometry.font_size * cfg.layout_padding_ratio),
     )
     base = _expand_bbox(base, dynamic_padding, image_shape)
     bubble = _safe_background_bbox(
@@ -880,10 +879,10 @@ def layout_plan_block_bbox(plan: TextLayoutPlan) -> tuple[int, int, int, int]:
 
     x = plan.bbox[0] + plan.center_x - plan.block_width / 2.0
     y = plan.bbox[1] + plan.center_y - plan.block_height / 2.0
-    x1 = int(math.floor(x))
-    y1 = int(math.floor(y))
-    x2 = int(math.ceil(x + plan.block_width))
-    y2 = int(math.ceil(y + plan.block_height))
+    x1 = math.floor(x)
+    y1 = math.floor(y)
+    x2 = math.ceil(x + plan.block_width)
+    y2 = math.ceil(y + plan.block_height)
     return (x1, y1, max(1, x2 - x1), max(1, y2 - y1))
 
 
@@ -907,7 +906,7 @@ def _plan_vertical(
     length_ratio = len(text) / max(1, geometry.source_length)
     expected_columns = max(
         1,
-        int(round(geometry.primary_count * math.sqrt(max(0.15, length_ratio)))),
+        round(geometry.primary_count * math.sqrt(max(0.15, length_ratio))),
     )
 
     candidates: list[tuple[TextLayoutPlan, float]] = []
@@ -924,7 +923,7 @@ def _plan_vertical(
         max_col_step = size * cfg.max_column_spacing_ratio
         max_columns = min(
             len(text),
-            max(1, int(math.floor((available_w - glyph_w) / max(1.0, min_col_step))) + 1),
+            max(1, math.floor((available_w - glyph_w) / max(1.0, min_col_step)) + 1),
         )
 
         for columns in range(1, max_columns + 1):

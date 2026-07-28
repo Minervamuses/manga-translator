@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Protocol, TypeVar
+from collections.abc import Iterable
+from typing import Protocol, TypeVar
 
 
 class HasRect(Protocol):

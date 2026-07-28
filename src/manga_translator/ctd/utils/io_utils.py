@@ -1,10 +1,10 @@
-import os
-import os.path as osp
 import glob
+import json
+import os.path as osp
 from pathlib import Path
+
 import cv2
 import numpy as np
-import json
 
 IMG_EXT = ['.bmp', '.jpg', '.png', '.jpeg']
 
@@ -31,7 +31,7 @@ class NumpyEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 def find_all_imgs(img_dir, abs_path=False):
-    imglist = list()
+    imglist = []
     for filep in glob.glob(osp.join(img_dir, "*")):
         filename = osp.basename(filep)
         file_suffix = Path(filename).suffix

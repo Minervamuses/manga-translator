@@ -183,7 +183,7 @@ class TypesettingConfig(BaseModel):
     replace_unsupported_glyphs: bool = True
 
     @model_validator(mode="after")
-    def validate_font_sizes(self) -> "TypesettingConfig":
+    def validate_font_sizes(self) -> TypesettingConfig:
         if self.font_size_max < self.font_size_min:
             raise ValueError("font_size_max 不可小於 font_size_min")
         if self.hard_min_font_scale > self.min_font_scale:
@@ -224,7 +224,7 @@ class AppConfig(BaseModel):
     inpainting: InpaintingConfig = Field(default_factory=InpaintingConfig)
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "AppConfig":
+    def from_yaml(cls, path: str | Path) -> AppConfig:
         config_path = Path(path).expanduser().resolve()
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}

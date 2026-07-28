@@ -48,3 +48,12 @@ include = ["manga_translator*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not model_integration and not api_integration and not gpu'"
+markers = [
+    "model_integration: requires locally available real model assets",
+    "api_integration: requires explicit credentials and may access a provider",
+    "gpu: requires a compatible target GPU",
+]

@@ -17,7 +17,6 @@ from manga_translator.typesetter import (
     render_text_into_patch,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PRIMARY = str((ROOT / "fonts/Iansui-Regular.ttf").resolve())
 FALLBACK = str((ROOT / "fonts/NotoSansCJKtc-Regular.otf").resolve())

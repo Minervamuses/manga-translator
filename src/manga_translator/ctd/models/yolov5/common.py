@@ -3,29 +3,12 @@
 Common modules
 """
 
-import json
 import math
-import platform
 import warnings
-from collections import OrderedDict, namedtuple
-from copy import copy
-from pathlib import Path
 
-import cv2
-import numpy as np
-import requests
 import torch
-import torch.nn as nn
-from PIL import Image
-from torch.cuda import amp
+from torch import nn
 
-from ...utils.yolov5_utils import (
-    check_anchor_order,
-    check_version,
-    fuse_conv_and_bn,
-    initialize_weights,
-    make_divisible,
-)
 
 def autopad(k, p=None):  # kernel, padding
     # Pad to 'same'

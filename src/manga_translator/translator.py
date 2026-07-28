@@ -7,9 +7,10 @@ import json
 import random
 import re
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import httpx
 from rich.console import Console
@@ -396,7 +397,7 @@ def _source_has_semantic_dash(source: str | None) -> bool:
 def _has_adjacent_long_repeat(text: str, min_length: int = 4) -> bool:
     compact = re.sub(r"\s+", "", text or "")
     for span in range(len(compact) // 2, min_length - 1, -1):
-        for start in range(0, len(compact) - span * 2 + 1):
+        for start in range(len(compact) - span * 2 + 1):
             if compact[start : start + span] == compact[start + span : start + span * 2]:
                 return True
     return False
@@ -417,7 +418,7 @@ def _collapse_adjacent_long_repeats(text: str, source: str | None) -> str:
     while changed:
         changed = False
         for span in range(len(result) // 2, 3, -1):
-            for start in range(0, len(result) - span * 2 + 1):
+            for start in range(len(result) - span * 2 + 1):
                 fragment = result[start : start + span]
                 if not _has_meaningful_character(fragment):
                     continue
@@ -604,10 +605,10 @@ def _extract_content(data: dict[str, Any]) -> str:
 
     first = choices[0]
     if not isinstance(first, dict):
-        raise RuntimeError("OpenRouter response choice format is invalid")
+        raise TypeError("OpenRouter response choice format is invalid")
     message = first.get("message")
     if not isinstance(message, dict):
-        raise RuntimeError("OpenRouter response has no message")
+        raise TypeError("OpenRouter response has no message")
 
     content = message.get("content")
     if isinstance(content, str) and content.strip():
@@ -652,7 +653,7 @@ async def _request_with_retry(
 
             try:
                 data: dict[str, Any] | None = response.json()
-            except Exception:
+            except ValueError:
                 data = None
 
             if response.status_code in retryable_status:

@@ -1,8 +1,8 @@
-from operator import mod
-from cv2 import imshow
-from ...utils.yolov5_utils import scale_img
 from copy import deepcopy
+
+from ...utils.yolov5_utils import scale_img
 from .common import *
+
 
 class Detect(nn.Module):
     stride = None  # strides computed during build
@@ -122,9 +122,8 @@ class Model(nn.Module):
                 self._profile_one_layer(m, x, dt)
             x = m(x)  # run
             y.append(x if m.i in self.save else None)  # save output
-            if self.out_indices is not None:
-                if m.i in self.out_indices:
-                    z.append(x)
+            if self.out_indices is not None and m.i in self.out_indices:
+                z.append(x)
         if self.out_indices is not None:
             if detect:
                 return x, z
@@ -180,7 +179,7 @@ class Model(nn.Module):
     def _print_biases(self):
         m = self.model[-1]  # Detect() module
         for mi in m.m:  # from
-            b = mi.bias.detach().view(m.na, -1).T  # conv.bias(255) to (3,85)
+            _ = mi.bias.detach().view(m.na, -1).T  # conv.bias(255) to (3,85)
 
     def fuse(self):  # fuse model Conv2d() + BatchNorm2d() layers
         for m in self.model.modules():
@@ -196,14 +195,14 @@ class Model(nn.Module):
 
     def _apply(self, fn):
         # Apply to(), cpu(), cuda(), half() to model tensors that are not parameters or registered buffers
-        self = super()._apply(fn)
-        m = self.model[-1]  # Detect()
+        module = super()._apply(fn)
+        m = module.model[-1]  # Detect()
         if isinstance(m, Detect):
             m.stride = fn(m.stride)
             m.grid = list(map(fn, m.grid))
             if isinstance(m.anchor_grid, list):
                 m.anchor_grid = list(map(fn, m.anchor_grid))
-        return self
+        return module
 
 def parse_model(d, ch):  # model_dict, input_channels(3)
     # LOGGER.info(f"\n{'':>3}{'from':>18}{'n':>3}{'params':>10}  {'module':<40}{'arguments':<30}")
@@ -220,7 +219,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
             except NameError:
                 pass
 
-        n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
+        n = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m in [Conv, GhostConv, Bottleneck, GhostBottleneck, SPP, SPPF, DWConv, Focus,
                  BottleneckCSP, C3, C3TR, C3SPP, C3Ghost]:
             c1, c2 = ch[f], args[0]
@@ -258,7 +257,9 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         ch.append(c2)
     return nn.Sequential(*layers), sorted(save)
 
-def load_yolov5(weights, map_location='cuda', fuse=True, inplace=True, out_indices=[1, 3, 5, 7, 9]):
+def load_yolov5(weights, map_location='cuda', fuse=True, inplace=True, out_indices=None):
+    if out_indices is None:
+        out_indices = [1, 3, 5, 7, 9]
     if isinstance(weights, str):
         ckpt = torch.load(weights, map_location=map_location)  # load
     else:
@@ -273,17 +274,18 @@ def load_yolov5(weights, map_location='cuda', fuse=True, inplace=True, out_indic
     for m in model.modules():
         if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, Model]:
             m.inplace = inplace  # pytorch 1.7.0 compatibility
-            if type(m) is Detect:
-                if not isinstance(m.anchor_grid, list):  # new Detect Layer compatibility
-                    delattr(m, 'anchor_grid')
-                    setattr(m, 'anchor_grid', [torch.zeros(1)] * m.nl)
+            if type(m) is Detect and not isinstance(m.anchor_grid, list):
+                delattr(m, 'anchor_grid')
+                m.anchor_grid = [torch.zeros(1)] * m.nl
         elif type(m) is Conv:
             m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
     model.out_indices = out_indices
     return model
 
 @torch.no_grad()
-def load_yolov5_ckpt(weights, map_location='cpu', fuse=True, inplace=True, out_indices=[1, 3, 5, 7, 9]):
+def load_yolov5_ckpt(weights, map_location='cpu', fuse=True, inplace=True, out_indices=None):
+    if out_indices is None:
+        out_indices = [1, 3, 5, 7, 9]
     if isinstance(weights, str):
         ckpt = torch.load(weights, map_location=map_location)  # load
     else:
@@ -301,10 +303,9 @@ def load_yolov5_ckpt(weights, map_location='cpu', fuse=True, inplace=True, out_i
     for m in model.modules():
         if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, Model]:
             m.inplace = inplace  # pytorch 1.7.0 compatibility
-            if type(m) is Detect:
-                if not isinstance(m.anchor_grid, list):  # new Detect Layer compatibility
-                    delattr(m, 'anchor_grid')
-                    setattr(m, 'anchor_grid', [torch.zeros(1)] * m.nl)
+            if type(m) is Detect and not isinstance(m.anchor_grid, list):
+                delattr(m, 'anchor_grid')
+                m.anchor_grid = [torch.zeros(1)] * m.nl
         elif type(m) is Conv:
             m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
     model.out_indices = out_indices

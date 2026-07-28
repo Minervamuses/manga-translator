@@ -1,7 +1,7 @@
 import json
 import os.path as osp
 from pathlib import Path
-from typing import Union
+from typing import ClassVar
 
 import cv2
 import numpy as np
@@ -21,6 +21,7 @@ from .utils.textmask import (
 )
 from .utils.yolov5_utils import non_max_suppression
 
+
 def model2annotations(model_path, img_dir_list, save_dir, save_json=False):
     if isinstance(img_dir_list, str):
         img_dir_list = [img_dir_list]
@@ -37,7 +38,7 @@ def model2annotations(model_path, img_dir_list, save_dir, save_json=False):
         imname = imgname.replace(Path(imgname).suffix, '')
         maskname = 'mask-'+imname+'.png'
         poly_save_path = osp.join(save_dir, 'line-' + imname + '.txt')
-        mask, mask_refined, blk_list = model(img, refine_mode=REFINEMASK_ANNOTATION, keep_undetected_mask=True)
+        _mask, mask_refined, blk_list = model(img, refine_mode=REFINEMASK_ANNOTATION, keep_undetected_mask=True)
         polys = []
         blk_xyxy = []
         blk_dict_list = []
@@ -87,7 +88,7 @@ def preprocess_img(img, input_size=(1024, 1024), device='cpu', bgr2rgb=True, hal
                 img_in = img_in.half()
     return img_in, ratio, int(dw), int(dh)
 
-def postprocess_mask(img: Union[torch.Tensor, np.ndarray], thresh=None):
+def postprocess_mask(img: torch.Tensor | np.ndarray, thresh=None):
     # img = img.permute(1, 2, 0)
     if isinstance(img, torch.Tensor):
         img = img.squeeze_()
@@ -119,12 +120,11 @@ def postprocess_yolo(det, conf_thresh, nms_thresh, resize_ratio, sort_func=None)
     return blines, cls, confs
 
 class TextDetector:
-    lang_list = ['eng', 'ja', 'unknown']
-    langcls2idx = {'eng': 0, 'ja': 1, 'unknown': 2}
+    lang_list: ClassVar[list[str]] = ['eng', 'ja', 'unknown']
+    langcls2idx: ClassVar[dict[str, int]] = {'eng': 0, 'ja': 1, 'unknown': 2}
 
     def __init__(self, model_path, input_size=1024, device='cpu', half=False, nms_thresh=0.35, conf_thresh=0.4, mask_thresh=0.3, act='leaky'):
-        super(TextDetector, self).__init__()
-        cuda = device == 'cuda'
+        super().__init__()
 
         if Path(model_path).suffix == '.onnx':
             self.model = cv2.dnn.readNetFromONNX(model_path)
@@ -145,7 +145,7 @@ class TextDetector:
 
     @torch.no_grad()
     def __call__(self, img, refine_mode=REFINEMASK_INPAINT, keep_undetected_mask=False):
-        img_in, ratio, dw, dh = preprocess_img(img, input_size=self.input_size, device=self.device, half=self.half, to_tensor=self.backend=='torch')
+        img_in, _ratio, dw, dh = preprocess_img(img, input_size=self.input_size, device=self.device, half=self.half, to_tensor=self.backend=='torch')
         im_h, im_w = img.shape[:2]
 
         blks, mask, lines_map = self.net(img_in)
@@ -153,11 +153,11 @@ class TextDetector:
         resize_ratio = (im_w / (self.input_size[0] - dw), im_h / (self.input_size[1] - dh))
         blks = postprocess_yolo(blks, self.conf_thresh, self.nms_thresh, resize_ratio)
 
-        if self.backend == 'opencv':
-            if mask.shape[1] == 2:     # some version of opencv spit out reversed result
-                tmp = mask
-                mask = lines_map
-                lines_map = tmp
+        if self.backend == 'opencv' and mask.shape[1] == 2:
+            # Some OpenCV versions return the two maps in the opposite order.
+            tmp = mask
+            mask = lines_map
+            lines_map = tmp
         mask = postprocess_mask(mask)
 
         lines, scores = self.seg_rep(self.input_size, lines_map)

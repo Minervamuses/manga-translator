@@ -1,6 +1,8 @@
-import numpy as np
-import cv2
 import random
+
+import cv2
+import numpy as np
+
 
 def hex2bgr(hex):
     gmask = 254 << 8
@@ -96,7 +98,7 @@ def letterbox(im, new_shape=(640, 640), color=(0, 0, 0), auto=False, scaleFill=F
 
     # Compute padding
     ratio = r, r  # width, height ratios
-    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    new_unpad = round(shape[1] * r), round(shape[0] * r)
     dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
     if auto:  # minimum rectangle
         dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
@@ -111,8 +113,8 @@ def letterbox(im, new_shape=(640, 640), color=(0, 0, 0), auto=False, scaleFill=F
 
     if shape[::-1] != new_unpad:  # resize
         im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
-    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
-    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    _top, _bottom = round(dh - 0.1), round(dh + 0.1)
+    _left, _right = round(dw - 0.1), round(dw + 0.1)
     im = cv2.copyMakeBorder(im, 0, dh, 0, dw, cv2.BORDER_CONSTANT, value=color)  # add border
     return im, ratio, (dw, dh)
 
@@ -130,7 +132,7 @@ def resize_keepasp(im, new_shape=640, scaleup=True, interpolation=cv2.INTER_LINE
     if not scaleup:  # only scale down, do not scale up (for better val mAP)
         r = min(r, 1.0)
 
-    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    new_unpad = round(shape[1] * r), round(shape[0] * r)
 
     if stride is not None:
         h, w = new_unpad
@@ -153,7 +155,7 @@ def expand_textwindow(img_size, xyxy, expand_r=8, shrink=False):
     x1, y1 , x2, y2 = xyxy
     w = x2 - x1
     h = y2 - y1
-    paddings = int(round((max(h, w) * 0.25 + min(h, w) * 0.75) / expand_r))
+    paddings = round((max(h, w) * 0.25 + min(h, w) * 0.75) / expand_r)
     if shrink:
         paddings *= -1
     x1, y1 = max(0, x1 - paddings), max(0, y1 - paddings)

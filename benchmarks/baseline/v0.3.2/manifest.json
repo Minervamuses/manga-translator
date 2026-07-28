@@ -1,0 +1,652 @@
+{
+  "schema_version": 1,
+  "baseline_version": "0.3.2",
+  "target_archive_sha256": "862c0f475910b0c7f334cbe7d51bfe1abd101c1669e87bb1110e6288608a3aa5",
+  "source_tree": {
+    "algorithm": "sha256-path-size-content-v1",
+    "sha256": "1ce479e67e18dd80fcf4e93bc8b545ff8c6b2132cee6e94dcba18d6c19c30e2a",
+    "file_count": 94,
+    "files": [
+      {
+        "path": ".gitattributes",
+        "size": 84,
+        "sha256": "9cf4f73c340e51d0967eaea22b8df9df21f39f16dca9706d5de415224c3ba96a"
+      },
+      {
+        "path": ".gitignore",
+        "size": 746,
+        "sha256": "6d3fbcc1cc6b12685349eccd26a109a1eb6fb21ab6bd7e25463ccca7a769d623"
+      },
+      {
+        "path": "README.md",
+        "size": 10360,
+        "sha256": "0ce3bc7b05415582159a37eff4c33953ab70f5a5996fafd59f3919c06e382d4d"
+      },
+      {
+        "path": "UPGRADE_NOTES.md",
+        "size": 11116,
+        "sha256": "973567b2844eee6c0e13e2440f7f710db01caff0b52d60943d1f015974ae2f94"
+      },
+      {
+        "path": "VALIDATION_REPORT.md",
+        "size": 5913,
+        "sha256": "5dcf58aa80e97e18e3af4e3161188051ef145451433940b34c718c7b2a222d37"
+      },
+      {
+        "path": "config.yaml",
+        "size": 6832,
+        "sha256": "5c230ca351d0b5c7c168b28aebc9b8bfda0f34669360ba6d9e13590dcc27e2eb"
+      },
+      {
+        "path": "environment.yml",
+        "size": 877,
+        "sha256": "f5858c5d95b187b5d288f35f0efb6636f2b6030e77546bab1e0a4f6b879113e4"
+      },
+      {
+        "path": "fonts/.gitkeep",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "fonts/Iansui-Regular.ttf",
+        "size": 9447424,
+        "sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5"
+      },
+      {
+        "path": "fonts/NotoSansCJKtc-Regular.otf",
+        "size": 16435884,
+        "sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4"
+      },
+      {
+        "path": "glossary.json",
+        "size": 261,
+        "sha256": "f0a2cc771e0019c97371c4696b0477cafeecd990dd2984a1239c1a85576113a6"
+      },
+      {
+        "path": "guide.md",
+        "size": 6008,
+        "sha256": "118a3eaa44a10086502b591885a38df8e09410dc6573216c9a0d63496d71b5fa"
+      },
+      {
+        "path": "models/.gitkeep",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "models/comictextdetector.pt",
+        "size": 79948869,
+        "sha256": "1f90fa60aeeb1eb82e2ac1167a66bf139a8a61b8780acd351ead55268540cccb"
+      },
+      {
+        "path": "pyproject.toml",
+        "size": 1445,
+        "sha256": "f4780997a9e73b313c8ce9bdd73c536e7a6ed3dc7acd129e7c39c13ca8804525"
+      },
+      {
+        "path": "samples/README.md",
+        "size": 326,
+        "sha256": "a823661a3fcda3ef7e78d8258bbe7f4b818ff4c1f01e37c1e71766d801b7301c"
+      },
+      {
+        "path": "samples/before_fix/#Uf021#Uf014#Uf01a#Ueff9_#Uf01a#Uf008#Uf030__#Ueed3#Uf008__6_#Ue834#Ue7cc_1_0002.jpg",
+        "size": 281339,
+        "sha256": "715b802aeb2dd93e5e7c7ad55829bc5ca3b508e84b41c95be4ff56a649841ba4"
+      },
+      {
+        "path": "samples/before_fix/#Uf021#Uf014#Uf01a#Ueff9_#Uf01a#Uf008#Uf030__#Ueed3#Uf008__6_#Ue834#Ue7cc_1_0003.jpg",
+        "size": 343798,
+        "sha256": "bbe95f7a6a23d41fc563e36ca389b9eac50b61bfed58aa52341afad18a383047"
+      },
+      {
+        "path": "samples/before_fix/0188_ive_hwa002.jpg",
+        "size": 833430,
+        "sha256": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8"
+      },
+      {
+        "path": "samples/before_fix/0211_t_11takamatic006.jpg",
+        "size": 889266,
+        "sha256": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe"
+      },
+      {
+        "path": "samples/before_fix/0822_omake_hayaten002.jpg",
+        "size": 644266,
+        "sha256": "e6ab27185440c560dd3102d43f55515ca98a68ba0cf619a64a49fc4bb62693a9"
+      },
+      {
+        "path": "samples/before_fix/0823_omake_hayaten003.jpg",
+        "size": 897220,
+        "sha256": "dede3f46689fa976a7be5cf2ab97d1e0e6ed7fadd60b560ebfaa5a9bb7cff18f"
+      },
+      {
+        "path": "samples/before_fix/__#Uf008_#Ueff9#Ue7cc (3).jpg",
+        "size": 1527221,
+        "sha256": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f"
+      },
+      {
+        "path": "samples/before_fix/__#Uf008_#Ueff9#Ue7cc (4).jpg",
+        "size": 1580838,
+        "sha256": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d"
+      },
+      {
+        "path": "samples/before_fix/__#Uf008_#Ueff9#Ue7cc (5).jpg",
+        "size": 1614539,
+        "sha256": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5"
+      },
+      {
+        "path": "scripts/download_font.sh",
+        "size": 717,
+        "sha256": "ddc762ef4e985b867f863752e9544db1bcd6d946ac45000491b52fe2d61a2561"
+      },
+      {
+        "path": "scripts/download_models.sh",
+        "size": 366,
+        "sha256": "1bdbbec393e7e519624232e5322004425b72b8364aec5e806d0c24cd789a04a3"
+      },
+      {
+        "path": "scripts/fingerprint_tree.py",
+        "size": 1382,
+        "sha256": "059ce31c53b6c813bc488dfa7480f2d0b87868756df3418de3d846d784cb837f"
+      },
+      {
+        "path": "scripts/verify_baseline.py",
+        "size": 416,
+        "sha256": "3fe32dad6d2ac35778be5fe61060c570ef86bfb95ff460c6c7415fe4bb5e98e3"
+      },
+      {
+        "path": "src/manga_translator/__init__.py",
+        "size": 66,
+        "sha256": "07d444e1386c6a0f604cc9e428ff63abb1414412200fbdaaa808e850be95f408"
+      },
+      {
+        "path": "src/manga_translator/artifacts.py",
+        "size": 7685,
+        "sha256": "7219ffae9698c92b2ce3e8c420e21c3da1e34f4e9eb12e4adba2c0e61d6cebad"
+      },
+      {
+        "path": "src/manga_translator/baseline.py",
+        "size": 13211,
+        "sha256": "e4f04dbb0afb879990e1204c254a5e3a6b8ef9404ab11e142908d17559f65e84"
+      },
+      {
+        "path": "src/manga_translator/cli.py",
+        "size": 11644,
+        "sha256": "6a0baa8ba411be35afea19e43e4bea9abe09896d13fecba9914314f935ad7b7b"
+      },
+      {
+        "path": "src/manga_translator/config.py",
+        "size": 12787,
+        "sha256": "9bf1e17dfe026d709b65ee8371286d23108e77b86cb644bfa69af3f9234f2e91"
+      },
+      {
+        "path": "src/manga_translator/ctd/__init__.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "src/manga_translator/ctd/basemodel.py",
+        "size": 10566,
+        "sha256": "272f859c207bfd97e95f8d6960c89c03e6aac7cb7c216694842f5bf041b2e271"
+      },
+      {
+        "path": "src/manga_translator/ctd/inference.py",
+        "size": 8602,
+        "sha256": "720f17946517c47b87d7747d7d79509df305480215372fa257dd420c1ccf6433"
+      },
+      {
+        "path": "src/manga_translator/ctd/models/__init__.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "src/manga_translator/ctd/models/yolov5/__init__.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "src/manga_translator/ctd/models/yolov5/common.py",
+        "size": 10516,
+        "sha256": "13ac1d0df5f45fcd05b22582a4063a2bcca3ef62d80c432ecb8f89c74e2bc6d0"
+      },
+      {
+        "path": "src/manga_translator/ctd/models/yolov5/yolo.py",
+        "size": 14279,
+        "sha256": "4b5d7ed5087fe8b0dd3c348717dcc7e8161e17870b9ef074879cf236db4ac98c"
+      },
+      {
+        "path": "src/manga_translator/ctd/utils/__init__.py",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "src/manga_translator/ctd/utils/db_utils.py",
+        "size": 29415,
+        "sha256": "51dce20f875fd47ba713ec3a7875c3dc5b9f0c71c2ddffa70ee8406f0eae3259"
+      },
+      {
+        "path": "src/manga_translator/ctd/utils/imgproc_utils.py",
+        "size": 6844,
+        "sha256": "a1f33e8434565c0b914fda749dd45930660b965e7b379e32430087d074c55e8b"
+      },
+      {
+        "path": "src/manga_translator/ctd/utils/io_utils.py",
+        "size": 1920,
+        "sha256": "838c02a35c7dcbd2dc2af6008ee11bf750a30993f47cf4d2179e80daa1f2aeab"
+      },
+      {
+        "path": "src/manga_translator/ctd/utils/textblock.py",
+        "size": 21190,
+        "sha256": "f244ce9591018d0f007065614419dd4f34ae6b0bc9c429087adc08d4bbb5a934"
+      },
+      {
+        "path": "src/manga_translator/ctd/utils/textmask.py",
+        "size": 13190,
+        "sha256": "196e93e3ec9d255a19daf33385c838377248cf3f7bdd15d9a461a9df72d744d4"
+      },
+      {
+        "path": "src/manga_translator/ctd/utils/weight_init.py",
+        "size": 3785,
+        "sha256": "4530c5ad40508e7586322a3634a349bfdf314f0c9403372864a2edd732a95f6b"
+      },
+      {
+        "path": "src/manga_translator/ctd/utils/yolov5_utils.py",
+        "size": 11346,
+        "sha256": "2d162c62c7eac374436b20035259b0bc161abb437dca7b2fa19ce5b907b70a20"
+      },
+      {
+        "path": "src/manga_translator/detector.py",
+        "size": 32543,
+        "sha256": "9c8b8aeab893103e5843f2bd2de134c786ab7f7bd8673f4dc2acc685c108ceb4"
+      },
+      {
+        "path": "src/manga_translator/dev.py",
+        "size": 711,
+        "sha256": "999de82d4531d5ead1dfe1f0ba4d1f8b2bd1c0c38984687ce7494e0664ece66c"
+      },
+      {
+        "path": "src/manga_translator/geometry.py",
+        "size": 1944,
+        "sha256": "d68115d6a82b6ed8ba8c34d092c874c6539064b9395f1000dfa3740f79b0478a"
+      },
+      {
+        "path": "src/manga_translator/image_io.py",
+        "size": 887,
+        "sha256": "947a802c83f4a2014db0cf8d9a5ea7054ded04e5d2dafa3c8175a6da95c96f97"
+      },
+      {
+        "path": "src/manga_translator/inpainter.py",
+        "size": 11693,
+        "sha256": "c145d78f1f6ca29ccf9d10c76aff6dc286db2b4f0109e40de8e7127bf6ec5e44"
+      },
+      {
+        "path": "src/manga_translator/manga_ocr_runtime.py",
+        "size": 6412,
+        "sha256": "b491b08c9a3e102f9f305eeb3db7aa1785fb27e2b17bdd697d46b9c6c9475888"
+      },
+      {
+        "path": "src/manga_translator/ocr.py",
+        "size": 34509,
+        "sha256": "29b8afdc0642eb714d16538849493f0f24a07cac551d318464ea04739f023839"
+      },
+      {
+        "path": "src/manga_translator/pipeline.py",
+        "size": 39607,
+        "sha256": "8b11f909ee2f5c4a80eb6cf99cb53c7efddf86a70fed3cc976b01326960745e7"
+      },
+      {
+        "path": "src/manga_translator/reading_order.py",
+        "size": 1215,
+        "sha256": "c64f5a0077995d5831bbf841d5fbdc0f76321c402943cfe143e4b9aed4317aff"
+      },
+      {
+        "path": "src/manga_translator/translator.py",
+        "size": 33467,
+        "sha256": "259609173c370d718ca26790be85494c5ec4eb364461e6a9ead80380650e3fd4"
+      },
+      {
+        "path": "src/manga_translator/typesetter.py",
+        "size": 53963,
+        "sha256": "a5c4b8af0d06704ad62d4a26f8b6c6bbd0becee5ea0287161230f8b9a26e59ab"
+      },
+      {
+        "path": "tests/conftest.py",
+        "size": 197,
+        "sha256": "b9d7d3cb22cb7c62071bea73ecb717fe58d32b77dbbd32446203138cd69de13c"
+      },
+      {
+        "path": "tests/test_baseline_manifest.py",
+        "size": 2934,
+        "sha256": "b144ffcea58fe9c2f35a716369010bbde82aa9ac1c3d4f4033e24135d1a2831b"
+      },
+      {
+        "path": "tests/test_cli.py",
+        "size": 1163,
+        "sha256": "c39f1371d6b3bc421a53b3c187a5138b8215bd3d64ed8521286f34e23f395024"
+      },
+      {
+        "path": "tests/test_config.py",
+        "size": 1153,
+        "sha256": "b775f96f0dfe7db26ce98f3f2a60e31626c965af35af496f600df35a771e70df"
+      },
+      {
+        "path": "tests/test_ctd_db_utils.py",
+        "size": 687,
+        "sha256": "07a32fe48208b1459c51eca4867b89311cae496cb86829db7c9b66cbf8387617"
+      },
+      {
+        "path": "tests/test_detector.py",
+        "size": 3806,
+        "sha256": "8cbc3573f10a855e2c0baa1ae066e4dc9ce00b4d9db9144c7af0d90ef946e390"
+      },
+      {
+        "path": "tests/test_image_io.py",
+        "size": 472,
+        "sha256": "8a8ea134c8b3e75233f06e3ef6ed4dd3c30a9721f84abb88745eedb1d70c8a97"
+      },
+      {
+        "path": "tests/test_inpainter.py",
+        "size": 4100,
+        "sha256": "20779cec5331383594671d60700614e72aaa49ae08e99e76fdee03fa0677abe9"
+      },
+      {
+        "path": "tests/test_manga_ocr_runtime.py",
+        "size": 4883,
+        "sha256": "57f4c4ae21398bf990ae0620c31a838a35b2d277a086fca97654b6596e834542"
+      },
+      {
+        "path": "tests/test_ocr.py",
+        "size": 6236,
+        "sha256": "fdd2cbc990abd043e6694ebe48ac98eaf30319be5ebfcec4793f3b4541a5c2e2"
+      },
+      {
+        "path": "tests/test_pipeline.py",
+        "size": 8491,
+        "sha256": "5c4616c226ddfda6cf1398bf0daaab1576d0b1f3aa6a863a7d6714b511343602"
+      },
+      {
+        "path": "tests/test_translator.py",
+        "size": 3891,
+        "sha256": "e98d82fd913f3e44ecfd7fa5278402f36547c96371324a9aaabd97669e52705f"
+      },
+      {
+        "path": "tests/test_typesetter.py",
+        "size": 8125,
+        "sha256": "c2983e9674b66acc1f252479e0b7ce014feb0fc683b577e7836716207258498f"
+      },
+      {
+        "path": "validation_samples/README.md",
+        "size": 1522,
+        "sha256": "d339d623cdaecf461c2cf2508f62d450614f667ff82f93d5ce78287a0828dc92"
+      },
+      {
+        "path": "validation_samples/detector_stats.json",
+        "size": 496,
+        "sha256": "1f53c231ea2165f825c579e258b453c0ba5781cf332aeac40bed5f20498e6313"
+      },
+      {
+        "path": "validation_samples/sample_1_detector_overlay.jpg",
+        "size": 312770,
+        "sha256": "8b0086b3dfaa2281fbd918470a514b5244e5f61f3713dd658dda9c4b65cd712a"
+      },
+      {
+        "path": "validation_samples/sample_1_layout_preview.jpg",
+        "size": 273373,
+        "sha256": "62f4e933cb505964d5e8c4c308978c6c3a9a579e855643c72798e46ecdbe3db8"
+      },
+      {
+        "path": "validation_samples/sample_1_layout_stats.json",
+        "size": 934,
+        "sha256": "4cbb7906cc380861e61eb857eac47d34740d79c2d9f2d070f7b1cd5795794fbb"
+      },
+      {
+        "path": "validation_samples/sample_1_safe_mask.png",
+        "size": 11977,
+        "sha256": "de926d98f563319c5f4f87f1b385db5f08c888acebb2fe36f786b090cfeb8e11"
+      },
+      {
+        "path": "validation_samples/sample_2_detector_overlay.jpg",
+        "size": 907195,
+        "sha256": "aad2f93e21b5e1f1103dbc15a8b5ee57450fff1b6fbda5c44d988c593b719a81"
+      },
+      {
+        "path": "validation_samples/sample_2_safe_mask.png",
+        "size": 22436,
+        "sha256": "6e721fb74484883231929b7d58647164da26801ebcdfac46f5354577fef57d8e"
+      },
+      {
+        "path": "validation_samples/v032_caption_3_final_preview.jpg",
+        "size": 1498022,
+        "sha256": "70aede9a152752a796e2bbc5af893610b2d44ebdb36936cc5bb531cb707de2dc"
+      },
+      {
+        "path": "validation_samples/v032_caption_3_layout.json",
+        "size": 5899,
+        "sha256": "7bf409b91272243185a930effa0352332db982c82327c50941951064d4384a25"
+      },
+      {
+        "path": "validation_samples/v032_caption_4_final_preview.jpg",
+        "size": 1565249,
+        "sha256": "634ee988afaeef9e448cb251965255f04cc4457887a113ee43d871d64522797c"
+      },
+      {
+        "path": "validation_samples/v032_caption_4_inpainted.jpg",
+        "size": 1376215,
+        "sha256": "be8c27d8fc2e3c49fc260ffe40e02c0f4a7dd2697fd4aa390fc3c3d0b8e88813"
+      },
+      {
+        "path": "validation_samples/v032_caption_4_layout.json",
+        "size": 5363,
+        "sha256": "a6834bc9ac207ab2cab6fc47b793945c96c525315d7efa3643810a0917363627"
+      },
+      {
+        "path": "validation_samples/v032_caption_5_final_preview.jpg",
+        "size": 1593275,
+        "sha256": "9ae7600da829875436894dbb13ae8e861071db355194481915d2ac7193e1fdfb"
+      },
+      {
+        "path": "validation_samples/v032_caption_5_layout.json",
+        "size": 6228,
+        "sha256": "80deb2d3e1a4b4bb50e741dcfaa153711830b9f37519e1ffc609744fab9581be"
+      },
+      {
+        "path": "validation_samples/v032_dash_0211_final_preview.jpg",
+        "size": 893331,
+        "sha256": "87a69b4ca12cc1517a376dca2b22492c66430ca872f58abf1e783f5048c86389"
+      },
+      {
+        "path": "validation_samples/v032_dash_0211_inpainted.jpg",
+        "size": 871929,
+        "sha256": "f51540a6b08501653066fb99834ac8271f3003a777a0f33bdde24f7ecc0732ba"
+      },
+      {
+        "path": "validation_samples/v032_dash_0211_layout.json",
+        "size": 5552,
+        "sha256": "52f01bacb2d36d4098170b0128c0e65a2ff937a63c9fe811f9527ebc666f4581"
+      },
+      {
+        "path": "validation_samples/v032_layout_metrics.json",
+        "size": 35116,
+        "sha256": "67f535e702e42cd34c054517e152f8369a72382bb0ac790c94119ba61f84cd42"
+      },
+      {
+        "path": "validation_samples/v032_overlap_0188_final_preview.jpg",
+        "size": 839744,
+        "sha256": "193238648d65169f3c8709cc0acfaa635800fa8752ed6d0c28b0d9d38c0c1474"
+      },
+      {
+        "path": "validation_samples/v032_overlap_0188_layout.json",
+        "size": 9703,
+        "sha256": "2be0c5696cea02f372ddcb4b5d2158623416a8582e1ad8aa9c0cbb32f2969f81"
+      }
+    ]
+  },
+  "assets": [
+    {
+      "path": "models/comictextdetector.pt",
+      "sha256": "1f90fa60aeeb1eb82e2ac1167a66bf139a8a61b8780acd351ead55268540cccb",
+      "size": 79948869
+    },
+    {
+      "path": "fonts/Iansui-Regular.ttf",
+      "sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+      "size": 9447424
+    },
+    {
+      "path": "fonts/NotoSansCJKtc-Regular.otf",
+      "sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4",
+      "size": 16435884
+    }
+  ],
+  "python": {
+    "implementation": "CPython",
+    "version": "3.12.10"
+  },
+  "tests": {
+    "unit": {
+      "command": "PYTHONPATH=src python -m pytest -q",
+      "legacy_count": 67,
+      "legacy_tests": [
+        "tests/test_cli.py::test_run_command_reports_ocr_initialization_failure_as_single_cli_error",
+        "tests/test_config.py::test_api_key_can_come_from_environment",
+        "tests/test_config.py::test_config_paths_are_relative_to_yaml",
+        "tests/test_ctd_db_utils.py::test_polygon_offset_works_without_optional_pyclipper",
+        "tests/test_detector.py::test_conservative_mask_rejects_refined_pixels_without_raw_support",
+        "tests/test_detector.py::test_empty_refined_mask_does_not_fall_back_to_region_rectangle",
+        "tests/test_detector.py::test_group_masks_are_local_and_preserve_pixel_mask",
+        "tests/test_detector.py::test_huge_container_does_not_group_separate_real_regions",
+        "tests/test_detector.py::test_mask_fallback_does_not_duplicate_covered_detector_box",
+        "tests/test_detector.py::test_mask_fallback_recovers_unboxed_text_like_cluster",
+        "tests/test_image_io.py::test_unicode_path_roundtrip",
+        "tests/test_inpainter.py::test_bbox_fallback_is_available_only_when_explicitly_enabled",
+        "tests/test_inpainter.py::test_flat_background_refinement_removes_antialiased_text_edges_only",
+        "tests/test_inpainter.py::test_only_successfully_translated_local_mask_is_erased",
+        "tests/test_inpainter.py::test_zero_group_mask_preserves_original_by_default",
+        "tests/test_manga_ocr_runtime.py::test_ocr_initialization_failure_is_cached_not_retried_per_region",
+        "tests/test_manga_ocr_runtime.py::test_ocr_model_initializes_only_once",
+        "tests/test_manga_ocr_runtime.py::test_post_process_normalizes_spacing_width_and_ellipsis",
+        "tests/test_manga_ocr_runtime.py::test_runtime_uses_explicit_vit_processor_and_japanese_tokenizer",
+        "tests/test_ocr.py::test_adaptive_mode_compares_mask_even_when_raw_text_looks_valid",
+        "tests/test_ocr.py::test_crop_group_mask_supports_local_masks_and_padding",
+        "tests/test_ocr.py::test_crop_region_mask_does_not_allocate_a_full_page",
+        "tests/test_ocr.py::test_fallback_ocr_requires_multiple_japanese_chars_and_candidate_agreement",
+        "tests/test_ocr.py::test_japanese_text_scores_higher_than_noise",
+        "tests/test_ocr.py::test_region_combiner_dedupes_overlapping_detector_passes",
+        "tests/test_ocr.py::test_region_combiner_keeps_legitimate_repeated_adjacent_lines",
+        "tests/test_ocr.py::test_region_combiner_treats_whole_sentence_and_column_fragments_as_alternatives",
+        "tests/test_ocr.py::test_sanitize_ocr_removes_control_and_replacement_chars",
+        "tests/test_ocr.py::test_select_best_candidate_prefers_more_complete_agreeing_text",
+        "tests/test_pipeline.py::test_auto_reading_order_is_not_reordered_before_translation",
+        "tests/test_pipeline.py::test_batch_aborts_once_when_ocr_runtime_cannot_initialize",
+        "tests/test_pipeline.py::test_fuzzy_overlap_dedupes_same_dialogue_with_one_ocr_error",
+        "tests/test_pipeline.py::test_geometry_collision_blocks_two_different_translations_at_same_position",
+        "tests/test_pipeline.py::test_image_pages_use_natural_sort",
+        "tests/test_pipeline.py::test_large_empty_container_does_not_swallow_small_real_bubbles",
+        "tests/test_pipeline.py::test_mask_containment_blocks_nested_column_even_with_tiny_area_ratio",
+        "tests/test_pipeline.py::test_mask_iou_uses_local_overlap",
+        "tests/test_pipeline.py::test_merged_group_mask_stays_local_not_page_sized",
+        "tests/test_pipeline.py::test_planned_text_block_collision_detects_glyph_sized_overlap",
+        "tests/test_pipeline.py::test_separate_repeated_short_lines_are_not_deduped",
+        "tests/test_pipeline.py::test_translation_stage_catches_strong_overlap_duplicate",
+        "tests/test_translator.py::test_context_prompt_only_requests_the_target_id",
+        "tests/test_translator.py::test_parse_json_response_by_stable_ids",
+        "tests/test_translator.py::test_parse_numbered_lines_without_copying_labels",
+        "tests/test_translator.py::test_sanitizer_collapses_accidental_long_adjacent_duplicate",
+        "tests/test_translator.py::test_sanitizer_keeps_short_expressive_or_source_repetition",
+        "tests/test_translator.py::test_sanitizer_preserves_real_semantic_dash_from_source",
+        "tests/test_translator.py::test_sanitizer_removes_long_sound_mark_mistranslated_as_dashes",
+        "tests/test_translator.py::test_sanitizer_removes_model_separators_and_source_absent_ellipsis",
+        "tests/test_translator.py::test_sanitizer_repairs_common_mojibake_and_duplicate_lines",
+        "tests/test_translator.py::test_single_item_repair_accepts_dict_even_when_model_reuses_original_id",
+        "tests/test_translator.py::test_validation_accepts_normal_traditional_chinese",
+        "tests/test_translator.py::test_validation_rejects_empty_copied_japanese_and_garble",
+        "tests/test_translator.py::test_validation_rejects_implausibly_long_output",
+        "tests/test_typesetter.py::test_detector_font_hint_caps_short_translation_growth",
+        "tests/test_typesetter.py::test_group_mask_uses_real_pixels_not_region_rectangle",
+        "tests/test_typesetter.py::test_horizontal_layout_uses_tracking_to_fill_shorter_translation",
+        "tests/test_typesetter.py::test_layout_bbox_is_tight_around_original_text_pixels",
+        "tests/test_typesetter.py::test_layout_plan_block_bbox_uses_global_coordinates",
+        "tests/test_typesetter.py::test_layout_rejects_instead_of_shrinking_to_tiny_text",
+        "tests/test_typesetter.py::test_mask_projection_rejects_extreme_detector_font_hint",
+        "tests/test_typesetter.py::test_missing_glyph_is_not_mistaken_for_font_notdef_box",
+        "tests/test_typesetter.py::test_patch_composition_only_changes_target_roi",
+        "tests/test_typesetter.py::test_preserve_layout_keeps_near_original_font_and_reuses_original_extent",
+        "tests/test_typesetter.py::test_render_sanitizes_replacement_and_private_use_characters",
+        "tests/test_typesetter.py::test_render_with_unsupported_glyph_does_not_crash_or_emit_empty_layer",
+        "tests/test_typesetter.py::test_unsupported_character_uses_visible_replacement"
+      ]
+    },
+    "model_integration": {
+      "command": "PYTHONPATH=src python -m pytest -q -m model_integration",
+      "default": "opt_in"
+    },
+    "api_integration": {
+      "command": "PYTHONPATH=src python -m pytest -q -m api_integration",
+      "default": "opt_in"
+    }
+  },
+  "layout_fixtures": [
+    {
+      "path": "validation_samples/v032_caption_3_layout.json",
+      "sha256": "7bf409b91272243185a930effa0352332db982c82327c50941951064d4384a25",
+      "size": 5899,
+      "groups": 7
+    },
+    {
+      "path": "validation_samples/v032_caption_4_layout.json",
+      "sha256": "a6834bc9ac207ab2cab6fc47b793945c96c525315d7efa3643810a0917363627",
+      "size": 5363,
+      "groups": 6
+    },
+    {
+      "path": "validation_samples/v032_caption_5_layout.json",
+      "sha256": "80deb2d3e1a4b4bb50e741dcfaa153711830b9f37519e1ffc609744fab9581be",
+      "size": 6228,
+      "groups": 7
+    },
+    {
+      "path": "validation_samples/v032_dash_0211_layout.json",
+      "sha256": "52f01bacb2d36d4098170b0128c0e65a2ff937a63c9fe811f9527ebc666f4581",
+      "size": 5552,
+      "groups": 7
+    },
+    {
+      "path": "validation_samples/v032_overlap_0188_layout.json",
+      "sha256": "2be0c5696cea02f372ddcb4b5d2158623416a8582e1ad8aa9c0cbb32f2969f81",
+      "size": 9703,
+      "groups": 11
+    }
+  ],
+  "layout_fixture_group_count": 38,
+  "fingerprint_exclusions": {
+    "directories": [
+      ".git",
+      ".mypy_cache",
+      ".pytest_cache",
+      ".ruff_cache",
+      ".tox",
+      ".venv",
+      "__pycache__",
+      "build",
+      "dist",
+      "env",
+      "htmlcov",
+      "input",
+      "output",
+      "venv"
+    ],
+    "file_names": [
+      ".coverage"
+    ],
+    "suffixes": [
+      ".bak",
+      ".log",
+      ".pyc",
+      ".pyo",
+      ".swp",
+      ".temp",
+      ".tmp",
+      ".whl",
+      ".zip"
+    ],
+    "self": "benchmarks/baseline/v0.3.2/manifest.json"
+  }
+}

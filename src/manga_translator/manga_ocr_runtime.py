@@ -39,8 +39,8 @@ class MangaOcrRuntime:
             import torch
             from transformers import (
                 AutoTokenizer,
-                ViTImageProcessor,
                 VisionEncoderDecoderModel,
+                ViTImageProcessor,
             )
             try:
                 from transformers import GenerationMixin
@@ -112,7 +112,7 @@ class MangaOcrRuntime:
         elif isinstance(img_or_path, Image.Image):
             image = img_or_path.convert("L").convert("RGB")
         else:
-            raise ValueError(
+            raise TypeError(
                 "img_or_path 必須是圖片路徑或 PIL.Image，"
                 f"實際收到：{type(img_or_path).__name__}"
             )
@@ -146,9 +146,9 @@ def check_runtime_dependencies() -> dict[str, str]:
 
     versions: dict[str, str] = {}
     try:
+        import fugashi
         import torch
         import transformers
-        import fugashi
         import unidic_lite
     except Exception as error:
         raise RuntimeError(

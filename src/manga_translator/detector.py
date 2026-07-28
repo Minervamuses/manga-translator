@@ -352,10 +352,10 @@ def _merge_bbox(regions: list[TextRegion]) -> tuple[int, int, int, int]:
 def _estimate_char_size(regions: list[TextRegion], img_h: int, img_w: int) -> int:
     hints = [r.font_size_hint for r in regions if 4 <= r.font_size_hint <= 256]
     if hints:
-        return max(6, int(round(float(np.median(hints)))))
+        return max(6, round(float(np.median(hints))))
 
     # 沒有可靠提示時，以頁面短邊的約 1.8% 作為漫畫字級估計。
-    return max(8, int(round(min(img_h, img_w) * 0.018)))
+    return max(8, round(min(img_h, img_w) * 0.018))
 
 
 def _component_boxes(binary: np.ndarray, min_area: int) -> list[tuple[int, int, int, int, int]]:
@@ -484,9 +484,9 @@ def _extract_mask_fallback_regions(
         return []
 
     char_size = _estimate_char_size(existing_regions, img_h, img_w)
-    cross = max(3, int(round(char_size * 0.32)))
+    cross = max(3, round(char_size * 0.32))
     # 日漫美術字、小假名與描邊字的字間距可能比一般內文字體大。
-    along = max(7, int(round(char_size * 1.9)))
+    along = max(7, round(char_size * 1.9))
 
     kernels: list[tuple[np.ndarray, bool | None]] = [
         (cv2.getStructuringElement(cv2.MORPH_RECT, (along, cross)), False),
@@ -495,8 +495,8 @@ def _extract_mask_fallback_regions(
             cv2.getStructuringElement(
                 cv2.MORPH_RECT,
                 (
-                    max(3, int(round(char_size * 0.75))),
-                    max(3, int(round(char_size * 0.75))),
+                    max(3, round(char_size * 0.75)),
+                    max(3, round(char_size * 0.75)),
                 ),
             ),
             None,
@@ -585,9 +585,7 @@ def _should_group(a: TextRegion, b: TextRegion, cfg: PostprocessConfig) -> bool:
                 return False
 
         # 方向不同而大小又明顯不一致時，多半是外框／畫面雜訊，不應先合併。
-        if a.vertical != b.vertical and area_ratio < 0.55:
-            return False
-        return True
+        return not (a.vertical != b.vertical and area_ratio < 0.55)
 
     if a.vertical != b.vertical:
         return False
@@ -758,7 +756,7 @@ def postprocess_regions(
     refined_mask: np.ndarray | None = None,
 ) -> tuple[list[TextRegion], list[TextGroup]]:
     """候選框後處理：過濾、mask 綁定、候選重複標記與群組。"""
-    img_h, img_w = image_shape
+    _img_h, _img_w = image_shape
     filtered: list[TextRegion] = []
     for region in regions:
         if region.area < cfg.min_region_area:

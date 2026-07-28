@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 
+from manga_translator import ocr as ocr_module
 from manga_translator.config import OCRConfig
 from manga_translator.detector import TextGroup, TextRegion
-from manga_translator import ocr as ocr_module
 from manga_translator.ocr import (
     OCRCandidate,
     OCRResult,
@@ -91,7 +91,7 @@ def test_region_combiner_dedupes_overlapping_detector_passes() -> None:
         [(first, candidate("大丈夫？")), (second, candidate("大丈夫?"))]
     )
     assert combined is not None
-    assert normalize_ocr_text(combined.text, weak=True) in {"大丈夫", "大丈夫"}
+    assert normalize_ocr_text(combined.text, weak=True) in {"大丈夫"}
     assert combined.text.count("大丈夫") == 1
 
 

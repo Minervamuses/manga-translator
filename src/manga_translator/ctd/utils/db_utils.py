@@ -6,10 +6,12 @@ try:
 except ImportError:  # Optional acceleration; Shapely provides the fallback.
     pyclipper = None
 
-from shapely.geometry import Polygon
-from collections import namedtuple
-import torch
 import warnings
+from collections import namedtuple
+
+import torch
+from shapely.geometry import Polygon
+
 warnings.filterwarnings('ignore')
 
 
@@ -79,7 +81,7 @@ def iou_rotate(box_a, box_b, method='union'):
             raise NotImplementedError
         return iou
 
-class SegDetectorRepresenter():
+class SegDetectorRepresenter:
     def __init__(self, thresh=0.3, box_thresh=0.7, max_candidates=1000, unclip_ratio=1.5):
         self.min_size = 3
         self.thresh = thresh
@@ -230,7 +232,7 @@ class SegDetectorRepresenter():
 
     def get_mini_boxes(self, contour):
         bounding_box = cv2.minAreaRect(contour)
-        points = sorted(list(cv2.boxPoints(bounding_box)), key=lambda x: x[0])
+        points = sorted(cv2.boxPoints(bounding_box), key=lambda x: x[0])
 
         index_1, index_2, index_3, index_4 = 0, 1, 2, 3
         if points[1][1] > points[0][1]:
@@ -265,7 +267,7 @@ class SegDetectorRepresenter():
             bitmap = bitmap.astype(np.float32)
         return cv2.mean(bitmap[ymin:ymax + 1, xmin:xmax + 1], mask)[0]
 
-class AverageMeter(object):
+class AverageMeter:
     """Computes and stores the average and current value"""
 
     def __init__(self):
@@ -285,7 +287,7 @@ class AverageMeter(object):
         return self
 
 
-class DetectionIoUEvaluator(object):
+class DetectionIoUEvaluator:
     def __init__(self, is_output_polygon=False, iou_constraint=0.5, area_precision_constraint=0.5):
         self.is_output_polygon = is_output_polygon
         self.iou_constraint = iou_constraint
@@ -326,13 +328,11 @@ class DetectionIoUEvaluator(object):
 
         matchedSum = 0
 
-        Rectangle = namedtuple('Rectangle', 'xmin ymin xmax ymax')
+        namedtuple('Rectangle', 'xmin ymin xmax ymax')
 
         numGlobalCareGt = 0
         numGlobalCareDet = 0
 
-        arrGlobalConfidences = []
-        arrGlobalMatches = []
 
         recall = 0
         precision = 0
@@ -356,8 +356,6 @@ class DetectionIoUEvaluator(object):
         pairs = []
         detMatchedNums = []
 
-        arrSampleConfidences = []
-        arrSampleMatch = []
 
         evaluationLog = ""
 
@@ -421,16 +419,20 @@ class DetectionIoUEvaluator(object):
                         iouMat[gtNum, detNum] = iou_rotate(pD, pG)
             for gtNum in range(len(gtPols)):
                 for detNum in range(len(detPols)):
-                    if gtRectMat[gtNum] == 0 and detRectMat[
-                        detNum] == 0 and gtNum not in gtDontCarePolsNum and detNum not in detDontCarePolsNum:
-                        if iouMat[gtNum, detNum] > self.iou_constraint:
-                            gtRectMat[gtNum] = 1
-                            detRectMat[detNum] = 1
-                            detMatched += 1
-                            pairs.append({'gt': gtNum, 'det': detNum})
-                            detMatchedNums.append(detNum)
-                            evaluationLog += "Match GT #" + \
-                                             str(gtNum) + " with Det #" + str(detNum) + "\n"
+                    if (
+                        gtRectMat[gtNum] == 0
+                        and detRectMat[detNum] == 0
+                        and gtNum not in gtDontCarePolsNum
+                        and detNum not in detDontCarePolsNum
+                        and iouMat[gtNum, detNum] > self.iou_constraint
+                    ):
+                        gtRectMat[gtNum] = 1
+                        detRectMat[detNum] = 1
+                        detMatched += 1
+                        pairs.append({'gt': gtNum, 'det': detNum})
+                        detMatchedNums.append(detNum)
+                        evaluationLog += "Match GT #" + \
+                                         str(gtNum) + " with Det #" + str(detNum) + "\n"
 
         numGtCare = (len(gtPols) - len(gtDontCarePolsNum))
         numDetCare = (len(detPols) - len(detDontCarePolsNum))
@@ -489,7 +491,7 @@ class DetectionIoUEvaluator(object):
 
         return methodMetrics
 
-class QuadMetric():
+class QuadMetric:
     def __init__(self, is_output_polygon=False):
         self.is_output_polygon = is_output_polygon
         self.evaluator = DetectionIoUEvaluator(is_output_polygon=is_output_polygon)
@@ -511,16 +513,16 @@ class QuadMetric():
         pred_polygons_batch = np.array(output[0])
         pred_scores_batch = np.array(output[1])
         for polygons, pred_polygons, pred_scores, ignore_tags in zip(gt_polyons_batch, pred_polygons_batch, pred_scores_batch, ignore_tags_batch):
-            gt = [dict(points=np.int64(polygons[i]), ignore=ignore_tags[i]) for i in range(len(polygons))]
+            gt = [{'points': np.int64(polygons[i]), 'ignore': ignore_tags[i]} for i in range(len(polygons))]
             if self.is_output_polygon:
-                pred = [dict(points=pred_polygons[i]) for i in range(len(pred_polygons))]
+                pred = [{'points': pred_polygons[i]} for i in range(len(pred_polygons))]
             else:
                 pred = []
                 # print(pred_polygons.shape)
                 for i in range(pred_polygons.shape[0]):
                     if pred_scores[i] >= box_thresh:
                         # print(pred_polygons[i,:,:].tolist())
-                        pred.append(dict(points=pred_polygons[i, :, :].astype(np.int64)))
+                        pred.append({'points': pred_polygons[i, :, :].astype(np.int64)})
                 # pred = [dict(points=pred_polygons[i,:,:].tolist()) if pred_scores[i] >= box_thresh for i in range(pred_polygons.shape[0])]
             results.append(self.evaluator.evaluate_image(gt, pred))
         return results
@@ -571,7 +573,7 @@ def shrink_polygon_pyclipper(polygon, shrink_ratio):
     distance = polygon_shape.area * (1 - np.power(shrink_ratio, 2)) / polygon_shape.length
     return _offset_polygon(polygon, -distance)
 
-class MakeShrinkMap():
+class MakeShrinkMap:
     r'''
     Making binary mask from detection data with ICDAR format.
     Typically following the process of class `MakeICDARData`.
@@ -639,7 +641,7 @@ class MakeShrinkMap():
         return cv2.contourArea(polygon)
 
 
-class MakeBorderMap():
+class MakeBorderMap:
     def __init__(self, shrink_ratio=0.4, thresh_min=0.3, thresh_max=0.7):
         self.shrink_ratio = shrink_ratio
         self.thresh_min = thresh_min
@@ -722,7 +724,7 @@ class MakeBorderMap():
         xs: coordinates in the second axis
         point_1, point_2: (x, y), the end of the line
         '''
-        height, width = xs.shape[:2]
+        _height, _width = xs.shape[:2]
         square_distance_1 = np.square(xs - point_1[0]) + np.square(ys - point_1[1])
         square_distance_2 = np.square(xs - point_2[0]) + np.square(ys - point_2[1])
         square_distance = np.square(point_1[0] - point_2[0]) + np.square(point_1[1] - point_2[1])
@@ -736,10 +738,10 @@ class MakeBorderMap():
         return result
 
     def extend_line(self, point_1, point_2, result):
-        ex_point_1 = (int(round(point_1[0] + (point_1[0] - point_2[0]) * (1 + self.shrink_ratio))),
-                      int(round(point_1[1] + (point_1[1] - point_2[1]) * (1 + self.shrink_ratio))))
+        ex_point_1 = (round(point_1[0] + (point_1[0] - point_2[0]) * (1 + self.shrink_ratio)),
+                      round(point_1[1] + (point_1[1] - point_2[1]) * (1 + self.shrink_ratio)))
         cv2.line(result, tuple(ex_point_1), tuple(point_1), 4096.0, 1, lineType=cv2.LINE_AA, shift=0)
-        ex_point_2 = (int(round(point_2[0] + (point_2[0] - point_1[0]) * (1 + self.shrink_ratio))),
-                      int(round(point_2[1] + (point_2[1] - point_1[1]) * (1 + self.shrink_ratio))))
+        ex_point_2 = (round(point_2[0] + (point_2[0] - point_1[0]) * (1 + self.shrink_ratio)),
+                      round(point_2[1] + (point_2[1] - point_1[1]) * (1 + self.shrink_ratio)))
         cv2.line(result, tuple(ex_point_2), tuple(point_2), 4096.0, 1, lineType=cv2.LINE_AA, shift=0)
         return ex_point_1, ex_point_2

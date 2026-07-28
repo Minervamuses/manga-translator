@@ -1,11 +1,13 @@
 import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import time
+
 import cv2
 import numpy as np
-import time
+import torch
+import torch.nn.functional as F
 from packaging.version import Version
+from torch import nn
+
 
 def scale_img(img, ratio=1.0, same_shape=False, gs=32):  # img(16,3,256,416)
     # scales img(bs,3,y,x) by ratio constrained to gs-multiple
@@ -175,7 +177,7 @@ def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=Non
     assert 0 <= iou_thres <= 1, f'Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0'
 
     # Settings
-    min_wh, max_wh = 2, 4096  # (pixels) minimum and maximum box width and height
+    _min_wh, max_wh = 2, 4096  # (pixels) minimum and maximum box width and height
     max_nms = 30000  # maximum number of boxes into torchvision.ops.nms()
     time_limit = 10.0  # seconds to quit after
     redundant = True  # require redundant detections
@@ -273,6 +275,6 @@ def draw_bbox(pred, img, lang_list=None):
         p1, p2 = (obj[0], obj[1]), (obj[2], obj[3])
         label = lang_list[obj[-1]] + str(ii+1)
         cv2.rectangle(img, p1, p2, colors(obj[-1], bgr=True), lw, lineType=cv2.LINE_AA)
-        t_w, t_h = cv2.getTextSize(label, 0, fontScale=lw / 3, thickness=lw)[0]
+        _t_w, t_h = cv2.getTextSize(label, 0, fontScale=lw / 3, thickness=lw)[0]
         cv2.putText(img, label, (p1[0], p1[1] + t_h + 2), 0, lw / 3, colors(obj[-1], bgr=True), max(lw-1, 1), cv2.LINE_AA)
     return img

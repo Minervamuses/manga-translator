@@ -442,9 +442,7 @@ def _are_translation_duplicates(
 
     # 「嗯」「啊」等短句很常在相鄰氣泡合法重複，還要有來源文字相似訊號。
     compact = normalize_ocr_text(left, weak=True)
-    if len(compact) <= 2 and _text_similarity(a.ocr_text_norm, b.ocr_text_norm) < 0.78:
-        return False
-    return True
+    return not (len(compact) <= 2 and _text_similarity(a.ocr_text_norm, b.ocr_text_norm) < 0.78)
 
 
 def _merge_translation_duplicates(
@@ -813,7 +811,7 @@ def _translate_groups(
 
     try:
         translations = _request_translations(translatable, config, glossary)
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - page boundary must preserve source on failure
         console.print(f"[red]本頁翻譯失敗，保留原文：{error}[/]")
         for group in translatable:
             group.status = "translation_failed"
@@ -934,7 +932,7 @@ def process_single_page(
             group.skip_reason = "" if accepted else reason
         except OCRInitializationError:
             raise
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - isolate OCR failure to this region
             group.ocr_text = ""
             group.ocr_text_norm = ""
             group.ocr_confidence = 0.0
@@ -1093,7 +1091,7 @@ def run_pipeline(
                 total_regions += len(regions)
                 if not write_image(output_path, result_img):
                     raise OSError(f"無法寫入圖片：{output_path}")
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - batch boundary preserves failed pages
                 failed_pages += 1
                 console.print(f"[red]處理 {image_path.name} 時出錯：{error}[/]")
                 original = read_image(image_path)

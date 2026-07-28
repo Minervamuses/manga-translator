@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import math
 import unicodedata
 from dataclasses import dataclass, field
@@ -140,7 +141,7 @@ def normalize_ocr_text(text: str, weak: bool = False) -> str:
     chars: list[str] = []
     for char in normalized:
         category = unicodedata.category(char)
-        if category.startswith("P") or category.startswith("Z"):
+        if category.startswith(("P", "Z")):
             continue
         # 裝飾符號不影響是否為同一句，但保留日文長音符號與迭字符。
         if category.startswith("S") and char not in {"々", "〆", "ヶ", "ー"}:
@@ -168,7 +169,7 @@ def _max_run_length(text: str) -> int:
     if not text:
         return 0
     longest = current = 1
-    for previous, current_char in zip(text, text[1:]):
+    for previous, current_char in itertools.pairwise(text):
         if current_char == previous:
             current += 1
             longest = max(longest, current)
@@ -366,7 +367,7 @@ def _expanded_bbox(
 ) -> tuple[int, int, int, int]:
     x, y, w, h = bbox
     image_h, image_w = image_shape
-    pad = max(cfg.crop_padding_min_px, int(round(max(w, h) * cfg.crop_padding_ratio)))
+    pad = max(cfg.crop_padding_min_px, round(max(w, h) * cfg.crop_padding_ratio))
     x1 = max(0, x - pad)
     y1 = max(0, y - pad)
     x2 = min(image_w, x + w + pad)
@@ -436,8 +437,8 @@ def _upscale_for_ocr(image: np.ndarray, cfg: OCRConfig) -> np.ndarray:
     factor = min(cfg.upscale_max_factor, max(1.0, cfg.upscale_min_side / min_side))
     if factor <= 1.02:
         return image
-    new_w = max(1, int(round(w * factor)))
-    new_h = max(1, int(round(h * factor)))
+    new_w = max(1, round(w * factor))
+    new_h = max(1, round(h * factor))
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
 
 

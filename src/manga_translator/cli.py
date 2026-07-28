@@ -26,7 +26,6 @@ console = Console()
 @click.group()
 def cli():
     """manga-translator: 日漫翻譯工具"""
-    pass
 
 
 def _apply_runtime_overrides(
@@ -228,7 +227,7 @@ def doctor(config: str, strict_api_key: bool):
     try:
         cfg = AppConfig.from_yaml(config)
         ok(f"設定檔可讀取：{Path(config).resolve()}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - doctor reports every configuration failure
         fail(f"設定檔無法載入：{e}")
         raise click.exceptions.Exit(1)
 
@@ -236,7 +235,7 @@ def doctor(config: str, strict_api_key: bool):
         import cv2  # noqa: F401
 
         ok("OpenCV (cv2) 可用")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - doctor converts import failures to diagnostics
         fail(f"OpenCV (cv2) 不可用：{e}")
 
     try:
@@ -247,21 +246,21 @@ def doctor(config: str, strict_api_key: bool):
             "OCR 執行元件可用："
             f"Transformers {versions['transformers']} / Torch {versions['torch']}"
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - runtime health checks may expose backend failures
         fail(f"OCR 執行元件不可用：{e}")
 
     try:
         import shapely  # noqa: F401
 
         ok("Shapely 幾何後處理套件可用")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - doctor converts import failures to diagnostics
         fail(f"Shapely 不可用（文字偵測器需要）：{e}")
 
     try:
         import pyclipper  # noqa: F401
 
         ok("pyclipper polygon offset 加速可用")
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional accelerator failure is non-fatal
         warn("pyclipper 不可用；會自動改用 Shapely，功能正常但幾何後處理稍慢")
 
     cfg.paths.input_dir.mkdir(parents=True, exist_ok=True)
@@ -286,7 +285,7 @@ def doctor(config: str, strict_api_key: bool):
                 ok(f"字典可讀取：{glossary_path}（{len(entries)} 筆）")
             else:
                 fail(f"字典格式錯誤：{glossary_path}（預期為 JSON object）")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - malformed glossary is a doctor diagnostic
             fail(f"字典讀取失敗：{glossary_path}（{e}）")
     else:
         warn(f"字典不存在：{glossary_path}（可選）")
@@ -298,7 +297,7 @@ def doctor(config: str, strict_api_key: bool):
 
             ImageFont.truetype(str(font_path), 24)
             ok(f"字體可用：{font_path}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Pillow can surface backend-specific errors
             fail(f"字體無法載入：{font_path}（{e}）")
     else:
         fail(
@@ -313,7 +312,7 @@ def doctor(config: str, strict_api_key: bool):
 
             ImageFont.truetype(str(fallback_font), 24)
             ok(f"fallback 字體可用：{fallback_font}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - Pillow can surface backend-specific errors
             fail(f"fallback 字體無法載入：{fallback_font}（{e}）")
     else:
         warn(f"fallback 字體不存在：{fallback_font}（將無法缺字替補）")

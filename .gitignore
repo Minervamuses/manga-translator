@@ -6,8 +6,18 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.tox/
 .coverage
 htmlcov/
+build/
+dist/
+*.whl
+*.zip
+*.tmp
+*.temp
+*.bak
+*.swp
+*.log
 
 # Virtual environments / local env files
 .venv/

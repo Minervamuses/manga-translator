@@ -1,14 +1,13 @@
-import torch
-import cv2
-import numpy as np
-from .models.yolov5.yolo import Model, load_yolov5_ckpt
-from .utils.yolov5_utils import fuse_conv_and_bn
-import glob
-import torch.nn as nn
-from .utils.weight_init import init_weights
-from .models.yolov5.common import C3, Conv
-import torch.nn.functional as F
 import copy
+
+import cv2
+import torch
+from torch import nn
+
+from .models.yolov5.common import C3, Conv
+from .models.yolov5.yolo import load_yolov5_ckpt
+from .utils.weight_init import init_weights
+from .utils.yolov5_utils import fuse_conv_and_bn
 
 CUDA = torch.cuda.is_available()
 DEVICE = "cuda" if CUDA else "cpu"
@@ -19,7 +18,7 @@ TEXTDET_INFERENCE = 2
 
 class double_conv_up_c3(nn.Module):
     def __init__(self, in_ch, mid_ch, out_ch, act=True):
-        super(double_conv_up_c3, self).__init__()
+        super().__init__()
         self.conv = nn.Sequential(
         C3(in_ch+mid_ch, mid_ch, act=act),
         nn.ConvTranspose2d(mid_ch, out_ch, kernel_size=4, stride = 2, padding=1, bias=False),
@@ -32,7 +31,7 @@ class double_conv_up_c3(nn.Module):
 
 class double_conv_c3(nn.Module):
     def __init__(self, in_ch, out_ch, stride=1, act=True):
-        super(double_conv_c3, self).__init__()
+        super().__init__()
         if stride > 1 :
             self.down = nn.AvgPool2d(2,stride=2) if stride > 1 else None
         self.conv = C3(in_ch, out_ch, act=act)
@@ -46,7 +45,7 @@ class double_conv_c3(nn.Module):
 class UnetHead(nn.Module):
     def __init__(self, act=True) -> None:
 
-        super(UnetHead, self).__init__()
+        super().__init__()
         self.down_conv1 = double_conv_c3(512, 512, 2, act=act)
         self.upconv0 = double_conv_up_c3(0, 512, 256, act=act)
         self.upconv2 = double_conv_up_c3(256, 512, 256, act=act)
@@ -160,7 +159,7 @@ class DBHead(nn.Module):
 
 class TextDetector(nn.Module):
     def __init__(self, weights, map_location='cpu', forward_mode=TEXTDET_MASK, act=True):
-        super(TextDetector, self).__init__()
+        super().__init__()
 
         yolov5s_backbone = load_yolov5_ckpt(weights=weights, map_location=map_location)
         yolov5s_backbone.eval()
@@ -220,7 +219,7 @@ def get_base_det_models(model_path, device='cpu', half=False, act='leaky'):
 
 class TextDetBase(nn.Module):
     def __init__(self, model_path, device='cpu', half=False, fuse=False, act='leaky'):
-        super(TextDetBase, self).__init__()
+        super().__init__()
         self.blk_det, self.text_seg, self.text_det = get_base_det_models(model_path, device, half, act=act)
         if fuse:
             self.fuse()

@@ -151,7 +151,7 @@ def test_geometry_collision_blocks_two_different_translations_at_same_position()
         ),
     }
 
-    resolved = _resolve_render_collisions(
+    _resolve_render_collisions(
         [primary, fallback],
         regions,
         PostprocessConfig(),
@@ -165,6 +165,7 @@ def test_geometry_collision_blocks_two_different_translations_at_same_position()
 def test_batch_aborts_once_when_ocr_runtime_cannot_initialize(tmp_path, monkeypatch) -> None:
     import cv2
     import pytest
+
     from manga_translator import pipeline as pipeline_module
     from manga_translator.ocr import OCRInitializationError
 
@@ -238,7 +239,7 @@ def test_mask_containment_blocks_nested_column_even_with_tiny_area_ratio() -> No
         ),
     }
 
-    resolved = _resolve_render_collisions([outer, inner], regions, PostprocessConfig())
+    _resolve_render_collisions([outer, inner], regions, PostprocessConfig())
 
     assert outer.translation_valid
     assert not inner.translation_valid

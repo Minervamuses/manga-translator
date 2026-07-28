@@ -180,7 +180,7 @@ def _refine_flat_text_edge_mask(
     base_count = int(np.count_nonzero(mask))
     max_total = max(
         base_count,
-        int(round(base_count * cfg.hybrid_flat_edge_max_growth)),
+        round(base_count * cfg.hybrid_flat_edge_max_growth),
     )
     allowed_extra = max(0, max_total - base_count)
     candidate_count = int(np.count_nonzero(candidates))

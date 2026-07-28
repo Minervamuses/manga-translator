@@ -1,9 +1,8 @@
-from os import stat
-from typing import List
 import cv2
 import numpy as np
+
+from .imgproc_utils import expand_textwindow, union_area
 from .textblock import TextBlock
-from .imgproc_utils import draw_connected_labels, expand_textwindow, union_area
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -40,7 +39,7 @@ def minxor_thresh(threshed, mask, dilate=False):
     else:
         return threshed, xor_sum
 
-def get_otsuthresh_masklist(img, pred_mask, per_channel=False) -> List[np.ndarray]:
+def get_otsuthresh_masklist(img, pred_mask, per_channel=False) -> list[np.ndarray]:
     channels = [img[..., 0], img[..., 1], img[..., 2]]
     mask_list = []
     for c in channels:
@@ -61,7 +60,7 @@ def get_topk_masklist(im_grey, pred_mask):
     bin, his = np.histogram(candidate_grey_px, bins=255)
     topk_color = get_topk_color(his, bin, color_var=10, k=3)
     color_range = 30
-    mask_list = list()
+    mask_list = []
     for ii, color in enumerate(topk_color):
         c_top = min(color+color_range, 255)
         c_bottom = c_top - 2 * color_range
@@ -132,23 +131,22 @@ def merge_mask_list(mask_list, pred_mask, blk: TextBlock = None, pred_thresh=30,
     return mask_merged
 
 
-def refine_undetected_mask(img: np.ndarray, mask_pred: np.ndarray, mask_refined: np.ndarray, blk_list: List[TextBlock], refine_mode=REFINEMASK_INPAINT):
+def refine_undetected_mask(img: np.ndarray, mask_pred: np.ndarray, mask_refined: np.ndarray, blk_list: list[TextBlock], refine_mode=REFINEMASK_INPAINT):
     mask_pred[np.where(mask_refined > 30)] = 0
     _, pred_mask_t = cv2.threshold(mask_pred, 30, 255, cv2.THRESH_BINARY)
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(pred_mask_t, 4, cv2.CV_16U)
+    _num_labels, _labels, stats, _centroids = cv2.connectedComponentsWithStats(pred_mask_t, 4, cv2.CV_16U)
     valid_labels = np.where(stats[:, -1] > 50)[0]
     seg_blk_list = []
     if len(valid_labels) > 0:
         for lab_index in valid_labels[1:]:
-            x, y, w, h, area = stats[lab_index]
+            x, y, w, h, _area = stats[lab_index]
             bx1, by1 = x, y
             bx2, by2 = x+w, y+h
             bbox = [bx1, by1, bx2, by2]
             bbox_score = -1
             for blk in blk_list:
                 bbox_s = union_area(blk.xyxy, bbox)
-                if bbox_s > bbox_score:
-                    bbox_score = bbox_s
+                bbox_score = max(bbox_score, bbox_s)
             if bbox_score / w / h < 0.5:
                 seg_blk_list.append(TextBlock(bbox))
     if len(seg_blk_list) > 0:
@@ -156,7 +154,7 @@ def refine_undetected_mask(img: np.ndarray, mask_pred: np.ndarray, mask_refined:
     return mask_refined
 
 
-def refine_mask(img: np.ndarray, pred_mask: np.ndarray, blk_list: List[TextBlock], refine_mode: int = REFINEMASK_INPAINT) -> np.ndarray:
+def refine_mask(img: np.ndarray, pred_mask: np.ndarray, blk_list: list[TextBlock], refine_mode: int = REFINEMASK_INPAINT) -> np.ndarray:
     mask_refined = np.zeros_like(pred_mask)
     for blk in blk_list:
         bx1, by1, bx2, by2 = expand_textwindow(img.shape, blk.xyxy, expand_r=16)

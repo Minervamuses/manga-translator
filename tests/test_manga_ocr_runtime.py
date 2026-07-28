@@ -9,7 +9,11 @@ import pytest
 from PIL import Image
 
 from manga_translator import ocr as ocr_module
-from manga_translator.manga_ocr_runtime import MangaOcrRuntime, _post_process
+from manga_translator.manga_ocr_runtime import (
+    DEFAULT_MODEL_REVISION,
+    MangaOcrRuntime,
+    _post_process,
+)
 from manga_translator.ocr import OCRInitializationError
 
 
@@ -33,8 +37,9 @@ def test_runtime_uses_explicit_vit_processor_and_japanese_tokenizer(monkeypatch)
 
     class FakeProcessor:
         @classmethod
-        def from_pretrained(cls, model_id: str):
+        def from_pretrained(cls, model_id: str, **kwargs):
             calls["processor_model"] = model_id
+            calls["processor_kwargs"] = kwargs
             return cls()
 
         def __call__(self, image, return_tensors: str):
@@ -59,9 +64,10 @@ def test_runtime_uses_explicit_vit_processor_and_japanese_tokenizer(monkeypatch)
 
     class FakeVisionEncoderDecoderModel:
         @classmethod
-        def from_pretrained(cls, model_id: str):
+        def from_pretrained(cls, model_id: str, **kwargs):
             calls["model_class"] = cls
             calls["model_id"] = model_id
+            calls["model_kwargs"] = kwargs
             return cls()
 
         def to(self, device):
@@ -98,17 +104,26 @@ def test_runtime_uses_explicit_vit_processor_and_japanese_tokenizer(monkeypatch)
     result = runtime(Image.fromarray(np.full((8, 8, 3), 255, dtype=np.uint8)))
 
     assert calls["processor_model"] == "example/model"
+    assert calls["processor_kwargs"] == {"revision": DEFAULT_MODEL_REVISION}
     assert calls["tokenizer_model"] == "example/model"
     assert calls["tokenizer_kwargs"] == {
+        "revision": DEFAULT_MODEL_REVISION,
         "tokenizer_type": "bert-japanese",
         "use_fast": False,
     }
+    assert calls["model_kwargs"] == {"revision": DEFAULT_MODEL_REVISION}
     assert issubclass(calls["model_class"], FakeGenerationMixin)
     assert calls["model_device"] == "device:cpu"
     assert calls["tensor_device"] == "device:cpu"
     assert calls["max_length"] == 123
     assert calls["eval"] is True
     assert result == "日本..."
+
+
+@pytest.mark.parametrize("revision", ["", "main", "revision-unpinned", "a" * 39])
+def test_runtime_rejects_moving_or_invalid_revisions(revision: str) -> None:
+    with pytest.raises(ValueError, match="immutable 40-character commit hash"):
+        MangaOcrRuntime(revision=revision)
 
 
 def test_ocr_model_initializes_only_once(monkeypatch) -> None:

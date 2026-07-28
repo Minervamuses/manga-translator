@@ -20,6 +20,8 @@ from typing import Any
 from PIL import Image
 
 DEFAULT_MODEL_ID = "kha-white/manga-ocr-base"
+DEFAULT_MODEL_REVISION = "aa6573bd10b0d446cbf622e29c3e084914df9741"
+IMMUTABLE_REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
 
 
 class MangaOcrRuntime:
@@ -29,10 +31,14 @@ class MangaOcrRuntime:
         self,
         pretrained_model_name_or_path: str | Path = DEFAULT_MODEL_ID,
         *,
+        revision: str = DEFAULT_MODEL_REVISION,
         force_cpu: bool = False,
         max_length: int = 300,
     ) -> None:
         self.model_id = str(pretrained_model_name_or_path)
+        self.revision = str(revision).strip().lower()
+        if IMMUTABLE_REVISION_PATTERN.fullmatch(self.revision) is None:
+            raise ValueError("OCR model revision must be an immutable 40-character commit hash")
         self.max_length = int(max_length)
 
         try:
@@ -64,9 +70,11 @@ class MangaOcrRuntime:
                 {},
             )
 
-        self.processor = ViTImageProcessor.from_pretrained(self.model_id)
+        self.processor = ViTImageProcessor.from_pretrained(
+            self.model_id, revision=self.revision
+        )
         self.tokenizer = self._load_tokenizer(AutoTokenizer)
-        self.model = model_class.from_pretrained(self.model_id)
+        self.model = model_class.from_pretrained(self.model_id, revision=self.revision)
         self.device = self._select_device(force_cpu=force_cpu)
         self.model.to(self.device)
         self.model.eval()
@@ -81,6 +89,7 @@ class MangaOcrRuntime:
         """
 
         kwargs = {
+            "revision": self.revision,
             "tokenizer_type": "bert-japanese",
             "use_fast": False,
         }
@@ -92,7 +101,9 @@ class MangaOcrRuntime:
             # network errors from the user.
             if "tokenizer_type" not in str(error):
                 raise
-            return auto_tokenizer.from_pretrained(self.model_id, use_fast=False)
+            return auto_tokenizer.from_pretrained(
+                self.model_id, revision=self.revision, use_fast=False
+            )
 
     def _select_device(self, *, force_cpu: bool) -> Any:
         torch = self._torch

@@ -24,6 +24,7 @@ from manga_translator.contracts.mapping import (
 from manga_translator.detector import DetectionResult, TextGroup, TextRegion
 from manga_translator.domain.issues import IssueCode, StageName, StageStatus
 from manga_translator.domain.serialization import canonical_document_bytes
+from manga_translator.manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from manga_translator.ocr import OCRCandidate, OCRResult
 from manga_translator.storage import ArtifactStore, JobStore
 from manga_translator.translator import TranslationValidation
@@ -317,6 +318,10 @@ def test_component_stages_resume_without_reloading_models_or_provider(
     assert reconciliation_inputs[-1]["previous_masks"]
     assert reconciliation_inputs[-1]["previous_crop_dhashes"]
     assert all(revision.mask_refs for revision in second_document.region_revisions)
+    assert all(
+        record.model_revision == f"{DEFAULT_MODEL_ID}:{DEFAULT_MODEL_REVISION}"
+        for record in second_document.ocr_records
+    )
     assert len(second_document.translations) == 1
     raw_ref = second_document.translations[0].raw_response_ref
     assert ArtifactStore(state / "artifacts").read_bytes(raw_ref.sha256) == provider_payloads[0]

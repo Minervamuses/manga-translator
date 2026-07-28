@@ -53,6 +53,7 @@ from .image_io import (
     write_image_or_raise,
 )
 from .inpainter import inpaint_regions
+from .manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from .ocr import (
     OCRInitializationError,
     assess_ocr_result,
@@ -2537,7 +2538,7 @@ def _document_from_page_result(
                         revision_id=revision.revision_id,
                         candidates=(candidate,),
                         selected_index=0,
-                        model_revision="kha-white/manga-ocr-base:revision-unpinned",
+                        model_revision=f"{DEFAULT_MODEL_ID}:{DEFAULT_MODEL_REVISION}",
                         preprocess_version="v0.3.2-ensemble.1",
                     )
                 )

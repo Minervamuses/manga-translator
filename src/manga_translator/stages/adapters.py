@@ -11,7 +11,7 @@ from typing import Any
 
 from ..config import AppConfig
 from ..domain.issues import StageName
-from ..manga_ocr_runtime import DEFAULT_MODEL_ID
+from ..manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from .base import (
     ArtifactContract,
     ArtifactSetContract,
@@ -119,7 +119,9 @@ def build_pipeline_stage_specs(
         )
 
     detector_hash = _file_fingerprint(config.detection.model_path)
-    ocr_identity = _identity_fingerprint(f"{DEFAULT_MODEL_ID}:revision-unpinned")
+    ocr_identity = _identity_fingerprint(
+        f"{DEFAULT_MODEL_ID}:{DEFAULT_MODEL_REVISION}"
+    )
     font_hashes = (
         _file_fingerprint(config.paths.font),
         _file_fingerprint(config.paths.font_fallback),

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
 
 from manga_translator.config import AppConfig, OpenRouterConfig, PathsConfig
 from manga_translator.domain.issues import StageName
+from manga_translator.manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from manga_translator.stages.adapters import (
     SOURCE_MEDIA_TYPE,
     build_pipeline_stage_specs,
@@ -64,4 +66,10 @@ def test_pipeline_stage_specs_declare_every_input_and_output_contract(
         .input_contracts[StageName.STYLE]
         .additional_media_types
         == specs[StageName.STYLE].output_contract.additional_media_types
+    )
+    expected_ocr_identity = hashlib.sha256(
+        f"{DEFAULT_MODEL_ID}:{DEFAULT_MODEL_REVISION}".encode()
+    ).hexdigest()
+    assert specs[StageName.OCR].fingerprint_dependencies.model_hashes == (
+        expected_ocr_identity,
     )

@@ -12,6 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field
 class IssueCode(StrEnum):
     INVALID_GEOMETRY = "invalid_geometry"
     MISSING_ARTIFACT = "missing_artifact"
+    SOURCE_FAILED = "source_failed"
+    PIPELINE_FAILED = "pipeline_failed"
+    OUTPUT_FAILED = "output_failed"
     UNSUPPORTED_SCHEMA = "unsupported_schema"
     DETECTOR_FAILED = "detector_failed"
     OCR_FAILED = "ocr_failed"

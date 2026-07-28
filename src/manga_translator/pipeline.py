@@ -14,7 +14,7 @@ import numpy as np
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
-from .artifacts import dump_debug_artifacts
+from .artifacts import dump_debug_artifacts, dump_page_document
 from .config import AppConfig, PostprocessConfig
 from .contracts.mapping import (
     MappingContractError,
@@ -23,6 +23,19 @@ from .contracts.mapping import (
     build_request_map,
 )
 from .detector import DetectionResult, TextGroup, TextRegion, detect_text_regions
+from .domain.issues import Issue, IssueCode, IssueSeverity, StageName, StageStatus
+from .domain.models import (
+    ArtifactRef,
+    BoundingBox,
+    EntityRecord,
+    OCRCandidate,
+    OCRRecord,
+    PageDocument,
+    SourcePage,
+    StageRecord,
+    TranslationRecord,
+)
+from .domain.reconcile import RegionObservation, reconcile_regions
 from .geometry import center_distance, containment_ratio, iom, merge_bbox
 from .image_io import (
     ImageEncodeError,
@@ -41,6 +54,9 @@ from .ocr import (
 )
 from .profiling import profile_page, profile_span, set_page_profile_metrics
 from .result import BatchResult, PageResult, ResultIssue, derive_batch_status
+from .stages.legacy import build_legacy_stage_specs, stage_config
+from .stages.runner import StageOutcome, StageRunner
+from .storage import ArtifactStore, JobStore
 from .translator import (
     load_glossary,
     sanitize_translation_text,
@@ -901,7 +917,6 @@ def _dump_debug_artifacts(
     groups: list[TextGroup],
     inpainted_img: np.ndarray | None,
     final_img: np.ndarray | None,
-    dump_json: bool,
 ) -> None:
     dump_debug_artifacts(
         output_dir=config.paths.output_dir,
@@ -910,7 +925,6 @@ def _dump_debug_artifacts(
         regions_raw=detection.regions_raw,
         regions_post=detection.regions_post,
         groups=groups,
-        save_json=dump_json,
         save_overlays=True,
         inpainted_image=inpainted_img,
         final_image=final_img,
@@ -923,6 +937,336 @@ def _page_id_for_path(image_path: Path) -> str:
             return hashlib.file_digest(source_file, "sha256").hexdigest()
     except OSError:
         return hashlib.sha256(str(image_path.resolve()).encode("utf-8")).hexdigest()
+
+
+def _initial_page_document(
+    *, image_path: Path, source_bytes: bytes, job_id: str, store: JobStore
+) -> PageDocument:
+    page_id = hashlib.sha256(source_bytes).hexdigest()
+    original_artifact = store.store_artifact(
+        source_bytes,
+        media_type="application/octet-stream",
+        owner_type="source_page",
+        owner_id=f"{job_id}:{page_id}:original",
+    )
+    decoded = cv2.imdecode(np.frombuffer(source_bytes, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if decoded is None:
+        width = height = 1
+        mode = "unknown"
+    else:
+        height, width = decoded.shape[:2]
+        channels = 1 if decoded.ndim == 2 else decoded.shape[2]
+        mode = {1: "L", 3: "BGR", 4: "BGRA"}.get(channels, f"channels:{channels}")
+    return PageDocument(
+        source=SourcePage(
+            page_id=page_id,
+            original_bytes_sha256=page_id,
+            source_path=str(image_path),
+            width=int(width),
+            height=int(height),
+            mode=mode,
+            original_artifact=original_artifact,
+        )
+    )
+
+
+def _typed_issue(issue: ResultIssue) -> Issue:
+    stage = {
+        "decode": StageName.SOURCE,
+        "detection": StageName.DETECT,
+        "ocr": StageName.OCR,
+        "translation": StageName.TRANSLATE,
+        "layout": StageName.LAYOUT,
+        "encode": StageName.ENCODE,
+        "output": StageName.ENCODE,
+    }.get(issue.stage, StageName.SOURCE)
+    code = {
+        StageName.DETECT: IssueCode.DETECTOR_FAILED,
+        StageName.OCR: IssueCode.OCR_FAILED,
+        StageName.TRANSLATE: IssueCode.TRANSLATION_FAILED,
+        StageName.LAYOUT: IssueCode.LAYOUT_FAILED,
+        StageName.ENCODE: IssueCode.ENCODE_FAILED,
+    }.get(stage, IssueCode.SOURCE_FAILED if issue.stage == "decode" else IssueCode.PIPELINE_FAILED)
+    if issue.stage == "output":
+        code = IssueCode.OUTPUT_FAILED
+    return Issue(
+        code=code,
+        severity=IssueSeverity.ERROR,
+        stage=stage,
+        message=issue.message,
+        page_id=issue.page_id if issue.page_id and len(issue.page_id) == 64 else None,
+        details={"legacy_code": issue.code, **issue.details},
+    )
+
+
+def _document_from_legacy_result(
+    *,
+    previous: PageDocument,
+    page: PageResult,
+    outcomes: dict[StageName, StageOutcome],
+    store: JobStore,
+    job_id: str,
+) -> PageDocument:
+    observations: list[RegionObservation] = []
+    for region in page.regions:
+        mask_refs: tuple[ArtifactRef, ...] = ()
+        if region.local_mask is not None:
+            encoded, buffer = cv2.imencode(".png", region.local_mask)
+            if encoded:
+                mask = store.store_artifact(
+                    buffer.tobytes(),
+                    media_type="image/png",
+                    owner_type="region_mask",
+                    owner_id=f"{job_id}:{page.page_id}:{region.id}",
+                )
+                mask_refs = (mask,)
+        observations.append(
+            RegionObservation(
+                bbox=BoundingBox(
+                    x=float(region.x),
+                    y=float(region.y),
+                    width=float(region.w),
+                    height=float(region.h),
+                ),
+                detector_score=max(0.0, min(1.0, float(region.confidence))),
+                source=region.source,
+                raw_index=region.raw_index,
+                orientation="vertical" if region.vertical else "horizontal",
+                mask_refs=mask_refs,
+            )
+        )
+    reconciled = reconcile_regions(
+        page_id=page.page_id,
+        detector_fingerprint=outcomes[StageName.DETECT].fingerprint,
+        observations=observations,
+        previous=previous,
+    )
+    revision_by_legacy_id = {
+        region.id: revision for region, revision in zip(page.regions, reconciled.revisions)
+    }
+    ocr_records: list[OCRRecord] = []
+    translations: list[TranslationRecord] = []
+    group_issues: list[Issue] = []
+    recorded_ocr: set[str] = set()
+    recorded_translation: set[str] = set()
+    for group in page.groups:
+        for legacy_region_id in group.region_ids:
+            revision = revision_by_legacy_id.get(legacy_region_id)
+            if revision is None:
+                continue
+            if group.ocr_text and revision.revision_id not in recorded_ocr:
+                candidate = OCRCandidate(
+                    raw_text=group.ocr_text,
+                    normalized_text=group.ocr_text_norm,
+                    confidence=max(0.0, min(1.0, float(group.ocr_confidence))),
+                    confidence_kind="ensemble",
+                    source_view=group.ocr_source or "legacy",
+                )
+                ocr_records.append(
+                    OCRRecord(
+                        region_id=revision.region_id,
+                        revision_id=revision.revision_id,
+                        candidates=(candidate,),
+                        selected_index=0,
+                        model_revision="legacy-v0.3.2",
+                        preprocess_version="legacy-v0.3.2",
+                    )
+                )
+                recorded_ocr.add(revision.revision_id)
+            if group.translation_valid and revision.revision_id not in recorded_translation:
+                raw_response = json.dumps(
+                    {"text": group.translation, "adapter": "legacy-v0.3.2"},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                raw_ref = store.store_artifact(
+                    raw_response,
+                    media_type="application/vnd.manga-translator.legacy-response+json",
+                    owner_type="legacy_translation",
+                    owner_id=f"{job_id}:{page.page_id}:{group.id}",
+                )
+                translations.append(
+                    TranslationRecord(
+                        region_id=revision.region_id,
+                        revision_id=revision.revision_id,
+                        request_item_id=group.mapping_region_key or group.id,
+                        raw_response_ref=raw_ref,
+                        validated_text=group.translation,
+                    )
+                )
+                recorded_translation.add(revision.revision_id)
+            elif not group.translation_valid:
+                if group.status.startswith("ocr"):
+                    code = IssueCode.OCR_REJECTED
+                    issue_stage = StageName.OCR
+                elif "layout" in group.status or "collision" in group.status:
+                    code = IssueCode.LAYOUT_REJECTED
+                    issue_stage = StageName.LAYOUT
+                else:
+                    code = IssueCode.TRANSLATION_REJECTED
+                    issue_stage = StageName.TRANSLATE
+                group_issues.append(
+                    Issue(
+                        code=code,
+                        severity=IssueSeverity.WARNING,
+                        stage=issue_stage,
+                        message=group.skip_reason,
+                        page_id=page.page_id,
+                        region_id=revision.region_id,
+                        details={"legacy_group_id": group.id, "legacy_status": group.status},
+                    )
+                )
+    stage_records = _stage_records(outcomes)
+    return PageDocument(
+        source=previous.source,
+        region_identities=reconciled.identities,
+        region_revisions=reconciled.revisions,
+        ocr_records=tuple(ocr_records),
+        translations=tuple(translations),
+        stages=stage_records,
+        issues=tuple(reconciled.issues)
+        + tuple(_typed_issue(issue) for issue in page.issues)
+        + tuple(group_issues),
+        entities=(
+            EntityRecord(
+                entity_id="_page_result",
+                kind="pipeline_result",
+                canonical_name=page.status,
+                attributes={"stage_failure": page.stage_failure},
+            ),
+        ),
+    )
+
+
+def _stage_records(outcomes: dict[StageName, StageOutcome]) -> tuple[StageRecord, ...]:
+    return tuple(
+        StageRecord(
+            stage=name,
+            status=StageStatus.SUCCEEDED,
+            fingerprint=outcome.fingerprint,
+            output_hashes=tuple(item.sha256 for item in outcome.outputs),
+            cache_hit=outcome.cache_hit,
+        )
+        for name, outcome in outcomes.items()
+    )
+
+
+def _page_result_from_document(
+    document: PageDocument, encoded: ArtifactRef, store: JobStore
+) -> PageResult:
+    raw = store.artifacts.read_bytes(encoded.sha256)
+    image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    entity = next((item for item in document.entities if item.entity_id == "_page_result"), None)
+    status = entity.canonical_name if entity is not None else "succeeded"
+    if status not in {"succeeded", "failed", "blocked"}:
+        status = "failed"
+    regions = [
+        TextRegion(
+            id=str(revision.region_id),
+            x=int(revision.bbox.x),
+            y=int(revision.bbox.y),
+            w=int(revision.bbox.width),
+            h=int(revision.bbox.height),
+            vertical=revision.orientation == "vertical",
+            confidence=revision.detector_score,
+            source=revision.source,
+            raw_index=revision.raw_index,
+        )
+        for revision in document.region_revisions
+    ]
+    return PageResult(
+        page_id=document.source.page_id,
+        source_path=Path(document.source.source_path),
+        status=status,
+        image=image,
+        regions=regions,
+        ocr_results=[
+            record.candidates[record.selected_index].raw_text
+            for record in document.ocr_records
+            if record.selected_index is not None
+        ],
+        translations=[record.validated_text for record in document.translations],
+        issues=[
+            ResultIssue(
+                code=issue.code.value,
+                message=issue.message,
+                stage=issue.stage.value,
+                page_id=issue.page_id,
+                details=issue.details,
+            )
+            for issue in document.issues
+        ],
+        stage_failure=(
+            str(entity.attributes.get("stage_failure"))
+            if entity is not None and entity.attributes.get("stage_failure") is not None
+            else None
+        ),
+    )
+
+
+def process_single_page_staged(
+    image_path: Path,
+    config: AppConfig,
+    glossary: dict[str, str],
+    *,
+    store: JobStore,
+    job_id: str,
+    resume: bool,
+    force_stage: StageName | None,
+    debug: bool,
+    dump_json: bool,
+    save_intermediate: bool,
+    prep_manual: bool,
+) -> PageResult:
+    source_bytes = image_path.read_bytes()
+    page_id = hashlib.sha256(source_bytes).hexdigest()
+    previous = store.load_page_document(job_id=job_id, page_id=page_id)
+    if previous is None:
+        previous = _initial_page_document(
+            image_path=image_path, source_bytes=source_bytes, job_id=job_id, store=store
+        )
+        store.store_page_document(job_id, previous)
+    glossary_revision = hashlib.sha256(
+        json.dumps(glossary, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    config_payload = stage_config(config, glossary_revision)
+    result_holder: dict[str, PageResult] = {}
+    specs = build_legacy_stage_specs(
+        image_path=image_path,
+        config=config,
+        glossary=glossary,
+        source_bytes=source_bytes,
+        store=store,
+        process_page=process_single_page,
+        result_holder=result_holder,
+        debug=debug,
+        save_intermediate=save_intermediate,
+        prep_manual=prep_manual,
+    )
+    outcomes = StageRunner(
+        store=store,
+        job_id=job_id,
+        page_id=page_id,
+        specs=specs,
+        config=config_payload,
+    ).run(resume=resume, force_stage=force_stage)
+    page = result_holder.get("page")
+    if page is None:
+        page = _page_result_from_document(previous, outcomes[StageName.ENCODE].outputs[0], store)
+        document = previous.model_copy(update={"stages": _stage_records(outcomes)})
+    else:
+        document = _document_from_legacy_result(
+            previous=previous,
+            page=page,
+            outcomes=outcomes,
+            store=store,
+            job_id=job_id,
+        )
+    store.store_page_document(job_id, document)
+    if dump_json or prep_manual:
+        dump_page_document(config.paths.output_dir, image_path.name, document)
+    return page
 
 
 def process_single_page(
@@ -1177,7 +1521,6 @@ def _process_single_page_impl(
             groups=groups,
             inpainted_img=inpainted if (debug or save_intermediate or prep_manual) else None,
             final_img=result if debug else None,
-            dump_json=(dump_json or prep_manual),
         )
 
     issues = list(detection_issues)
@@ -1193,6 +1536,7 @@ def _process_single_page_impl(
         regions=detection.regions_post,
         ocr_results=[group.ocr_text for group in groups],
         translations=[group.translation for group in groups],
+        groups=groups,
         issues=issues,
         stage_failure="translation" if translation_issue is not None else None,
     )
@@ -1204,6 +1548,10 @@ def run_pipeline(
     dump_json: bool = False,
     save_intermediate: bool = False,
     prep_manual: bool = False,
+    resume: bool = False,
+    force_stage: StageName | None = None,
+    job_id: str | None = None,
+    state_dir: Path | None = None,
 ) -> BatchResult:
     output_dir = config.paths.output_dir
     try:
@@ -1229,8 +1577,19 @@ def run_pipeline(
     console.print(f"[bold]模型：{config.openrouter.model}[/]")
     console.print(f"[bold]輸出：{output_dir}[/]")
 
+    durable_store: JobStore | None = None
+    if job_id is not None:
+        durable_root = (state_dir or (output_dir / ".manga-translator")).resolve()
+        durable_store = JobStore(
+            durable_root / "jobs.sqlite3", ArtifactStore(durable_root / "artifacts")
+        )
+        durable_store.ensure_job(
+            job_id,
+            config={"model": config.openrouter.model, "input_dir": str(config.paths.input_dir)},
+        )
     try:
-        initialize_ocr_model()
+        if durable_store is None:
+            initialize_ocr_model()
     except OCRInitializationError as error:
         pages = [
             PageResult(
@@ -1267,15 +1626,30 @@ def run_pipeline(
         task = progress.add_task("翻譯中...", total=len(image_files))
         for image_path in image_files:
             try:
-                page = process_single_page(
-                    image_path=image_path,
-                    config=config,
-                    glossary=glossary,
-                    debug=debug,
-                    dump_json=dump_json,
-                    save_intermediate=save_intermediate,
-                    prep_manual=prep_manual,
-                )
+                if durable_store is None:
+                    page = process_single_page(
+                        image_path=image_path,
+                        config=config,
+                        glossary=glossary,
+                        debug=debug,
+                        dump_json=dump_json,
+                        save_intermediate=save_intermediate,
+                        prep_manual=prep_manual,
+                    )
+                else:
+                    page = process_single_page_staged(
+                        image_path=image_path,
+                        config=config,
+                        glossary=glossary,
+                        store=durable_store,
+                        job_id=job_id,
+                        resume=resume,
+                        force_stage=force_stage,
+                        debug=debug,
+                        dump_json=dump_json,
+                        save_intermediate=save_intermediate,
+                        prep_manual=prep_manual,
+                    )
             except OCRInitializationError as error:
                 page = _failed_page_result(
                     image_path,
@@ -1296,6 +1670,9 @@ def run_pipeline(
             page.source_image = None
             pages.append(page)
             progress.advance(task)
+
+    if durable_store is not None:
+        durable_store.close()
 
     batch = BatchResult(status=derive_batch_status(pages), pages=pages)
     _write_batch_manifest(batch, output_dir)

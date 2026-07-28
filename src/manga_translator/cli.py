@@ -15,9 +15,13 @@ import click
 from rich.console import Console
 
 from .config import AppConfig
+from .domain.issues import StageName
+from .domain.serialization import canonical_document_bytes
 from .image_io import read_image, write_image
 from .ocr import OCRInitializationError
 from .pipeline import process_single_page, run_pipeline
+from .storage import ArtifactStore, JobStore
+from .storage.artifact_store import assess_storage_path
 from .translator import load_glossary
 
 console = Console()
@@ -53,10 +57,19 @@ def _apply_runtime_overrides(
 @cli.command()
 @click.option("--config", "-c", default="config.yaml", help="設定檔路徑")
 @click.option("--debug", "-d", is_flag=True, help="輸出 debug 標註圖")
-@click.option("--dump-json", is_flag=True, help="輸出每頁 debug manifest json")
+@click.option("--dump-json", is_flag=True, help="輸出每頁 canonical PageDocument JSON")
 @click.option("--save-intermediate", is_flag=True, help="輸出中間圖（original/inpainted/blanked）")
 @click.option("--prep-manual", is_flag=True, help="輸出手動校正素材（會啟用 debug/json/intermediate）")
 @click.option("--allow-partial", is_flag=True, help="部分頁面失敗時仍以成功退出")
+@click.option("--resume", is_flag=True, help="沿用 fingerprint 相同且 artifact 完整的 stage")
+@click.option(
+    "--force-stage",
+    type=click.Choice([stage.value for stage in StageName]),
+    default=None,
+    help="強制重跑指定 stage 與所有 downstream stage",
+)
+@click.option("--job", "job_id", default="default", show_default=True, help="持久 job ID")
+@click.option("--state-dir", type=click.Path(path_type=Path), default=None)
 @click.option("--no-grouping", is_flag=True, help="停用 grouping（回退舊模式）")
 @click.option("--page-context-mode", type=click.Choice(["window", "page"]), default=None)
 @click.option(
@@ -71,6 +84,10 @@ def run(
     save_intermediate: bool,
     prep_manual: bool,
     allow_partial: bool,
+    resume: bool,
+    force_stage: str | None,
+    job_id: str,
+    state_dir: Path | None,
     no_grouping: bool,
     page_context_mode: str | None,
     render_scope: str | None,
@@ -96,11 +113,142 @@ def run(
             dump_json=dump_json,
             save_intermediate=save_intermediate,
             prep_manual=prep_manual,
+            resume=resume,
+            force_stage=StageName(force_stage) if force_stage else None,
+            job_id=job_id,
+            state_dir=state_dir,
         )
     except OCRInitializationError as error:
         raise click.ClickException(str(error)) from error
     if not result.succeeded and not (allow_partial and result.partial):
         raise click.exceptions.Exit(1)
+
+
+def _durable_root(config: str, state_dir: Path | None) -> Path:
+    if state_dir is not None:
+        return state_dir.expanduser().resolve()
+    return (AppConfig.from_yaml(config).paths.output_dir / ".manga-translator").resolve()
+
+
+@cli.command("inspect")
+@click.option("--config", "-c", default="config.yaml", help="設定檔路徑")
+@click.option("--state-dir", type=click.Path(path_type=Path), default=None)
+@click.option("--job", "job_id", required=True, help="持久 job ID")
+@click.option("--page", "page_id", default=None, help="可選的 page SHA-256")
+def inspect_job(config: str, state_dir: Path | None, job_id: str, page_id: str | None) -> None:
+    """顯示 canonical PageDocument、stage、issue 與 artifact 狀態。"""
+
+    root = _durable_root(config, state_dir)
+    with JobStore(root / "jobs.sqlite3", ArtifactStore(root / "artifacts")) as store:
+        pages = []
+        for row in store.list_pages(job_id=job_id, page_id=page_id):
+            document = store.load_page_document(job_id=job_id, page_id=str(row[0]))
+            if document is None:
+                continue
+            pages.append(
+                {
+                    "page_id": document.source.page_id,
+                    "document_artifact": {
+                        "sha256": str(row[1]),
+                        "path": str(store.artifacts.path_for(str(row[1]))),
+                    },
+                    "active_regions": [
+                        {
+                            "region_id": str(identity.region_id),
+                            "revision_id": identity.active_revision_id,
+                        }
+                        for identity in document.region_identities
+                    ],
+                    "stages": [
+                        {
+                            "stage": stage.stage.value,
+                            "fingerprint": stage.fingerprint,
+                            "status": stage.status.value,
+                            "cache_hit": stage.cache_hit,
+                            "artifacts": [
+                                {
+                                    "sha256": sha256,
+                                    "path": str(store.artifacts.path_for(sha256)),
+                                }
+                                for sha256 in stage.output_hashes
+                            ],
+                        }
+                        for stage in document.stages
+                    ],
+                    "stage_attempts": [
+                        {
+                            "stage": str(attempt[0]),
+                            "fingerprint": str(attempt[1]),
+                            "status": str(attempt[2]),
+                            "input_hashes": json.loads(str(attempt[3])),
+                            "output_hashes": json.loads(str(attempt[4])),
+                            "started_at": attempt[5],
+                            "finished_at": attempt[6],
+                        }
+                        for attempt in store.list_stage_runs(
+                            job_id=job_id, page_id=document.source.page_id
+                        )
+                    ],
+                    "issues": [issue.model_dump(mode="json") for issue in document.issues],
+                }
+            )
+    if not pages:
+        raise click.ClickException("找不到符合的 job/page")
+    click.echo(json.dumps({"job_id": job_id, "pages": pages}, ensure_ascii=False, indent=2))
+
+
+@cli.group()
+def cache() -> None:
+    """管理 durable artifact cache。"""
+
+
+@cache.command("gc")
+@click.option("--config", "-c", default="config.yaml", help="設定檔路徑")
+@click.option("--state-dir", type=click.Path(path_type=Path), default=None)
+def cache_gc(config: str, state_dir: Path | None) -> None:
+    """清理沒有任何持久引用的 artifacts。"""
+
+    root = _durable_root(config, state_dir)
+    with JobStore(root / "jobs.sqlite3", ArtifactStore(root / "artifacts")) as store:
+        result = store.gc()
+    click.echo(
+        f"removed database_records={result.database_records} artifact_files={result.files}"
+    )
+
+
+@cli.command()
+@click.option("--config", "-c", default="config.yaml", help="設定檔路徑")
+@click.option("--state-dir", type=click.Path(path_type=Path), default=None)
+@click.option("--job", "job_id", required=True, help="持久 job ID")
+@click.option("--page", "page_id", required=True, help="page SHA-256")
+@click.option("--output", type=click.Path(path_type=Path), required=True)
+@click.option("--output-image", type=click.Path(path_type=Path), default=None)
+def replay(
+    config: str,
+    state_dir: Path | None,
+    job_id: str,
+    page_id: str,
+    output: Path,
+    output_image: Path | None,
+) -> None:
+    """不連網、不載模型，重播已保存的 canonical manifest 與 encode artifact。"""
+
+    root = _durable_root(config, state_dir)
+    with JobStore(root / "jobs.sqlite3", ArtifactStore(root / "artifacts")) as store:
+        document = store.load_page_document(job_id=job_id, page_id=page_id)
+        if document is None:
+            raise click.ClickException("找不到符合的 job/page")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(canonical_document_bytes(document))
+        if output_image is not None:
+            encode = next(
+                (stage for stage in document.stages if stage.stage is StageName.ENCODE), None
+            )
+            if encode is None or not encode.output_hashes:
+                raise click.ClickException("PageDocument 沒有 encode artifact")
+            output_image.parent.mkdir(parents=True, exist_ok=True)
+            output_image.write_bytes(store.artifacts.read_bytes(encode.output_hashes[0]))
+    click.echo(str(output))
 
 
 @cli.command()
@@ -276,6 +424,13 @@ def doctor(config: str, strict_api_key: bool):
 
     cfg.paths.output_dir.mkdir(parents=True, exist_ok=True)
     ok(f"輸出目錄存在：{cfg.paths.output_dir}")
+    state_assessment = assess_storage_path(cfg.paths.output_dir / ".manga-translator")
+    if state_assessment.kind == "network":
+        fail(f"durable state 不可位於網路 share：{state_assessment.reason}")
+    elif state_assessment.kind == "unknown":
+        warn(f"無法確認 durable state 是否為本機磁碟：{state_assessment.reason}")
+    else:
+        ok("durable state 位於本機磁碟")
 
     model_path = cfg.detection.model_path.resolve()
     if model_path.exists():

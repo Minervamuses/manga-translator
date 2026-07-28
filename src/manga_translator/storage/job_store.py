@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Self
 
 from ..domain.models import ArtifactRef, PageDocument
-from ..domain.serialization import canonical_document_bytes
+from ..domain.serialization import canonical_document_bytes, parse_document
 from .artifact_store import ArtifactStore, require_local_storage
 
 SCHEMA_VERSION = 1
@@ -100,6 +100,21 @@ class JobStore:
                 (job_id, config_json),
             )
 
+    def ensure_job(self, job_id: str, *, config: dict[str, object] | None = None) -> None:
+        config_json = json.dumps(
+            config or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO jobs(job_id, status, config_json) VALUES (?, 'pending', ?)
+                ON CONFLICT(job_id) DO UPDATE SET
+                    config_json=excluded.config_json,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (job_id, config_json),
+            )
+
     @staticmethod
     def _insert_artifact(connection: sqlite3.Connection, artifact: ArtifactRef) -> None:
         connection.execute(
@@ -149,6 +164,13 @@ class JobStore:
             )
             connection.execute(
                 """
+                DELETE FROM artifact_references
+                WHERE owner_type='page_document_member' AND owner_id=?
+                """,
+                (owner_id,),
+            )
+            connection.execute(
+                """
                 INSERT INTO pages(job_id, page_id, document_artifact_sha256)
                 VALUES (?, ?, ?)
                 ON CONFLICT(job_id, page_id) DO UPDATE SET
@@ -161,7 +183,67 @@ class JobStore:
                 "INSERT INTO artifact_references(owner_type, owner_id, sha256) VALUES (?, ?, ?)",
                 ("page_document", owner_id, artifact.sha256),
             )
+            member_hashes = {
+                document.source.original_artifact.sha256,
+                *(ref.sha256 for revision in document.region_revisions for ref in revision.mask_refs),
+                *(record.raw_response_ref.sha256 for record in document.translations),
+                *(plan.font_ref.sha256 for plan in document.layout_plans),
+                *(plan.alpha_mask_ref.sha256 for plan in document.layout_plans),
+                *(sha256 for stage in document.stages for sha256 in stage.output_hashes),
+            }
+            for member_hash in sorted(member_hashes):
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO artifact_references(owner_type, owner_id, sha256)
+                    SELECT 'page_document_member', ?, sha256 FROM artifacts WHERE sha256=?
+                    """,
+                    (owner_id, member_hash),
+                )
         return artifact
+
+    def load_page_document(self, *, job_id: str, page_id: str) -> PageDocument | None:
+        row = self.connection.execute(
+            """
+            SELECT document_artifact_sha256 FROM pages WHERE job_id=? AND page_id=?
+            """,
+            (job_id, page_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return parse_document(self.artifacts.read_bytes(str(row[0])))
+
+    def list_pages(self, *, job_id: str, page_id: str | None = None) -> list[sqlite3.Row]:
+        if page_id is None:
+            cursor = self.connection.execute(
+                """
+                SELECT page_id, document_artifact_sha256, created_at, updated_at
+                FROM pages WHERE job_id=? ORDER BY page_id
+                """,
+                (job_id,),
+            )
+        else:
+            cursor = self.connection.execute(
+                """
+                SELECT page_id, document_artifact_sha256, created_at, updated_at
+                FROM pages WHERE job_id=? AND page_id=?
+                """,
+                (job_id, page_id),
+            )
+        return list(cursor)
+
+    def list_stage_runs(self, *, job_id: str, page_id: str) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT stage, fingerprint, status, input_hashes_json, output_hashes_json,
+                       started_at, finished_at
+                FROM stage_runs
+                WHERE job_id=? AND page_id=?
+                ORDER BY stage_run_id
+                """,
+                (job_id, page_id),
+            )
+        )
 
     def referenced_hashes(self) -> set[str]:
         rows = self.connection.execute("SELECT DISTINCT sha256 FROM artifact_references")
@@ -203,6 +285,15 @@ class JobStore:
             return 0
         placeholders = ",".join("?" for _ in stages)
         with self.transaction() as connection:
+            stale = list(
+                connection.execute(
+                    f"""
+                    SELECT stage, fingerprint FROM stage_runs
+                    WHERE job_id=? AND page_id=? AND stage IN ({placeholders})
+                    """,
+                    (job_id, page_id, *sorted(stages)),
+                )
+            )
             cursor = connection.execute(
                 f"""
                 UPDATE stage_runs SET status='invalidated', finished_at=CURRENT_TIMESTAMP
@@ -210,6 +301,15 @@ class JobStore:
                 """,
                 (job_id, page_id, *sorted(stages)),
             )
+            for stage, fingerprint in stale:
+                prefix = f"{job_id}:{page_id}:{stage}:{fingerprint}:"
+                connection.execute(
+                    """
+                    DELETE FROM artifact_references
+                    WHERE owner_type='stage_output' AND substr(owner_id, 1, ?) = ?
+                    """,
+                    (len(prefix), prefix),
+                )
         return cursor.rowcount
 
     def cached_stage_outputs(
@@ -259,6 +359,14 @@ class JobStore:
         input_hashes: tuple[str, ...],
     ) -> None:
         with self.transaction() as connection:
+            prefix = f"{job_id}:{page_id}:{stage}:{fingerprint}:"
+            connection.execute(
+                """
+                DELETE FROM artifact_references
+                WHERE owner_type='stage_output' AND substr(owner_id, 1, ?) = ?
+                """,
+                (len(prefix), prefix),
+            )
             connection.execute(
                 """
                 INSERT INTO stage_runs(

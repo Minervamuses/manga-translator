@@ -2,71 +2,50 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
+from .domain.models import PageDocument
+from .domain.serialization import canonical_document_bytes
 from .image_io import write_image
 
 
-def _region_to_dict(region: Any) -> dict[str, Any]:
-    local_mask = getattr(region, "local_mask", None)
-    return {
-        "id": getattr(region, "id", ""),
-        "x": int(region.x),
-        "y": int(region.y),
-        "w": int(region.w),
-        "h": int(region.h),
-        "vertical": bool(getattr(region, "vertical", False)),
-        "confidence": float(getattr(region, "confidence", 1.0)),
-        "source": getattr(region, "source", ""),
-        "raw_index": int(getattr(region, "raw_index", -1)),
-        "detection_input_size": int(getattr(region, "detection_input_size", 0)),
-        "font_size_hint": float(getattr(region, "font_size_hint", -1.0)),
-        "candidate_duplicate": bool(getattr(region, "candidate_duplicate", False)),
-        "group_id": getattr(region, "group_id", None),
-        "mask_pixels": int(np.count_nonzero(local_mask)) if local_mask is not None else 0,
-    }
+def dump_page_document(output_dir: Path, page_name: str, document: PageDocument) -> Path:
+    """Materialize the canonical manifest; debug JSON is never a second source of truth."""
+
+    debug_dir = output_dir / "debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    destination = debug_dir / f"{Path(page_name).stem}_page_document.json"
+    temporary = debug_dir / f".{destination.name}.tmp"
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(canonical_document_bytes(document))
+            handle.flush()
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
 
 
 def _group_to_dict(group: Any) -> dict[str, Any]:
-    x, y, w, h = group.bbox
+    """Compatibility projection for callers that inspect an in-memory legacy group."""
+
+    x, y, width, height = group.bbox
     mask = getattr(group, "mask", None)
     return {
         "id": group.id,
         "region_ids": list(group.region_ids),
-        "bbox": {"x": int(x), "y": int(y), "w": int(w), "h": int(h)},
+        "bbox": {"x": int(x), "y": int(y), "w": int(width), "h": int(height)},
         "vertical": bool(getattr(group, "vertical", False)),
-        "sort_key": list(getattr(group, "sort_key", (0, 0))),
         "mask_pixels": int(np.count_nonzero(mask)) if mask is not None else 0,
         "ocr_text": getattr(group, "ocr_text", ""),
-        "ocr_text_norm": getattr(group, "ocr_text_norm", ""),
-        "ocr_confidence": float(getattr(group, "ocr_confidence", 0.0)),
-        "ocr_source": getattr(group, "ocr_source", ""),
-        "ocr_candidates": getattr(group, "ocr_candidates", []),
         "translation": getattr(group, "translation", ""),
         "translation_valid": bool(getattr(group, "translation_valid", False)),
         "status": getattr(group, "status", ""),
         "skip_reason": getattr(group, "skip_reason", ""),
-        "duplicate_of": getattr(group, "duplicate_of", None),
-        "layout_bbox": (
-            {
-                "x": int(group.layout_bbox[0]),
-                "y": int(group.layout_bbox[1]),
-                "w": int(group.layout_bbox[2]),
-                "h": int(group.layout_bbox[3]),
-            }
-            if getattr(group, "layout_bbox", None) is not None
-            else None
-        ),
-        "rendered_font_size": int(getattr(group, "rendered_font_size", 0)),
-        "rendered_direction": getattr(group, "rendered_direction", ""),
-        "layout_mode": getattr(group, "layout_mode", ""),
-        "layout_info": getattr(group, "layout_info", {}),
-        "mapping_region_key": getattr(group, "mapping_region_key", ""),
         "mapping_chain": getattr(group, "mapping_chain", {}),
     }
 
@@ -147,7 +126,6 @@ def dump_debug_artifacts(
     regions_raw: list[Any],
     regions_post: list[Any],
     groups: list[Any],
-    save_json: bool = True,
     save_overlays: bool = True,
     inpainted_image: np.ndarray | None = None,
     final_image: np.ndarray | None = None,
@@ -173,33 +151,5 @@ def dump_debug_artifacts(
         if final_image is not None:
             outputs["final"] = debug_dir / f"{stem}_final.png"
             write_image(outputs["final"], final_image)
-
-    if save_json:
-        manifest = {
-            "page": page_name,
-            "regions_raw": [_region_to_dict(region) for region in regions_raw],
-            "regions_post": [_region_to_dict(region) for region in regions_post],
-            "groups": [_group_to_dict(group) for group in groups],
-            "reading_order": [group.id for group in groups],
-            "ocr_text": {group.id: getattr(group, "ocr_text", "") for group in groups},
-            "ocr_text_norm": {
-                group.id: getattr(group, "ocr_text_norm", "") for group in groups
-            },
-            "translation": {
-                group.id: getattr(group, "translation", "") for group in groups
-            },
-            "unresolved": [
-                {
-                    "id": group.id,
-                    "status": getattr(group, "status", ""),
-                    "reason": getattr(group, "skip_reason", ""),
-                }
-                for group in groups
-                if not bool(getattr(group, "translation_valid", False))
-            ],
-        }
-        outputs["manifest"] = debug_dir / f"{stem}_manifest.json"
-        with open(outputs["manifest"], "w", encoding="utf-8") as file:
-            json.dump(manifest, file, ensure_ascii=False, indent=2)
 
     return outputs

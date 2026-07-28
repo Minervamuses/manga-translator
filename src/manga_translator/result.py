@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-from .detector import TextRegion
+from .detector import TextGroup, TextRegion
 
 PageStatus = Literal["succeeded", "failed", "blocked"]
 BatchStatus = Literal["succeeded", "partial", "failed", "blocked"]
@@ -45,6 +45,7 @@ class PageResult:
     regions: list[TextRegion] = field(default_factory=list, repr=False)
     ocr_results: list[str] = field(default_factory=list, repr=False)
     translations: list[str] = field(default_factory=list, repr=False)
+    groups: list[TextGroup] = field(default_factory=list, repr=False)
     issues: list[ResultIssue] = field(default_factory=list)
     output_path: Path | None = None
     source_preserved: bool = False

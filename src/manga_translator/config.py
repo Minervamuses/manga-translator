@@ -142,8 +142,6 @@ class TypesettingConfig(BaseModel):
     text_color: str | tuple[int, int, int] = "auto"
     line_spacing: float = Field(default=1.02, gt=0.1, le=5.0)
     render_scope: Literal["region", "group_mask", "group_bbox"] = "group_mask"
-    # 原文字 mask 是字形像素，不是中文排版框；直接拿它裁切譯文會把中文字切碎。
-    clip_render: bool = False
     layout_from_mask: bool = True
     layout_mask_dilate: int = Field(default=2, ge=0, le=64)
     layout_padding_px: int = Field(default=2, ge=0, le=64)
@@ -161,11 +159,7 @@ class TypesettingConfig(BaseModel):
     adaptive_bubble_layout: bool = True
     bubble_search_expand_ratio: float = Field(default=0.72, ge=0.0, le=4.0)
     bubble_search_max_px: int = Field(default=720, ge=32, le=4096)
-    bubble_background_tolerance: int = Field(default=34, ge=4, le=128)
-    bubble_background_min_luma: int = Field(default=160, ge=0, le=255)
-    bubble_background_dominant_ratio: float = Field(default=0.62, ge=0.0, le=1.0)
     bubble_inner_margin_ratio: float = Field(default=0.07, ge=0.0, le=0.5)
-    bubble_max_invalid_ratio: float = Field(default=0.004, ge=0.0, le=0.25)
     vertical_char_spacing: float = Field(default=1.03, ge=0.75, le=2.0)
     balance_columns: bool = True
     min_char_spacing_ratio: float = Field(default=0.88, ge=0.5, le=2.0)

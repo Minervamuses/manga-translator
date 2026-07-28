@@ -16,6 +16,7 @@ from .config import TypesettingConfig
 from .detector import TextGroup, TextRegion
 from .text import grapheme_clusters, normalize_text
 from .typography.breaking import balanced_legal_chunks, greedy_legal_wrap
+from .typography.safe_region import build_safe_region
 
 
 @dataclass(frozen=True)
@@ -596,7 +597,7 @@ def _safe_background_bbox(
     preferred: float,
     cfg: TypesettingConfig,
 ) -> tuple[int, int, int, int] | None:
-    """Grow a rectangle through near-uniform bubble/caption background only."""
+    """Derive a candidate bbox from protected-edge-aware safe-region evidence."""
 
     if not cfg.adaptive_bubble_layout:
         return None
@@ -622,79 +623,21 @@ def _safe_background_bbox(
     group_mask = _build_group_local_mask(group, regions_by_id, group.bbox)
     if np.any(group_mask):
         _paste_mask_into_roi(text_mask, group_mask, group.bbox, search)
-    radius = max(2, round(preferred * 0.22))
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE,
-        (radius * 2 + 1, radius * 2 + 1),
-    )
-    dilated = cv2.dilate(text_mask, kernel, iterations=1)
-    ring = (dilated > 0) & (text_mask == 0)
-    ring_pixels = roi[ring]
-    if ring_pixels.shape[0] < 40:
+    local_polygons: list[tuple[tuple[float, float], ...]] = []
+    for region_id in group.region_ids:
+        region = regions_by_id.get(region_id)
+        if region is None:
+            continue
+        local_polygons.extend(
+            tuple((px - rx, py - ry) for px, py in polygon)
+            for polygon in region.line_polygons
+        )
+    artifacts = build_safe_region(roi, text_mask, line_polygons=tuple(local_polygons))
+    points = cv2.findNonZero((artifacts.render_mask > 0).astype(np.uint8))
+    if points is None:
         return None
-
-    background = np.median(ring_pixels.astype(np.float32), axis=0)
-    luma = float(0.114 * background[0] + 0.587 * background[1] + 0.299 * background[2])
-    if luma < cfg.bubble_background_min_luma:
-        return None
-    distances = np.max(np.abs(ring_pixels.astype(np.float32) - background), axis=1)
-    if float(np.mean(distances <= cfg.bubble_background_tolerance)) < cfg.bubble_background_dominant_ratio:
-        return None
-
-    roi_float = roi.astype(np.float32)
-    color_distance = np.max(np.abs(roi_float - background.reshape(1, 1, 3)), axis=2)
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    valid = (
-        (color_distance <= cfg.bubble_background_tolerance)
-        & (gray >= cfg.bubble_background_min_luma)
-    )
-    valid[dilated > 0] = True
-
-    # The seed is known text territory.  Marking it valid prevents tiny holes in
-    # the detector mask from stopping expansion before it reaches the bubble edge.
-    lx1, ly1 = seed_x - rx, seed_y - ry
-    lx2, ly2 = lx1 + seed_w, ly1 + seed_h
-    valid[max(0, ly1) : min(rh, ly2), max(0, lx1) : min(rw, lx2)] = True
-    valid_u8 = cv2.morphologyEx(
-        valid.astype(np.uint8),
-        cv2.MORPH_CLOSE,
-        np.ones((3, 3), dtype=np.uint8),
-    ).astype(bool)
-
-    x1, y1 = max(0, lx1), max(0, ly1)
-    x2, y2 = min(rw, lx2), min(rh, ly2)
-    step = max(1, round(preferred * 0.04))
-    required_ratio = 1.0 - cfg.bubble_max_invalid_ratio
-
-    def strip_ok(strip: np.ndarray) -> bool:
-        return strip.size > 0 and float(np.mean(strip)) >= required_ratio
-
-    for _ in range(max(rw, rh) // step + 4):
-        changes = [False, False, False, False]
-        new_left = max(0, x1 - step)
-        new_right = min(rw, x2 + step)
-        new_top = max(0, y1 - step)
-        new_bottom = min(rh, y2 + step)
-        if new_left < x1 and strip_ok(valid_u8[y1:y2, new_left:x1]):
-            changes[0] = True
-        if new_right > x2 and strip_ok(valid_u8[y1:y2, x2:new_right]):
-            changes[1] = True
-        if new_top < y1 and strip_ok(valid_u8[new_top:y1, x1:x2]):
-            changes[2] = True
-        if new_bottom > y2 and strip_ok(valid_u8[y2:new_bottom, x1:x2]):
-            changes[3] = True
-        if not any(changes):
-            break
-        if changes[0]:
-            x1 = new_left
-        if changes[1]:
-            x2 = new_right
-        if changes[2]:
-            y1 = new_top
-        if changes[3]:
-            y2 = new_bottom
-
-    candidate = (rx + x1, ry + y1, x2 - x1, y2 - y1)
+    x1, y1, width_value, height_value = cv2.boundingRect(points)
+    candidate = (rx + x1, ry + y1, width_value, height_value)
     if candidate[2] <= seed_w and candidate[3] <= seed_h:
         return None
 
@@ -1307,7 +1250,7 @@ def render_text_into_patch(
                 _maybe_outline_draw(draw, (x, y), draw_char, font, fill, cfg)
 
     layer_np = np.array(layer)
-    if cfg.clip_render and clip_mask is not None:
+    if clip_mask is not None:
         mask = clip_mask
         if mask.shape[:2] != (height, width):
             mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
@@ -1347,16 +1290,6 @@ def compose_patch_back(image: np.ndarray, patch_rgba: np.ndarray, x: int, y: int
     return result
 
 
-def _bbox_distance(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> int:
-    ax1, ay1, aw, ah = a
-    bx1, by1, bw, bh = b
-    ax2, ay2 = ax1 + aw, ay1 + ah
-    bx2, by2 = bx1 + bw, by1 + bh
-    dx = max(0, max(bx1 - ax2, ax1 - bx2))
-    dy = max(0, max(by1 - ay2, ay1 - by2))
-    return max(dx, dy)
-
-
 def render_text_into_group(
     image: np.ndarray,
     group: TextGroup,
@@ -1365,12 +1298,10 @@ def render_text_into_group(
     font_path: str | Path,
     cfg: TypesettingConfig | None = None,
     fallback_font_path: str | Path | None = None,
-    nearby_group_bboxes: list[tuple[int, int, int, int]] | None = None,
     layout_plan: TextLayoutPlan | None = None,
     layout_reference_image: np.ndarray | None = None,
 ) -> np.ndarray:
     cfg = cfg or TypesettingConfig()
-    del nearby_group_bboxes  # collision filtering happens before layout; do not shrink nearby text.
     reference = layout_reference_image if layout_reference_image is not None else image
     plan = layout_plan or plan_text_layout(
         reference,
@@ -1386,7 +1317,6 @@ def render_text_into_group(
 
     x, y, w, h = plan.bbox
     patch = image[y : y + h, x : x + w].copy()
-    clip_mask = np.full((h, w), 255, dtype=np.uint8) if cfg.clip_render else None
     layer = render_text_into_patch(
         patch,
         text,
@@ -1394,7 +1324,7 @@ def render_text_into_group(
         font_path=font_path,
         cfg=cfg,
         fallback_font_path=fallback_font_path,
-        clip_mask=clip_mask,
+        clip_mask=None,
         preferred_font_size=_preferred_group_font_size(group, regions_by_id),
         layout_plan=plan,
     )
@@ -1434,5 +1364,4 @@ def render_text_into_region(
         font_path=font_path,
         cfg=cfg,
         fallback_font_path=fallback_font_path,
-        nearby_group_bboxes=None,
     )

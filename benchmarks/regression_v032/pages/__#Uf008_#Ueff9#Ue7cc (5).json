@@ -1,0 +1,179 @@
+{
+  "schema_version": "page_ground_truth.v1",
+  "page_id": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+  "page_sha256": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+  "source_image": "samples/before_fix/__#Uf008_#Ueff9#Ue7cc (5).jpg",
+  "fixture_source": "validation_samples/v032_caption_5_layout.json",
+  "width": 2480,
+  "height": 3508,
+  "regions": [
+    {
+      "region_key": "0b9dc8fadf8e:g000",
+      "legacy_group_id": "g000",
+      "bbox": {
+        "x": 2068,
+        "y": 2153,
+        "width": 255,
+        "height": 1050
+      },
+      "reading_order_index": 0,
+      "source_text": {
+        "raw": "顧客リストや取り引き相手の情報があればいいのだけど…",
+        "nfc": "顧客リストや取り引き相手の情報があればいいのだけど…"
+      },
+      "fixed_translation": "要是有顧客名單或交易對象的資訊就好了…",
+      "source_crop_sha256": "d38e8616bcd0010eb5fdc6dff94052f87fd3380493ba1bf2d6cbef2cd5f3cd37",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_5_layout.json",
+        "source_group_id": "g000"
+      }
+    },
+    {
+      "region_key": "0b9dc8fadf8e:g001",
+      "legacy_group_id": "g001",
+      "bbox": {
+        "x": 1989,
+        "y": 84,
+        "width": 392,
+        "height": 402
+      },
+      "reading_order_index": 1,
+      "source_text": {
+        "raw": "異常な警備体制のこの部屋…",
+        "nfc": "異常な警備体制のこの部屋…"
+      },
+      "fixed_translation": "異常警備體制下的這個房間…",
+      "source_crop_sha256": "55cfba83eec0d57f02a155f02b1ae479fc0f9b5ad519ec138f8ef8ffca2ed99b",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_5_layout.json",
+        "source_group_id": "g001"
+      }
+    },
+    {
+      "region_key": "0b9dc8fadf8e:g002",
+      "legacy_group_id": "g002",
+      "bbox": {
+        "x": 1716,
+        "y": 1080,
+        "width": 236,
+        "height": 628
+      },
+      "reading_order_index": 2,
+      "source_text": {
+        "raw": "…この部屋に存在する可能性が高い",
+        "nfc": "…この部屋に存在する可能性が高い"
+      },
+      "fixed_translation": "…很可能就在這個房間裡",
+      "source_crop_sha256": "c03d0118eb4f0accb6803b13417eefd827fc7d4a6dadee4c079e910cf43d5a46",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_5_layout.json",
+        "source_group_id": "g002"
+      }
+    },
+    {
+      "region_key": "0b9dc8fadf8e:g003",
+      "legacy_group_id": "g003",
+      "bbox": {
+        "x": 1297,
+        "y": 52,
+        "width": 237,
+        "height": 644
+      },
+      "reading_order_index": 3,
+      "source_text": {
+        "raw": "セキュリティは全て解除してある",
+        "nfc": "セキュリティは全て解除してある"
+      },
+      "fixed_translation": "保全系統已經全部解除了",
+      "source_crop_sha256": "251fc2bfd55e2b7ae8107156b5ad74843c9ebcd03a506ee2665eb2aca4b70c16",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_5_layout.json",
+        "source_group_id": "g003"
+      }
+    },
+    {
+      "region_key": "0b9dc8fadf8e:g004",
+      "legacy_group_id": "g004",
+      "bbox": {
+        "x": 744,
+        "y": 2155,
+        "width": 242,
+        "height": 567
+      },
+      "reading_order_index": 4,
+      "source_text": {
+        "raw": "…あった！！おそらくコレね",
+        "nfc": "…あった！！おそらくコレね"
+      },
+      "fixed_translation": "…有了!!大概就是這個吧",
+      "source_crop_sha256": "15dc9945fe7d6dcec77978e1e7385048049a1518aad4f5e0c2b04f4ec782f403",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_5_layout.json",
+        "source_group_id": "g004"
+      }
+    },
+    {
+      "region_key": "0b9dc8fadf8e:g005",
+      "legacy_group_id": "g005",
+      "bbox": {
+        "x": 146,
+        "y": 1187,
+        "width": 402,
+        "height": 656
+      },
+      "reading_order_index": 5,
+      "source_text": {
+        "raw": "しかもこの時間は誰もこの部屋に近づかない…",
+        "nfc": "しかもこの時間は誰もこの部屋に近づかない…"
+      },
+      "fixed_translation": "而且這個時間沒有人會靠近這個房間…",
+      "source_crop_sha256": "704b84da6e96830e9568129b65c46c63530d16dd9c2bca70d80b030236c08003",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_5_layout.json",
+        "source_group_id": "g005"
+      }
+    },
+    {
+      "region_key": "0b9dc8fadf8e:g006",
+      "legacy_group_id": "g006",
+      "bbox": {
+        "x": 98,
+        "y": 2927,
+        "width": 246,
+        "height": 505
+      },
+      "reading_order_index": 6,
+      "source_text": {
+        "raw": "こ…これは！！まさか…！",
+        "nfc": "こ…これは！！まさか…！"
+      },
+      "fixed_translation": "這、這是!!難道…!",
+      "source_crop_sha256": "3a5f1d69ca6d2b4ed7b72aacd80417b35c9e6655fa44279ff5f14142a41b1cff",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_5_layout.json",
+        "source_group_id": "g006"
+      }
+    }
+  ]
+}

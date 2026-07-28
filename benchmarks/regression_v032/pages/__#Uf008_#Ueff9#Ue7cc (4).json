@@ -1,0 +1,155 @@
+{
+  "schema_version": "page_ground_truth.v1",
+  "page_id": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+  "page_sha256": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+  "source_image": "samples/before_fix/__#Uf008_#Ueff9#Ue7cc (4).jpg",
+  "fixture_source": "validation_samples/v032_caption_4_layout.json",
+  "width": 2480,
+  "height": 3508,
+  "regions": [
+    {
+      "region_key": "f81020c46353:g000",
+      "legacy_group_id": "g000",
+      "bbox": {
+        "x": 2078,
+        "y": 1927,
+        "width": 244,
+        "height": 708
+      },
+      "reading_order_index": 0,
+      "source_text": {
+        "raw": "“鶴禿ゴンゾウ”…この学校の校長だ",
+        "nfc": "“鶴禿ゴンゾウ”…この学校の校長だ"
+      },
+      "fixed_translation": "「鶴禿剛藏」…他是這所學校的校長",
+      "source_crop_sha256": "01bac3a6f6f712f69792d0f0d3044a85a9edfdae371c92422d25ef3473c158f9",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_4_layout.json",
+        "source_group_id": "g000"
+      }
+    },
+    {
+      "region_key": "f81020c46353:g001",
+      "legacy_group_id": "g001",
+      "bbox": {
+        "x": 1810,
+        "y": 84,
+        "width": 571,
+        "height": 655
+      },
+      "reading_order_index": 1,
+      "source_text": {
+        "raw": "この学校内で密かに違法薬物の売買がされている情報を掴んだ",
+        "nfc": "この学校内で密かに違法薬物の売買がされている情報を掴んだ"
+      },
+      "fixed_translation": "掌握了校內有人暗中買賣違法藥物的情報",
+      "source_crop_sha256": "5b3e81942080c938acf94592d93727462849c65d0387a4a8bde4e6db20963e3d",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_4_layout.json",
+        "source_group_id": "g001"
+      }
+    },
+    {
+      "region_key": "f81020c46353:g002",
+      "legacy_group_id": "g002",
+      "bbox": {
+        "x": 1075,
+        "y": 1080,
+        "width": 395,
+        "height": 568
+      },
+      "reading_order_index": 2,
+      "source_text": {
+        "raw": "生徒達に流通させている人物がいるのだ",
+        "nfc": "生徒達に流通させている人物がいるのだ"
+      },
+      "fixed_translation": "有人正把這些藥物流通給學生",
+      "source_crop_sha256": "63321c2f36ef828c4f0f953898407607dc181d17276a7141ed8975ef1a403a3f",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_4_layout.json",
+        "source_group_id": "g002"
+      }
+    },
+    {
+      "region_key": "f81020c46353:g003",
+      "legacy_group_id": "g003",
+      "bbox": {
+        "x": 114,
+        "y": 1151,
+        "width": 400,
+        "height": 497
+      },
+      "reading_order_index": 3,
+      "source_text": {
+        "raw": "…そしてその元締めも判明している",
+        "nfc": "…そしてその元締めも判明している"
+      },
+      "fixed_translation": "…而且幕後黑手也已經查明",
+      "source_crop_sha256": "0691a79db341b3dd20bd593832bf50f34b29d4b9123c185e9ac304770d02d982",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_4_layout.json",
+        "source_group_id": "g003"
+      }
+    },
+    {
+      "region_key": "f81020c46353:g004",
+      "legacy_group_id": "g004",
+      "bbox": {
+        "x": 215,
+        "y": 3030,
+        "width": 87,
+        "height": 304
+      },
+      "reading_order_index": 4,
+      "source_text": {
+        "raw": "…校長室",
+        "nfc": "…校長室"
+      },
+      "fixed_translation": "…校長室",
+      "source_crop_sha256": "d687d0aea22db6a338b7b3beca3d514ecd9381e2b2ac81d3d33ca7a5f6ceb34b",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_4_layout.json",
+        "source_group_id": "g004"
+      }
+    },
+    {
+      "region_key": "f81020c46353:g005",
+      "legacy_group_id": "g005",
+      "bbox": {
+        "x": 134,
+        "y": 1880,
+        "width": 235,
+        "height": 723
+      },
+      "reading_order_index": 5,
+      "source_text": {
+        "raw": "あとは証拠となる資料を集めるだけだ",
+        "nfc": "あとは証拠となる資料を集めるだけだ"
+      },
+      "fixed_translation": "接下來只要收集能當證據的資料就行了",
+      "source_crop_sha256": "918f703c7169f88e1a55188a047b82b521bfac759f9badc51200ef7486df3ae0",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_caption_4_layout.json",
+        "source_group_id": "g005"
+      }
+    }
+  ]
+}

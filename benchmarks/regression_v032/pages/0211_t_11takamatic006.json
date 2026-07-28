@@ -1,0 +1,179 @@
+{
+  "schema_version": "page_ground_truth.v1",
+  "page_id": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+  "page_sha256": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+  "source_image": "samples/before_fix/0211_t_11takamatic006.jpg",
+  "fixture_source": "validation_samples/v032_dash_0211_layout.json",
+  "width": 1360,
+  "height": 1920,
+  "regions": [
+    {
+      "region_key": "01b5cbea3c23:g000",
+      "legacy_group_id": "g000",
+      "bbox": {
+        "x": 1235,
+        "y": 564,
+        "width": 30,
+        "height": 175
+      },
+      "reading_order_index": 0,
+      "source_text": {
+        "raw": "高町教導官！",
+        "nfc": "高町教導官！"
+      },
+      "fixed_translation": "高町教導官!",
+      "source_crop_sha256": "ff9eed01fa6e0f3a333c8e10874e0c5dc0c6a539a8de56d664e67e36a42f2cda",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_dash_0211_layout.json",
+        "source_group_id": "g000"
+      }
+    },
+    {
+      "region_key": "01b5cbea3c23:g001",
+      "legacy_group_id": "g001",
+      "bbox": {
+        "x": 1170,
+        "y": 73,
+        "width": 83,
+        "height": 28
+      },
+      "reading_order_index": 1,
+      "source_text": {
+        "raw": "数日前",
+        "nfc": "数日前"
+      },
+      "fixed_translation": "數日前",
+      "source_crop_sha256": "1b9ef73d4fc8072f1f4438aecc3b81587767d3df62c976e98a7b7f929c1aa2c9",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_dash_0211_layout.json",
+        "source_group_id": "g001"
+      }
+    },
+    {
+      "region_key": "01b5cbea3c23:g002",
+      "legacy_group_id": "g002",
+      "bbox": {
+        "x": 607,
+        "y": 1533,
+        "width": 44,
+        "height": 72
+      },
+      "reading_order_index": 2,
+      "source_text": {
+        "raw": "はい",
+        "nfc": "はい"
+      },
+      "fixed_translation": "是",
+      "source_crop_sha256": "547e58c462628990456e440d07ac95d8e1e8471a10af4bd8a481b5294ad8e83d",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_dash_0211_layout.json",
+        "source_group_id": "g002"
+      }
+    },
+    {
+      "region_key": "01b5cbea3c23:g003",
+      "legacy_group_id": "g003",
+      "bbox": {
+        "x": 515,
+        "y": 116,
+        "width": 88,
+        "height": 169
+      },
+      "reading_order_index": 3,
+      "source_text": {
+        "raw": "それじゃあ今日の訓練はこれで終了ッ！",
+        "nfc": "それじゃあ今日の訓練はこれで終了ッ！"
+      },
+      "fixed_translation": "那麼今天的訓練就到此結束!",
+      "source_crop_sha256": "a1975fb703cf2e6fe1b6357829897ea8cce49aa325608a226cd42f07a987f1f9",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_dash_0211_layout.json",
+        "source_group_id": "g003"
+      }
+    },
+    {
+      "region_key": "01b5cbea3c23:g004",
+      "legacy_group_id": "g004",
+      "bbox": {
+        "x": 517,
+        "y": 838,
+        "width": 74,
+        "height": 257
+      },
+      "reading_order_index": 4,
+      "source_text": {
+        "raw": "ありがとうございましたーッ",
+        "nfc": "ありがとうございましたーッ"
+      },
+      "fixed_translation": "謝謝指導!",
+      "source_crop_sha256": "10be21faaffa39c407f08c9827648058020535d54a91d974fb7aa30b6e7b0d10",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_dash_0211_layout.json",
+        "source_group_id": "g004"
+      }
+    },
+    {
+      "region_key": "01b5cbea3c23:g005",
+      "legacy_group_id": "g005",
+      "bbox": {
+        "x": 515,
+        "y": 1591,
+        "width": 72,
+        "height": 176
+      },
+      "reading_order_index": 5,
+      "source_text": {
+        "raw": "みんなお疲れさまっ",
+        "nfc": "みんなお疲れさまっ"
+      },
+      "fixed_translation": "大家辛苦了!",
+      "source_crop_sha256": "0b1f6eb20e40cb7ee7317f7c0af1b60a9ce5c4d79f9dec914328ba48b36d9b5b",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_dash_0211_layout.json",
+        "source_group_id": "g005"
+      }
+    },
+    {
+      "region_key": "01b5cbea3c23:g006",
+      "legacy_group_id": "g006",
+      "bbox": {
+        "x": 97,
+        "y": 145,
+        "width": 274,
+        "height": 142
+      },
+      "reading_order_index": 6,
+      "source_text": {
+        "raw": "この場所で",
+        "nfc": "この場所で"
+      },
+      "fixed_translation": "在這裡",
+      "source_crop_sha256": "bb04729f3ff9faa261d6a84478086e686fd95eb21f4610cafb6e4e576a50bc4f",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_dash_0211_layout.json",
+        "source_group_id": "g006"
+      }
+    }
+  ]
+}

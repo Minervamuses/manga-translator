@@ -136,6 +136,18 @@ def fingerprint_tree(root: Path) -> TreeFingerprint:
     return TreeFingerprint(sha256=digest.hexdigest(), files=tuple(entries))
 
 
+def fingerprint_manifest_entries(entries: Iterable[dict[str, Any]]) -> str:
+    digest = hashlib.sha256()
+    for entry in sorted(entries, key=lambda item: str(item["path"])):
+        digest.update(str(entry["path"]).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(entry["size"]).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(str(entry["sha256"]).encode("ascii"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def compare_tree(
     expected_files: Iterable[dict[str, Any]], current: TreeFingerprint
 ) -> dict[str, list[str]]:

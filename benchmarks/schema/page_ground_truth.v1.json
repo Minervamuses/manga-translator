@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://manga-translator.local/schema/page_ground_truth.v1.json",
+  "title": "Manga Translator Page Ground Truth v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "page_id",
+    "page_sha256",
+    "source_image",
+    "fixture_source",
+    "width",
+    "height",
+    "regions"
+  ],
+  "properties": {
+    "schema_version": {"const": "page_ground_truth.v1"},
+    "page_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "page_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_image": {"type": "string", "minLength": 1},
+    "fixture_source": {"type": "string", "minLength": 1},
+    "width": {"type": "integer", "minimum": 1},
+    "height": {"type": "integer", "minimum": 1},
+    "regions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/region"}
+    }
+  },
+  "$defs": {
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "region_key",
+        "legacy_group_id",
+        "bbox",
+        "reading_order_index",
+        "source_text",
+        "fixed_translation",
+        "source_crop_sha256",
+        "verified_by",
+        "verified_at",
+        "provenance"
+      ],
+      "properties": {
+        "region_key": {"type": "string", "minLength": 1},
+        "legacy_group_id": {"type": "string", "minLength": 1},
+        "bbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "width", "height"],
+          "properties": {
+            "x": {"type": "integer", "minimum": 0},
+            "y": {"type": "integer", "minimum": 0},
+            "width": {"type": "integer", "minimum": 1},
+            "height": {"type": "integer", "minimum": 1}
+          }
+        },
+        "polygon": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "array",
+            "prefixItems": [{"type": "number"}, {"type": "number"}],
+            "items": false
+          }
+        },
+        "reading_order_index": {"type": "integer", "minimum": 0},
+        "source_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["raw", "nfc"],
+          "properties": {
+            "raw": {"type": "string", "minLength": 1},
+            "nfc": {"type": "string", "minLength": 1}
+          }
+        },
+        "fixed_translation": {"type": "string", "minLength": 1},
+        "source_crop_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "verified_by": {"type": ["string", "null"]},
+        "verified_at": {"type": ["string", "null"], "format": "date"},
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "source_path", "source_group_id"],
+          "properties": {
+            "method": {"type": "string", "minLength": 1},
+            "source_path": {"type": "string", "minLength": 1},
+            "source_group_id": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}

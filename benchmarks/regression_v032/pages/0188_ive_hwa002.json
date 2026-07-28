@@ -1,0 +1,275 @@
+{
+  "schema_version": "page_ground_truth.v1",
+  "page_id": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+  "page_sha256": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+  "source_image": "samples/before_fix/0188_ive_hwa002.jpg",
+  "fixture_source": "validation_samples/v032_overlap_0188_layout.json",
+  "width": 1372,
+  "height": 1920,
+  "regions": [
+    {
+      "region_key": "5e79409955a1:g000",
+      "legacy_group_id": "g000",
+      "bbox": {
+        "x": 1222,
+        "y": 1288,
+        "width": 23,
+        "height": 140
+      },
+      "reading_order_index": 0,
+      "source_text": {
+        "raw": "…無茶言うな",
+        "nfc": "…無茶言うな"
+      },
+      "fixed_translation": "…別說傻話",
+      "source_crop_sha256": "0fddffbb40e375a70ca53871d9642a2d4a3464c6619908f81568f991b089287b",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g000"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g001",
+      "legacy_group_id": "g001",
+      "bbox": {
+        "x": 1162,
+        "y": 86,
+        "width": 60,
+        "height": 144
+      },
+      "reading_order_index": 1,
+      "source_text": {
+        "raw": "いい加減人質を放せ！",
+        "nfc": "いい加減人質を放せ！"
+      },
+      "fixed_translation": "夠了,快放人質!",
+      "source_crop_sha256": "d7f0e327c57ad56af36f7d0d0c091d20ca8b9f3fd7d362b0c71fe0205a8f18f3",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g001"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g002",
+      "legacy_group_id": "g002",
+      "bbox": {
+        "x": 953,
+        "y": 209,
+        "width": 55,
+        "height": 166
+      },
+      "reading_order_index": 2,
+      "source_text": {
+        "raw": "逃げ切れるはずないだろう！",
+        "nfc": "逃げ切れるはずないだろう！"
+      },
+      "fixed_translation": "你不可能逃得掉!",
+      "source_crop_sha256": "5d71a37a31ca4c0e0a394b70ee0b7d90a8e399b12390325b2c9613a5dbf67f21",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g002"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g003",
+      "legacy_group_id": "g003",
+      "bbox": {
+        "x": 762,
+        "y": 526,
+        "width": 91,
+        "height": 237
+      },
+      "reading_order_index": 3,
+      "source_text": {
+        "raw": "俺はちょっと…ここの酒の味に文句を言いにきただけなんだ",
+        "nfc": "俺はちょっと…ここの酒の味に文句を言いにきただけなんだ"
+      },
+      "fixed_translation": "我只是稍微…來抱怨這裡的酒不好喝而已",
+      "source_crop_sha256": "15159cf5d26dd6ea619f2d0d23df61b8054106d5dc1008d9006ee5ce4f272550",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g003"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g004",
+      "legacy_group_id": "g004",
+      "bbox": {
+        "x": 579,
+        "y": 1061,
+        "width": 92,
+        "height": 260
+      },
+      "reading_order_index": 4,
+      "source_text": {
+        "raw": "私は…三番街自衛騎士団所属セシリー・キャンベルだ",
+        "nfc": "私は…三番街自衛騎士団所属セシリー・キャンベルだ"
+      },
+      "fixed_translation": "我是…第三街自衛騎士團所屬的塞西莉・坎貝爾",
+      "source_crop_sha256": "20af62a90ee08ec5f223fe4a1015ac12ef8df64ce89a9c7a5f98eb5a79cc301b",
+      "verified_by": "execution-spec",
+      "verified_at": "2026-07-28",
+      "provenance": {
+        "method": "P0-02-known-0188-swap",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g004"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g005",
+      "legacy_group_id": "g005",
+      "bbox": {
+        "x": 406,
+        "y": 1111,
+        "width": 146,
+        "height": 212
+      },
+      "reading_order_index": 5,
+      "source_text": {
+        "raw": "男が酒場で騒いでいると通報を受けてこの始末ならどうなってこうなっただろう？",
+        "nfc": "男が酒場で騒いでいると通報を受けてこの始末ならどうなってこうなっただろう？"
+      },
+      "fixed_translation": "接到有人在酒館鬧事的通報,結果怎麼會變成這樣?",
+      "source_crop_sha256": "df408a892dca236dbbbf37443e35b3d8e28dafda6ea61bf1333cab3c4c5259d0",
+      "verified_by": "execution-spec",
+      "verified_at": "2026-07-28",
+      "provenance": {
+        "method": "P0-02-known-0188-swap",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g005"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g006",
+      "legacy_group_id": "g006",
+      "bbox": {
+        "x": 238,
+        "y": 1670,
+        "width": 56,
+        "height": 161
+      },
+      "reading_order_index": 6,
+      "source_text": {
+        "raw": "へー…そうかお前があの…",
+        "nfc": "へー…そうかお前があの…"
+      },
+      "fixed_translation": "喔…這樣啊,你就是那個…",
+      "source_crop_sha256": "70413a6241adc2b6573da6e2747e6216fd4e92bb93ec35307ac58b103ea0ef4a",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g006"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g007",
+      "legacy_group_id": "g007",
+      "bbox": {
+        "x": 119,
+        "y": 155,
+        "width": 54,
+        "height": 164
+      },
+      "reading_order_index": 7,
+      "source_text": {
+        "raw": "…うるせー！黙ってろッ",
+        "nfc": "…うるせー！黙ってろッ"
+      },
+      "fixed_translation": "…吵死了!給我閉嘴!",
+      "source_crop_sha256": "bd64c36312cd63052cb3731c0ba0985cecad516159f78753d21e693d16dab8a9",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g007"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g008",
+      "legacy_group_id": "g008",
+      "bbox": {
+        "x": 52,
+        "y": 530,
+        "width": 143,
+        "height": 368
+      },
+      "reading_order_index": 8,
+      "source_text": {
+        "raw": "それなのに何だテメェはいきなり剣を向けやがって怖えじゃねーか！俺は繊細なんだよ",
+        "nfc": "それなのに何だテメェはいきなり剣を向けやがって怖えじゃねーか！俺は繊細なんだよ"
+      },
+      "fixed_translation": "結果你這傢伙突然拿劍指著我,這不是很可怕嗎!我可是很纖細的!",
+      "source_crop_sha256": "ca5b9bce788d10ce6dc5c2e6161957c66eaf9666b513efe78f2665ad9d30bb64",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g008"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g009",
+      "legacy_group_id": "g009",
+      "bbox": {
+        "x": 106,
+        "y": 1191,
+        "width": 23,
+        "height": 142
+      },
+      "reading_order_index": 9,
+      "source_text": {
+        "raw": "…センリ？",
+        "nfc": "…センリ？"
+      },
+      "fixed_translation": "…塞西莉?",
+      "source_crop_sha256": "df4ca34214dbe13a4cad6499be10799c8365039e55c88b9356c9677f72546dd8",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g009"
+      }
+    },
+    {
+      "region_key": "5e79409955a1:g010",
+      "legacy_group_id": "g010",
+      "bbox": {
+        "x": 71,
+        "y": 1717,
+        "width": 58,
+        "height": 139
+      },
+      "reading_order_index": 10,
+      "source_text": {
+        "raw": "有名なセンリかぁ",
+        "nfc": "有名なセンリかぁ"
+      },
+      "fixed_translation": "有名的塞西莉啊",
+      "source_crop_sha256": "ad6f17cf053d82d83fb969d798c78309dbfba4974fa7a02500f4f5de5816770a",
+      "verified_by": null,
+      "verified_at": null,
+      "provenance": {
+        "method": "fixture_import",
+        "source_path": "validation_samples/v032_overlap_0188_layout.json",
+        "source_group_id": "g010"
+      }
+    }
+  ]
+}

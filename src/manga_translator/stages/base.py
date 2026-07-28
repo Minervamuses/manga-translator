@@ -42,19 +42,32 @@ class ArtifactSetContract:
     required: tuple[ArtifactContract, ...]
     additional_media_types: tuple[str, ...] = ()
 
+    @staticmethod
+    def _matches_media_type(expected: str, actual: str) -> bool:
+        if expected == "*/*":
+            return True
+        if expected.endswith("/*"):
+            return actual.startswith(expected[:-1])
+        return actual == expected
+
     def validate_payloads(self, artifacts: tuple[ArtifactPayload, ...]) -> None:
         if len(artifacts) < len(self.required):
             raise ValueError("stage returned fewer artifacts than its typed output contract")
         for index, expected in enumerate(self.required):
             actual = artifacts[index]
-            if actual.role != expected.role or actual.media_type != expected.media_type:
+            if actual.role != expected.role or not self._matches_media_type(
+                expected.media_type, actual.media_type
+            ):
                 raise ValueError(
                     "stage output contract mismatch at index "
                     f"{index}: expected {expected.role}/{expected.media_type}, "
                     f"got {actual.role}/{actual.media_type}"
                 )
         for actual in artifacts[len(self.required) :]:
-            if actual.media_type not in self.additional_media_types:
+            if not any(
+                self._matches_media_type(expected, actual.media_type)
+                for expected in self.additional_media_types
+            ):
                 raise ValueError(
                     f"stage returned undeclared additional media type: {actual.media_type}"
                 )
@@ -65,12 +78,17 @@ class ArtifactSetContract:
                 f"stage input {dependency.value} has fewer artifacts than its typed contract"
             )
         for index, expected in enumerate(self.required):
-            if artifacts[index].media_type != expected.media_type:
+            if not self._matches_media_type(
+                expected.media_type, artifacts[index].media_type
+            ):
                 raise ValueError(
                     f"stage input {dependency.value} media type mismatch at index {index}"
                 )
         for actual in artifacts[len(self.required) :]:
-            if actual.media_type not in self.additional_media_types:
+            if not any(
+                self._matches_media_type(expected, actual.media_type)
+                for expected in self.additional_media_types
+            ):
                 raise ValueError(
                     f"stage input {dependency.value} has undeclared media type: "
                     f"{actual.media_type}"

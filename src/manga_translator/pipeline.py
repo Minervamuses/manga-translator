@@ -68,8 +68,20 @@ from .result import (
     ResultIssue,
     derive_batch_status,
 )
-from .stages.legacy import build_legacy_stage_specs, stage_config
+from .stages.adapters import (
+    build_pipeline_stage_specs,
+    glossary_fingerprint,
+    stage_config,
+)
+from .stages.base import (
+    ArtifactPayload,
+    StageContext,
+    StageFunction,
+    StageInputs,
+    StageOutputs,
+)
 from .stages.runner import StageOutcome, StageRunner
+from .stages.state import PipelineStageState, decode_pipeline_state, encode_pipeline_state
 from .storage import ArtifactStore, JobStore
 from .translator import (
     load_glossary,
@@ -1201,6 +1213,7 @@ def _group_failure_issues(
     failure_kinds = {
         "ocr_failed": ("ocr_group_failed", "ocr"),
         "translation_rejected": ("translation_rejected", "translation"),
+        "render_collision_rejected": ("render_collision_rejected", "layout"),
         "layout_rejected": ("layout_rejected", "layout"),
         "layout_collision_rejected": ("layout_collision_rejected", "layout"),
     }
@@ -1226,6 +1239,572 @@ def _group_failure_issues(
             )
         )
     return issues
+
+
+def _read_stage_state(
+    store: JobStore,
+    inputs: StageInputs,
+    stage: StageName,
+) -> PipelineStageState:
+    return decode_pipeline_state(
+        inputs.upstream[stage],
+        read_bytes=store.artifacts.read_bytes,
+    )
+
+
+def _source_artifact(inputs: StageInputs) -> ArtifactRef:
+    artifacts = inputs.upstream[StageName.SOURCE]
+    if len(artifacts) != 1:
+        raise ValueError("source stage must provide exactly one artifact")
+    return artifacts[0]
+
+
+def _source_ref_from_extras(extras: dict[str, object]) -> ArtifactRef:
+    payload = extras.get("source_artifact")
+    if not isinstance(payload, dict):
+        raise TypeError("pipeline state is missing its source artifact reference")
+    return ArtifactRef.model_validate(payload)
+
+
+def _decode_source_image(store: JobStore, reference: ArtifactRef) -> np.ndarray:
+    raw = store.artifacts.read_bytes(reference.sha256)
+    image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("source artifact is not a decodable image")
+    return image
+
+
+def _png_payload(image: np.ndarray) -> bytes:
+    encoded, buffer = cv2.imencode(".png", image)
+    if not encoded:
+        raise ImageEncodeError("stage image could not be encoded as PNG")
+    return buffer.tobytes()
+
+
+def _source_media_type(source_bytes: bytes, image_path: Path) -> str:
+    if source_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if source_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if source_bytes.startswith(b"BM"):
+        return "image/bmp"
+    if source_bytes.startswith(b"RIFF") and source_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    suffix = image_path.suffix.lower().lstrip(".")
+    if suffix == "jpg":
+        suffix = "jpeg"
+    return f"image/{suffix}" if suffix else "application/octet-stream"
+
+
+def _mapping_snapshot_payload(groups: list[TextGroup]) -> list[dict[str, object]]:
+    return [GroupMappingSnapshot.from_group(group).to_manifest() for group in groups]
+
+
+def _mapping_snapshot_identity(payload: dict[str, object]) -> tuple[str, str]:
+    chain = payload.get("chain")
+    if isinstance(chain, dict):
+        request_item = chain.get("request_item")
+        if isinstance(request_item, str) and request_item:
+            return ("request_item", request_item)
+        region_key = chain.get("region")
+        if isinstance(region_key, str) and region_key:
+            return ("region", region_key)
+    return ("group", str(payload.get("group_id", "")))
+
+
+def _merge_mapping_snapshot_payloads(
+    previous: object,
+    groups: list[TextGroup],
+) -> list[dict[str, object]]:
+    tracked: dict[tuple[str, str], dict[str, object]] = {}
+    if isinstance(previous, list):
+        for item in previous:
+            if isinstance(item, dict):
+                tracked[_mapping_snapshot_identity(item)] = dict(item)
+    for item in _mapping_snapshot_payload(groups):
+        tracked[_mapping_snapshot_identity(item)] = item
+    return list(tracked.values())
+
+
+def _layout_plan_payload(plan: TextLayoutPlan) -> dict[str, object]:
+    return {
+        "bbox": list(plan.bbox),
+        "block_height": plan.block_height,
+        "block_width": plan.block_width,
+        "center_x": plan.center_x,
+        "center_y": plan.center_y,
+        "chunks": list(plan.chunks),
+        "direction": plan.direction,
+        "fits": plan.fits,
+        "font_size": plan.font_size,
+        "primary_step": plan.primary_step,
+        "reason": plan.reason,
+        "score": plan.score,
+        "secondary_step": plan.secondary_step,
+    }
+
+
+def _layout_plan_from_payload(payload: object) -> TextLayoutPlan:
+    if not isinstance(payload, dict):
+        raise TypeError("layout plan payload must be an object")
+    bbox = payload.get("bbox")
+    chunks = payload.get("chunks")
+    if not isinstance(bbox, list) or len(bbox) != 4 or not isinstance(chunks, list):
+        raise ValueError("layout plan payload has invalid bbox/chunks")
+    return TextLayoutPlan(
+        bbox=tuple(int(value) for value in bbox),
+        direction=str(payload["direction"]),
+        font_size=int(payload["font_size"]),
+        chunks=tuple(str(value) for value in chunks),
+        primary_step=float(payload["primary_step"]),
+        secondary_step=float(payload["secondary_step"]),
+        center_x=float(payload["center_x"]),
+        center_y=float(payload["center_y"]),
+        block_width=float(payload["block_width"]),
+        block_height=float(payload["block_height"]),
+        fits=bool(payload["fits"]),
+        reason=str(payload["reason"]),
+        score=float(payload["score"]),
+    )
+
+
+def _build_pipeline_stage_runners(
+    *,
+    image_path: Path,
+    config: AppConfig,
+    glossary: dict[str, str],
+    source_bytes: bytes,
+    store: JobStore,
+) -> dict[StageName, StageFunction]:
+    page_id = hashlib.sha256(source_bytes).hexdigest()
+    source_media_type = _source_media_type(source_bytes, image_path)
+
+    def source_stage(_context: StageContext, _inputs: StageInputs) -> StageOutputs:
+        return StageOutputs(
+            (ArtifactPayload(source_bytes, source_media_type, "source"),)
+        )
+
+    def detect_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
+        reference = _source_artifact(inputs)
+        if reference.sha256 != page_id:
+            raise ValueError("source stage artifact does not match the page identity")
+        image = _decode_source_image(store, reference)
+        with profile_span("detection"):
+            detection = detect_text_regions(image, config.detection, config.postprocess)
+        set_page_profile_metrics(
+            page_id,
+            width=int(image.shape[1]),
+            height=int(image.shape[0]),
+            detected_groups=len(detection.groups),
+        )
+        return encode_pipeline_state(
+            detection,
+            extras={"source_artifact": reference.model_dump(mode="json")},
+        )
+
+    def adapter_state(
+        inputs: StageInputs,
+        *,
+        adapter: str,
+    ) -> StageOutputs:
+        state = _read_stage_state(store, inputs, StageName.DETECT)
+        reference = _source_artifact(inputs)
+        if _source_ref_from_extras(state.extras) != reference:
+            raise ValueError(f"{adapter} stage received inconsistent source lineage")
+        return encode_pipeline_state(
+            state.detection,
+            extras={**state.extras, f"{adapter}_adapter": "v0.3.2-pass-through"},
+        )
+
+    def style_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
+        return adapter_state(inputs, adapter="style")
+
+    def safe_region_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
+        return adapter_state(inputs, adapter="safe_region")
+
+    def ocr_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
+        state = _read_stage_state(store, inputs, StageName.DETECT)
+        reference = _source_artifact(inputs)
+        if _source_ref_from_extras(state.extras) != reference:
+            raise ValueError("OCR stage received inconsistent source lineage")
+        original = _decode_source_image(store, reference)
+        detection = state.detection
+        regions_by_id = {region.id: region for region in detection.regions_post}
+        groups = list(detection.groups)
+        if groups:
+            initialize_ocr_model()
+        for group in groups:
+            try:
+                with profile_span("ocr_group", group_id=group.id):
+                    ocr_result = ocr_group_detailed(
+                        image=original,
+                        group=group,
+                        regions_by_id=regions_by_id,
+                        cfg=config.ocr,
+                        image_key=f"artifact:{page_id}",
+                    )
+                group.ocr_text = ocr_result.text
+                group.ocr_confidence = ocr_result.confidence
+                group.ocr_source = ocr_result.source
+                group.ocr_candidates = [
+                    candidate.to_dict() for candidate in ocr_result.candidates
+                ]
+                group_regions = [
+                    regions_by_id[region_id]
+                    for region_id in group.region_ids
+                    if region_id in regions_by_id
+                ]
+                fallback_only = bool(group_regions) and all(
+                    region.source == "mask_fallback" for region in group_regions
+                )
+                has_pixel_mask = (
+                    group.mask is not None
+                    and group.mask.size > 0
+                    and bool(np.any(group.mask))
+                )
+                accepted, reason = assess_ocr_result(
+                    ocr_result,
+                    config.ocr,
+                    fallback_only=fallback_only,
+                )
+                if not has_pixel_mask:
+                    accepted, reason = False, "missing_text_mask"
+                group.ocr_text_norm = (
+                    normalize_ocr_text(ocr_result.text, weak=True) if accepted else ""
+                )
+                group.status = "ocr_done" if accepted else "ocr_rejected"
+                group.skip_reason = "" if accepted else reason
+            except OCRInitializationError:
+                raise
+            except Exception as error:  # noqa: BLE001 - one group must not poison its peers
+                group.ocr_text = ""
+                group.ocr_text_norm = ""
+                group.ocr_confidence = 0.0
+                group.ocr_source = "error"
+                group.status = "ocr_failed"
+                group.skip_reason = str(error)
+        detection.groups = groups
+        return encode_pipeline_state(detection, extras=state.extras)
+
+    def order_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
+        state = _read_stage_state(store, inputs, StageName.DETECT)
+        reference = _source_artifact(inputs)
+        if _source_ref_from_extras(state.extras) != reference:
+            raise ValueError("order stage received inconsistent source lineage")
+        regions_by_id = {region.id: region for region in state.detection.regions_post}
+        state.detection.groups = _refresh_group_order(
+            list(state.detection.groups), regions_by_id, config.postprocess
+        )
+        return encode_pipeline_state(
+            state.detection,
+            extras={
+                **state.extras,
+                "reading_order": config.postprocess.reading_order,
+                "ordered_region_ids": [
+                    list(group.region_ids) for group in state.detection.groups
+                ],
+            },
+        )
+
+    def translate_stage(context: StageContext, inputs: StageInputs) -> StageOutputs:
+        state = _read_stage_state(store, inputs, StageName.OCR)
+        order = _read_stage_state(store, inputs, StageName.ORDER)
+        if order.extras.get("reading_order") != config.postprocess.reading_order:
+            raise ValueError("translation stage received a mismatched order artifact")
+        if _source_ref_from_extras(state.extras) != _source_ref_from_extras(order.extras):
+            raise ValueError("translation stage received inconsistent source lineage")
+        detection = state.detection
+        regions_by_id = {region.id: region for region in detection.regions_post}
+        groups = _merge_duplicate_groups(list(detection.groups), config.postprocess)
+        groups = _refresh_group_order(groups, regions_by_id, config.postprocess)
+        translatable = _prepare_translation_groups(groups, page_id, config)
+        if translatable:
+            _ordered, _texts, request = _build_translation_request(
+                translatable, page_id
+            )
+            for group in translatable:
+                group.mapping_chain["request_item"] = request.by_region_key[
+                    group.mapping_region_key
+                ].item_id
+
+            def fetch() -> bytes:
+                batch = _request_translations(translatable, page_id, config, glossary)
+                if any(item.raw_response_ref is None for item in batch.responses):
+                    raise ValueError(
+                        "durable translation requires exact raw provider response references"
+                    )
+                return _serialize_translation_bundle(
+                    batch,
+                    artifact_root=config.paths.output_dir,
+                )
+
+            bundle = context.get_or_fetch_raw_response(request.request_id, fetch)
+            translations, raw_artifacts = _deserialize_translation_bundle(bundle)
+            if translations.request != request:
+                raise MappingContractError(
+                    [],
+                    raw_response_refs=(
+                        item.raw_response_ref
+                        for item in translations.responses
+                        if item.raw_response_ref is not None
+                    ),
+                )
+            persisted: list[dict[str, object]] = []
+            for reference, raw in raw_artifacts.values():
+                artifact = store.store_artifact(
+                    raw,
+                    media_type=reference.media_type,
+                    owner_type="provider_raw_response",
+                    owner_id=(
+                        f"{context.job_id}:{context.page_id}:{context.fingerprint}:"
+                        f"{reference.sha256}"
+                    ),
+                )
+                if (
+                    artifact.sha256 != reference.sha256
+                    or artifact.size_bytes != reference.size_bytes
+                ):
+                    raise ValueError("persisted provider response does not match its bundle")
+                persisted.append(artifact.model_dump(mode="json"))
+            _apply_translation_batch(translatable, translations, config)
+        else:
+            persisted = []
+        detection.groups = groups
+        return encode_pipeline_state(
+            detection,
+            extras={
+                **state.extras,
+                "mapping_snapshots": _mapping_snapshot_payload(groups),
+                "provider_response_artifacts": persisted,
+            },
+        )
+
+    def layout_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
+        state = _read_stage_state(store, inputs, StageName.TRANSLATE)
+        style = _read_stage_state(store, inputs, StageName.STYLE)
+        safe_region = _read_stage_state(store, inputs, StageName.SAFE_REGION)
+        reference = _source_ref_from_extras(state.extras)
+        if (
+            _source_ref_from_extras(style.extras) != reference
+            or _source_ref_from_extras(safe_region.extras) != reference
+        ):
+            raise ValueError("layout stage received inconsistent source lineage")
+        original = _decode_source_image(store, reference)
+        detection = state.detection
+        regions_by_id = {region.id: region for region in detection.regions_post}
+        groups = list(detection.groups)
+        groups = _merge_translation_duplicates(groups, config.postprocess)
+        groups = _resolve_render_collisions(groups, regions_by_id, config.postprocess)
+        groups = _refresh_group_order(groups, regions_by_id, config.postprocess)
+        with profile_span("layout", group_count=len(groups)):
+            plans = _preflight_layout_plans(original, groups, regions_by_id, config)
+        _record_mapping_layout_plans(groups)
+        detection.groups = groups
+        return encode_pipeline_state(
+            detection,
+            extras={
+                **state.extras,
+                "layout_plans": {
+                    group_id: _layout_plan_payload(plan)
+                    for group_id, plan in sorted(plans.items())
+                },
+                "mapping_snapshots": _merge_mapping_snapshot_payloads(
+                    state.extras.get("mapping_snapshots"), groups
+                ),
+            },
+        )
+
+    def inpaint_render_stage(
+        _context: StageContext, inputs: StageInputs
+    ) -> StageOutputs:
+        state = _read_stage_state(store, inputs, StageName.LAYOUT)
+        reference = _source_artifact(inputs)
+        if _source_ref_from_extras(state.extras) != reference:
+            raise ValueError("render stage received inconsistent source lineage")
+        original = _decode_source_image(store, reference)
+        detection = state.detection
+        groups = list(detection.groups)
+        regions_by_id = {region.id: region for region in detection.regions_post}
+        layout_payloads = state.extras.get("layout_plans")
+        if not isinstance(layout_payloads, dict):
+            raise TypeError("render stage is missing layout plans")
+        plans = {
+            str(group_id): _layout_plan_from_payload(payload)
+            for group_id, payload in layout_payloads.items()
+        }
+        detection.groups = groups
+        with profile_span("inpaint"):
+            inpainted = inpaint_regions(original, detection, config.inpainting)
+        rendered = inpainted.copy()
+        for group in groups:
+            if not (
+                group.translation_valid
+                and group.translation.strip()
+                and group.id in plans
+            ):
+                continue
+            with profile_span("render", group_id=group.id):
+                rendered = render_text_into_group(
+                    image=rendered,
+                    group=group,
+                    regions_by_id=regions_by_id,
+                    text=group.translation,
+                    font_path=config.paths.font,
+                    cfg=config.typesetting,
+                    fallback_font_path=config.paths.font_fallback,
+                    layout_plan=plans[group.id],
+                    layout_reference_image=original,
+                )
+            group.mapping_chain["render_target"] = f"render:{group.id}"
+        inpainted_raw = _png_payload(inpainted)
+        rendered_raw = _png_payload(rendered)
+        rendered_sha256 = hashlib.sha256(rendered_raw).hexdigest()
+        detection.groups = groups
+        encoded_state = encode_pipeline_state(
+            detection,
+            extras={
+                **state.extras,
+                "inpainted_image_sha256": hashlib.sha256(inpainted_raw).hexdigest(),
+                "mapping_snapshots": _merge_mapping_snapshot_payloads(
+                    state.extras.get("mapping_snapshots"), groups
+                ),
+                "rendered_image_sha256": rendered_sha256,
+            },
+        )
+        return StageOutputs(
+            (
+                *encoded_state.artifacts,
+                ArtifactPayload(inpainted_raw, "image/png", "inpainted_page"),
+                ArtifactPayload(rendered_raw, "image/png", "rendered_page"),
+            )
+        )
+
+    def encode_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
+        state = _read_stage_state(store, inputs, StageName.INPAINT_RENDER)
+        rendered_sha256 = state.extras.get("rendered_image_sha256")
+        if not isinstance(rendered_sha256, str):
+            raise TypeError("render stage state is missing the rendered image hash")
+        artifacts = {
+            artifact.sha256: artifact
+            for artifact in inputs.upstream[StageName.INPAINT_RENDER]
+        }
+        rendered = artifacts.get(rendered_sha256)
+        if rendered is None or rendered.media_type != "image/png":
+            raise ValueError("rendered image is not a declared render-stage artifact")
+        return StageOutputs(
+            (
+                ArtifactPayload(
+                    store.artifacts.read_bytes(rendered.sha256),
+                    "image/png",
+                    "encoded_page",
+                ),
+            )
+        )
+
+    return {
+        StageName.SOURCE: source_stage,
+        StageName.DETECT: detect_stage,
+        StageName.STYLE: style_stage,
+        StageName.SAFE_REGION: safe_region_stage,
+        StageName.OCR: ocr_stage,
+        StageName.ORDER: order_stage,
+        StageName.TRANSLATE: translate_stage,
+        StageName.LAYOUT: layout_stage,
+        StageName.INPAINT_RENDER: inpaint_render_stage,
+        StageName.ENCODE: encode_stage,
+    }
+
+
+def _mapping_snapshots_from_extras(extras: dict[str, object]) -> list[GroupMappingSnapshot]:
+    payloads = extras.get("mapping_snapshots")
+    if not isinstance(payloads, list):
+        return []
+    snapshots: list[GroupMappingSnapshot] = []
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            raise TypeError("mapping snapshot payload must be an object")
+        region_ids = payload.get("region_ids")
+        chain = payload.get("chain")
+        if not isinstance(region_ids, list) or not isinstance(chain, dict):
+            raise TypeError("mapping snapshot region_ids/chain have invalid types")
+        duplicate_of = payload.get("duplicate_of")
+        snapshots.append(
+            GroupMappingSnapshot(
+                group_id=str(payload["group_id"]),
+                region_ids=tuple(str(value) for value in region_ids),
+                group_status=str(payload["group_status"]),
+                translation_valid=bool(payload["translation_valid"]),
+                skip_reason=str(payload["skip_reason"]),
+                duplicate_of=(str(duplicate_of) if duplicate_of is not None else None),
+                chain=dict(chain),
+            )
+        )
+    return snapshots
+
+
+def _page_result_from_stage_outcomes(
+    *,
+    image_path: Path,
+    store: JobStore,
+    outcomes: dict[StageName, StageOutcome],
+) -> PageResult:
+    render_state = decode_pipeline_state(
+        outcomes[StageName.INPAINT_RENDER].outputs,
+        read_bytes=store.artifacts.read_bytes,
+    )
+    encoded_outputs = outcomes[StageName.ENCODE].outputs
+    if len(encoded_outputs) != 1 or encoded_outputs[0].media_type != "image/png":
+        raise ValueError("encode stage did not produce one PNG artifact")
+    encoded_raw = store.artifacts.read_bytes(encoded_outputs[0].sha256)
+    image = cv2.imdecode(np.frombuffer(encoded_raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("encode stage output is not a decodable PNG")
+    original = _decode_source_image(
+        store,
+        _source_ref_from_extras(render_state.extras),
+    )
+    detection = render_state.detection
+    groups = list(detection.groups)
+    detection_issues = [
+        ResultIssue(
+            code=issue.code,
+            message=issue.message,
+            stage="detection",
+            page_id=outcomes[StageName.SOURCE].outputs[0].sha256,
+            details=issue.details,
+        )
+        for issue in detection.issues
+    ]
+    group_issues = _group_failure_issues(
+        groups,
+        outcomes[StageName.SOURCE].outputs[0].sha256,
+    )
+    blocking = group_issues[0] if group_issues else None
+    page_id = outcomes[StageName.SOURCE].outputs[0].sha256
+    set_page_profile_metrics(
+        page_id,
+        final_groups=len(groups),
+        renderable_groups=sum(
+            group.translation_valid and bool(group.translation.strip()) for group in groups
+        ),
+    )
+    return PageResult(
+        page_id=page_id,
+        source_path=image_path,
+        status="blocked" if blocking is not None else "succeeded",
+        image=image,
+        source_image=original,
+        regions=detection.regions_post,
+        ocr_results=[group.ocr_text for group in groups],
+        translations=[group.translation for group in groups],
+        groups=groups,
+        mapping_chains=(
+            _mapping_snapshots_from_extras(render_state.extras)
+            or [GroupMappingSnapshot.from_group(group) for group in groups]
+        ),
+        issues=[*detection_issues, *group_issues],
+        stage_failure=blocking.stage if blocking is not None else None,
+    )
 
 
 def _dump_debug_artifacts(
@@ -1264,7 +1843,7 @@ def _initial_page_document(
     page_id = hashlib.sha256(source_bytes).hexdigest()
     original_artifact = store.store_artifact(
         source_bytes,
-        media_type="application/octet-stream",
+        media_type=_source_media_type(source_bytes, image_path),
         owner_type="source_page",
         owner_id=f"{job_id}:{page_id}:original",
     )
@@ -1318,7 +1897,21 @@ def _typed_issue(issue: ResultIssue) -> Issue:
     )
 
 
-def _document_from_legacy_result(
+def _raw_response_artifact(group: TextGroup) -> ArtifactRef:
+    response = group.mapping_chain.get("raw_response_item")
+    if not isinstance(response, dict):
+        raise TypeError(f"translated group {group.id} has no raw response mapping")
+    payload = response.get("artifact")
+    if not isinstance(payload, dict):
+        raise TypeError(f"translated group {group.id} has no raw response artifact")
+    return ArtifactRef(
+        sha256=str(payload["sha256"]),
+        media_type=str(payload["media_type"]),
+        size_bytes=int(payload["size_bytes"]),
+    )
+
+
+def _document_from_page_result(
     *,
     previous: PageDocument,
     page: PageResult,
@@ -1364,8 +1957,19 @@ def _document_from_legacy_result(
         region.id: revision
         for region, revision in zip(page.regions, reconciled.current_revisions, strict=True)
     }
-    ocr_records: list[OCRRecord] = []
-    translations: list[TranslationRecord] = []
+    current_revision_ids = {
+        revision.revision_id for revision in reconciled.current_revisions
+    }
+    ocr_records: list[OCRRecord] = [
+        record
+        for record in previous.ocr_records
+        if record.revision_id not in current_revision_ids
+    ]
+    translations: list[TranslationRecord] = [
+        record
+        for record in previous.translations
+        if record.revision_id not in current_revision_ids
+    ]
     group_issues: list[Issue] = []
     recorded_ocr: set[str] = set()
     recorded_translation: set[str] = set()
@@ -1388,30 +1992,23 @@ def _document_from_legacy_result(
                         revision_id=revision.revision_id,
                         candidates=(candidate,),
                         selected_index=0,
-                        model_revision="legacy-v0.3.2",
-                        preprocess_version="legacy-v0.3.2",
+                        model_revision="kha-white/manga-ocr-base:revision-unpinned",
+                        preprocess_version="v0.3.2-ensemble.1",
                     )
                 )
                 recorded_ocr.add(revision.revision_id)
             if group.translation_valid and revision.revision_id not in recorded_translation:
-                raw_response = json.dumps(
-                    {"text": group.translation, "adapter": "legacy-v0.3.2"},
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-                raw_ref = store.store_artifact(
-                    raw_response,
-                    media_type="application/vnd.manga-translator.legacy-response+json",
-                    owner_type="legacy_translation",
-                    owner_id=f"{job_id}:{page.page_id}:{group.id}",
-                )
+                request_item = group.mapping_chain.get("request_item")
+                if not isinstance(request_item, str) or not request_item:
+                    raise ValueError(
+                        f"translated group {group.id} has no durable request item identity"
+                    )
                 translations.append(
                     TranslationRecord(
                         region_id=revision.region_id,
                         revision_id=revision.revision_id,
-                        request_item_id=group.mapping_region_key or group.id,
-                        raw_response_ref=raw_ref,
+                        request_item_id=request_item,
+                        raw_response_ref=_raw_response_artifact(group),
                         validated_text=group.translation,
                     )
                 )
@@ -1434,10 +2031,24 @@ def _document_from_legacy_result(
                         message=group.skip_reason,
                         page_id=page.page_id,
                         region_id=revision.region_id,
-                        details={"legacy_group_id": group.id, "legacy_status": group.status},
+                        details={"group_id": group.id, "group_status": group.status},
                     )
                 )
     stage_records = _stage_records(outcomes)
+    retained_entities = tuple(
+        entity
+        for entity in previous.entities
+        if entity.entity_id != "_page_result" and entity.kind != "mapping_snapshot"
+    )
+    mapping_entities = tuple(
+        EntityRecord(
+            entity_id=f"_mapping:{index:04d}",
+            kind="mapping_snapshot",
+            canonical_name=snapshot.group_status or "unknown",
+            attributes=snapshot.to_manifest(),
+        )
+        for index, snapshot in enumerate(page.mapping_chains)
+    )
     return PageDocument(
         source=previous.source,
         region_identities=reconciled.identities,
@@ -1446,16 +2057,22 @@ def _document_from_legacy_result(
         translations=tuple(translations),
         stages=stage_records,
         issues=tuple(reconciled.issues)
-        + tuple(_typed_issue(issue) for issue in page.issues)
+        + tuple(
+            _typed_issue(issue)
+            for issue in page.issues
+            if "group_id" not in issue.details
+        )
         + tuple(group_issues),
-        entities=(
+        entities=retained_entities
+        + (
             EntityRecord(
                 entity_id="_page_result",
                 kind="pipeline_result",
                 canonical_name=page.status,
                 attributes={"stage_failure": page.stage_failure},
             ),
-        ),
+        )
+        + mapping_entities,
     )
 
 
@@ -1466,7 +2083,9 @@ def _stage_records(outcomes: dict[StageName, StageOutcome]) -> tuple[StageRecord
             status=StageStatus.SUCCEEDED,
             fingerprint=outcome.fingerprint,
             output_hashes=tuple(item.sha256 for item in outcome.outputs),
-            cache_hit=outcome.cache_hit,
+            # Cache hits are run-attempt telemetry kept in SQLite.  Persisting
+            # them here would change canonical PageDocument bytes on a replay.
+            cache_hit=False,
         )
         for name, outcome in outcomes.items()
     )
@@ -1490,6 +2109,9 @@ def _page_result_from_document(
     status = entity.canonical_name if entity is not None else "succeeded"
     if status not in {"succeeded", "failed", "blocked"}:
         status = "failed"
+    active_revision_ids = {
+        revision.revision_id for revision in _active_region_revisions(document)
+    }
     regions = [
         TextRegion(
             id=str(revision.region_id),
@@ -1514,8 +2136,22 @@ def _page_result_from_document(
             record.candidates[record.selected_index].raw_text
             for record in document.ocr_records
             if record.selected_index is not None
+            and record.revision_id in active_revision_ids
         ],
-        translations=[record.validated_text for record in document.translations],
+        translations=[
+            record.validated_text
+            for record in document.translations
+            if record.revision_id in active_revision_ids
+        ],
+        mapping_chains=_mapping_snapshots_from_extras(
+            {
+                "mapping_snapshots": [
+                    item.attributes
+                    for item in document.entities
+                    if item.kind == "mapping_snapshot"
+                ]
+            }
+        ),
         issues=[
             ResultIssue(
                 code=issue.code.value,
@@ -1556,22 +2192,19 @@ def process_single_page_staged(
             image_path=image_path, source_bytes=source_bytes, job_id=job_id, store=store
         )
         store.store_page_document(job_id, previous)
-    glossary_revision = hashlib.sha256(
-        json.dumps(glossary, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    glossary_revision = glossary_fingerprint(glossary)
     config_payload = stage_config(config, glossary_revision)
-    result_holder: dict[str, PageResult] = {}
-    specs = build_legacy_stage_specs(
+    runners = _build_pipeline_stage_runners(
         image_path=image_path,
         config=config,
         glossary=glossary,
         source_bytes=source_bytes,
         store=store,
-        process_page=process_single_page,
-        result_holder=result_holder,
-        debug=debug,
-        save_intermediate=save_intermediate,
-        prep_manual=prep_manual,
+    )
+    specs = build_pipeline_stage_specs(
+        config=config,
+        glossary_revision=glossary_revision,
+        runners=runners,
     )
     outcomes = StageRunner(
         store=store,
@@ -1580,19 +2213,19 @@ def process_single_page_staged(
         specs=specs,
         config=config_payload,
     ).run(resume=resume, force_stage=force_stage)
-    page = result_holder.get("page")
-    if page is None:
-        page = _page_result_from_document(previous, outcomes[StageName.ENCODE].outputs[0], store)
-        document = previous
-    else:
-        document = _document_from_legacy_result(
-            previous=previous,
-            page=page,
-            outcomes=outcomes,
-            store=store,
-            job_id=job_id,
-        )
-        store.store_page_document(job_id, document)
+    page = _page_result_from_stage_outcomes(
+        image_path=image_path,
+        store=store,
+        outcomes=outcomes,
+    )
+    document = _document_from_page_result(
+        previous=previous,
+        page=page,
+        outcomes=outcomes,
+        store=store,
+        job_id=job_id,
+    )
+    store.store_page_document(job_id, document)
     if dump_json or prep_manual:
         dump_page_document(config.paths.output_dir, image_path.name, document)
     return page

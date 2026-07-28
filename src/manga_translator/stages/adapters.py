@@ -22,7 +22,7 @@ from .base import (
 from .runner import STAGE_DAG
 from .state import MASK_MEDIA_TYPE, STATE_MEDIA_TYPE
 
-SOURCE_MEDIA_TYPE = "application/octet-stream"
+SOURCE_MEDIA_TYPE = "image/*"
 ENCODED_MEDIA_TYPE = "image/png"
 
 SOURCE_CONTRACT = ArtifactSetContract(

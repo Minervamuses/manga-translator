@@ -106,6 +106,20 @@ class TextGroup:
         return self.bbox[3]
 
 
+@dataclass(frozen=True)
+class DetectorIssue:
+    code: str
+    message: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DetectorRuntime:
+    device: str
+    half: bool
+    issues: tuple[DetectorIssue, ...] = ()
+
+
 @dataclass
 class DetectionResult:
     regions_raw: list[TextRegion]
@@ -114,6 +128,7 @@ class DetectionResult:
     mask: np.ndarray
     raw_mask: np.ndarray | None = None
     raw_blocks: list[Any] = field(default_factory=list)
+    issues: list[DetectorIssue] = field(default_factory=list)
 
     @property
     def regions(self) -> list[TextRegion]:
@@ -123,50 +138,95 @@ class DetectionResult:
 
 _detector: Any | None = None
 _detector_key: tuple[str, str, bool, float, float, float] | None = None
-_forced_cpu_due_cuda_error = False
 
 
-def _is_cuda_runtime_error(err: Exception) -> bool:
+def _classify_cuda_error(err: Exception) -> Literal[
+    "oom", "unsupported_kernel", "device_lost", "other"
+] | None:
     msg = str(err).lower()
-    patterns = (
-        "cuda error",
-        "no kernel image is available",
-        "invalid device function",
-        "device-side assert",
-        "cuda out of memory",
-        "out of memory",
-    )
-    return any(p in msg for p in patterns)
+    if "out of memory" in msg:
+        return "oom"
+    if any(
+        pattern in msg
+        for pattern in (
+            "no kernel image is available",
+            "invalid device function",
+            "unsupported kernel",
+            "not implemented for 'half'",
+        )
+    ):
+        return "unsupported_kernel"
+    if any(
+        pattern in msg
+        for pattern in (
+            "device lost",
+            "device-side assert",
+            "unspecified launch failure",
+            "context is destroyed",
+        )
+    ):
+        return "device_lost"
+    if any(pattern in msg for pattern in ("cuda", "cudnn", "cublas")):
+        return "other"
+    return None
 
 
-def _resolve_device(device: str) -> str:
-    if _forced_cpu_due_cuda_error and device.lower() == "cuda":
-        return "cpu"
-    requested = device.lower()
+def _resolve_detector_runtime(cfg: DetectionConfig) -> DetectorRuntime:
+    requested = cfg.device.lower()
+    issues: list[DetectorIssue] = []
+    resolved = requested
     if requested == "cuda" and not torch.cuda.is_available():
         console.print("[yellow]偵測器要求 cuda，但目前不可用，改用 cpu[/]")
-        return "cpu"
-    return requested
+        resolved = "cpu"
+        issues.append(
+            DetectorIssue(
+                code="detector_device_unavailable",
+                message="CUDA unavailable; detector downgraded to CPU",
+                details={"requested_device": requested, "resolved_device": resolved},
+            )
+        )
+    elif requested == "mps" and not torch.backends.mps.is_available():
+        console.print("[yellow]偵測器要求 mps，但目前不可用，改用 cpu[/]")
+        resolved = "cpu"
+        issues.append(
+            DetectorIssue(
+                code="detector_device_unavailable",
+                message="MPS unavailable; detector downgraded to CPU",
+                details={"requested_device": requested, "resolved_device": resolved},
+            )
+        )
+
+    half = bool(cfg.half and resolved == "cuda")
+    if cfg.half and not half:
+        issues.append(
+            DetectorIssue(
+                code="detector_fp16_downgraded",
+                message=f"FP16 requires CUDA; detector uses FP32 on {resolved}",
+                details={"requested_device": requested, "resolved_device": resolved},
+            )
+        )
+    return DetectorRuntime(device=resolved, half=half, issues=tuple(issues))
 
 
-def _get_detector(cfg: DetectionConfig):
+def _get_detector(cfg: DetectionConfig, *, runtime: DetectorRuntime | None = None):
     """同一套權重只載入一次；不同 input size 直接調整推論尺寸。"""
     global _detector, _detector_key
-    from .ctd.inference import TextDetector as CTDTextDetector
+    from .ctd import inference as ctd_inference
 
     model_path = Path(cfg.model_path).resolve()
+    if model_path.suffix.casefold() != ".pt":
+        raise ctd_inference.UnsupportedDetectorBackendError(model_path)
     if not model_path.exists():
         raise FileNotFoundError(
             f"找不到 comic-text-detector 模型檔：{model_path}\n"
             "請先執行 scripts/download_models.sh"
         )
 
-    device = _resolve_device(cfg.device)
-    half = cfg.half and device == "cuda"
+    runtime = runtime or _resolve_detector_runtime(cfg)
     key = (
         str(model_path),
-        device,
-        half,
+        runtime.device,
+        runtime.half,
         cfg.nms_thresh,
         cfg.conf_thresh,
         cfg.mask_thresh,
@@ -174,11 +234,11 @@ def _get_detector(cfg: DetectionConfig):
     if _detector is not None and _detector_key == key:
         return _detector
 
-    _detector = CTDTextDetector(
+    _detector = ctd_inference.TextDetector(
         model_path=str(model_path),
         input_size=cfg.input_size,
-        device=device,
-        half=half,
+        device=runtime.device,
+        half=runtime.half,
         nms_thresh=cfg.nms_thresh,
         conf_thresh=cfg.conf_thresh,
         mask_thresh=cfg.mask_thresh,
@@ -828,15 +888,35 @@ def detect_text_regions(
     detection_cfg: DetectionConfig | None = None,
     postprocess_cfg: PostprocessConfig | None = None,
 ) -> DetectionResult:
-    global _forced_cpu_due_cuda_error
-
     if detection_cfg is None:
         detection_cfg = DetectionConfig()
     if postprocess_cfg is None:
         postprocess_cfg = PostprocessConfig()
 
     img_h, img_w = image.shape[:2]
-    detector = _get_detector(detection_cfg)
+    runtime = _resolve_detector_runtime(detection_cfg)
+    issues = list(runtime.issues)
+    try:
+        detector = _get_detector(detection_cfg, runtime=runtime)
+    except RuntimeError as error:
+        cuda_error = _classify_cuda_error(error) if runtime.device == "cuda" else None
+        if cuda_error is None:
+            raise
+        issues.append(
+            DetectorIssue(
+                code=f"detector_cuda_{cuda_error}",
+                message=str(error),
+                details={"action": "current_page_cpu_retry", "stage": "initialization"},
+            )
+        )
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except RuntimeError:
+                pass
+        cpu_cfg = detection_cfg.model_copy(update={"device": "cpu", "half": False})
+        runtime = _resolve_detector_runtime(cpu_cfg)
+        detector = _get_detector(cpu_cfg, runtime=runtime)
 
     pass_sizes = [detection_cfg.input_size]
     for size in detection_cfg.additional_input_sizes:
@@ -860,14 +940,25 @@ def detect_text_regions(
             )
         except RuntimeError as error:
             is_primary = pass_index == 0
-            if is_primary and detection_cfg.device == "cuda" and _is_cuda_runtime_error(error):
-                _forced_cpu_due_cuda_error = True
+            cuda_error = _classify_cuda_error(error) if runtime.device == "cuda" else None
+            if is_primary and cuda_error is not None:
+                issues.append(
+                    DetectorIssue(
+                        code=f"detector_cuda_{cuda_error}",
+                        message=str(error),
+                        details={"action": "current_page_cpu_retry", "input_size": input_size},
+                    )
+                )
                 if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                console.print("[yellow]偵測器 CUDA 失敗，後續自動改用 CPU：[/]")
+                    try:
+                        torch.cuda.empty_cache()
+                    except RuntimeError:
+                        pass
+                console.print("[yellow]偵測器 CUDA 失敗，本頁改用 CPU 重試：[/]")
                 console.print(f"[yellow]{error}[/]")
                 cpu_cfg = detection_cfg.model_copy(update={"device": "cpu", "half": False})
-                detector = _get_detector(cpu_cfg)
+                runtime = _resolve_detector_runtime(cpu_cfg)
+                detector = _get_detector(cpu_cfg, runtime=runtime)
                 mask, mask_refined, blocks = _run_detector_pass(
                     detector,
                     image,
@@ -875,8 +966,21 @@ def detect_text_regions(
                     detection_cfg.keep_undetected_mask,
                 )
             elif not is_primary:
-                if _is_cuda_runtime_error(error) and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                code = "detector_additional_pass_failed"
+                if cuda_error is not None:
+                    code = f"detector_cuda_{cuda_error}"
+                issues.append(
+                    DetectorIssue(
+                        code=code,
+                        message=str(error),
+                        details={"action": "skip_additional_pass", "input_size": input_size},
+                    )
+                )
+                if cuda_error is not None and torch.cuda.is_available():
+                    try:
+                        torch.cuda.empty_cache()
+                    except RuntimeError:
+                        pass
                 console.print(
                     f"[yellow]略過額外偵測尺寸 {input_size}（推論失敗）：{error}[/]"
                 )
@@ -930,6 +1034,7 @@ def detect_text_regions(
         mask=refined_mask_union,
         raw_mask=raw_mask_union,
         raw_blocks=all_blocks,
+        issues=issues,
     )
 
 

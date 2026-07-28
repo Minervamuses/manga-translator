@@ -1,6 +1,6 @@
 import copy
+from collections.abc import Iterable
 
-import cv2
 import torch
 from torch import nn
 
@@ -206,16 +206,48 @@ class TextDetector(nn.Module):
                 outs = self.seg_net(*outs, forward_mode=forward_mode)
             return self.dbnet(*outs)
 
+
+class DetectorRuntimeContractError(RuntimeError):
+    code = "detector_runtime_contract_mismatch"
+
+
+def assert_detector_runtime_contract(
+    modules: Iterable[nn.Module],
+    features: torch.Tensor,
+) -> None:
+    parameters = [
+        parameter
+        for module in modules
+        for parameter in module.parameters()
+        if parameter.is_floating_point()
+    ]
+    if not parameters:
+        return
+    devices = {parameter.device for parameter in parameters}
+    dtypes = {parameter.dtype for parameter in parameters}
+    if devices != {features.device} or dtypes != {features.dtype}:
+        raise DetectorRuntimeContractError(
+            "detector model/input contract mismatch: "
+            f"model devices={sorted(map(str, devices))}, "
+            f"model dtypes={sorted(map(str, dtypes))}, "
+            f"input device={features.device}, input dtype={features.dtype}"
+        )
+
+
 def get_base_det_models(model_path, device='cpu', half=False, act='leaky'):
+    if half and torch.device(device).type != "cuda":
+        raise ValueError("detector_fp16_requires_cuda")
     textdetector_dict = torch.load(model_path, map_location=device)
     blk_det = load_yolov5_ckpt(textdetector_dict['blk_det'], map_location=device)
     text_seg = UnetHead(act=act)
     text_seg.load_state_dict(textdetector_dict['text_seg'])
     text_det = DBHead(64, act=act)
     text_det.load_state_dict(textdetector_dict['text_det'])
+    models = tuple(model.eval().to(device) for model in (blk_det, text_seg, text_det))
     if half:
-        return blk_det.eval().half(), text_seg.eval().half(), text_det.eval().half()
-    return blk_det.eval().to(device), text_seg.eval().to(device), text_det.eval().to(device)
+        models = tuple(model.half() for model in models)
+    return models
+
 
 class TextDetBase(nn.Module):
     def __init__(self, model_path, device='cpu', half=False, fuse=False, act='leaky'):
@@ -236,22 +268,14 @@ class TextDetBase(nn.Module):
         self.text_det = _fuse(self.text_det)
 
     def forward(self, features):
+        assert_detector_runtime_contract(
+            (self.blk_det, self.text_seg, self.text_det),
+            features,
+        )
         blks, features = self.blk_det(features, detect=True)
         mask, features = self.text_seg(*features, forward_mode=TEXTDET_INFERENCE)
         lines = self.text_det(*features, step_eval=False)
         return blks[0], mask, lines
-
-class TextDetBaseDNN:
-    def __init__(self, input_size, model_path):
-        self.input_size = input_size
-        self.model = cv2.dnn.readNetFromONNX(model_path)
-        self.uoln = self.model.getUnconnectedOutLayersNames()
-    
-    def __call__(self, im_in):
-        blob = cv2.dnn.blobFromImage(im_in, scalefactor=1 / 255.0, size=(self.input_size, self.input_size))
-        self.model.setInput(blob)
-        blks, mask, lines_map  = self.model.forward(self.uoln)
-        return blks, mask, lines_map
 
 if __name__ == '__main__':
     from torchsummary import summary

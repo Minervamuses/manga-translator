@@ -1,0 +1,12 @@
+{
+  "schema_version": "detector_fp16_parity.v1",
+  "required_pages": 5,
+  "thresholds": {
+    "box_count_ratio_min": 0.9,
+    "box_mean_iou_min": 0.85,
+    "matched_score_mae_max": 0.05,
+    "mask_iou_min": 0.9,
+    "small_text_recall_min": 0.9,
+    "small_text_max_area_ratio": 0.0025
+  }
+}

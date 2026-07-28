@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from .basemodel import TextDetBase, TextDetBaseDNN
+from .basemodel import TextDetBase
 from .utils.db_utils import SegDetectorRepresenter
 from .utils.imgproc_utils import get_yololabel_strings, letterbox, xyxy2yolo
 from .utils.io_utils import NumpyEncoder, find_all_imgs, imread, imwrite
@@ -20,6 +20,16 @@ from .utils.textmask import (
     refine_undetected_mask,
 )
 from .utils.yolov5_utils import non_max_suppression
+
+
+class UnsupportedDetectorBackendError(ValueError):
+    code = "unsupported_detector_backend"
+
+    def __init__(self, model_path: str | Path) -> None:
+        suffix = Path(model_path).suffix or "<none>"
+        super().__init__(
+            f"unsupported_detector_backend: only .pt detector models are supported; got {suffix}"
+        )
 
 
 def model2annotations(model_path, img_dir_list, save_dir, save_json=False):
@@ -75,17 +85,15 @@ def model2annotations(model_path, img_dir_list, save_dir, save_json=False):
         imwrite(osp.join(save_dir, imgname), img)
         imwrite(osp.join(save_dir, maskname), mask_refined)
 
-def preprocess_img(img, input_size=(1024, 1024), device='cpu', bgr2rgb=True, half=False, to_tensor=True):
+def preprocess_img(img, input_size=(1024, 1024), device='cpu', bgr2rgb=True, half=False):
     if bgr2rgb:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img_in, ratio, (dw, dh) = letterbox(img, new_shape=input_size, auto=False, stride=64)
-    if to_tensor:
-        img_in = img_in.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
-        img_in = np.array([np.ascontiguousarray(img_in)]).astype(np.float32) / 255
-        if to_tensor:
-            img_in = torch.from_numpy(img_in).to(device)
-            if half:
-                img_in = img_in.half()
+    img_in = img_in.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+    img_in = np.array([np.ascontiguousarray(img_in)]).astype(np.float32) / 255
+    img_in = torch.from_numpy(img_in).to(device)
+    if half:
+        img_in = img_in.half()
     return img_in, ratio, int(dw), int(dh)
 
 def postprocess_mask(img: torch.Tensor | np.ndarray, thresh=None):
@@ -123,29 +131,49 @@ class TextDetector:
     lang_list: ClassVar[list[str]] = ['eng', 'ja', 'unknown']
     langcls2idx: ClassVar[dict[str, int]] = {'eng': 0, 'ja': 1, 'unknown': 2}
 
-    def __init__(self, model_path, input_size=1024, device='cpu', half=False, nms_thresh=0.35, conf_thresh=0.4, mask_thresh=0.3, act='leaky'):
+    def __init__(
+        self,
+        model_path,
+        input_size=1024,
+        device='cpu',
+        half=False,
+        nms_thresh=0.35,
+        conf_thresh=0.4,
+        mask_thresh=0.3,
+        act='leaky',
+    ):
         super().__init__()
+        if Path(model_path).suffix.casefold() != '.pt':
+            raise UnsupportedDetectorBackendError(model_path)
 
-        if Path(model_path).suffix == '.onnx':
-            self.model = cv2.dnn.readNetFromONNX(model_path)
-            self.net = TextDetBaseDNN(input_size, model_path)
-            self.backend = 'opencv'
-        else:
-            self.net = TextDetBase(model_path, device=device, act=act)
-            self.backend = 'torch'
-        
+        requested_half = bool(half)
+        self.half = requested_half and torch.device(device).type == 'cuda'
+        self.runtime_issues: list[dict[str, str]] = []
+        if requested_half and not self.half:
+            self.runtime_issues.append(
+                {
+                    'code': 'detector_fp16_downgraded',
+                    'message': f'FP16 requires CUDA; using FP32 on {device}',
+                }
+            )
+        self.net = TextDetBase(model_path, device=device, half=self.half, act=act)
+
         if isinstance(input_size, int):
             input_size = (input_size, input_size)
         self.input_size = input_size
         self.device = device
-        self.half = half
         self.conf_thresh = conf_thresh
         self.nms_thresh = nms_thresh
         self.seg_rep = SegDetectorRepresenter(thresh=mask_thresh)
 
     @torch.no_grad()
     def __call__(self, img, refine_mode=REFINEMASK_INPAINT, keep_undetected_mask=False):
-        img_in, _ratio, dw, dh = preprocess_img(img, input_size=self.input_size, device=self.device, half=self.half, to_tensor=self.backend=='torch')
+        img_in, _ratio, dw, dh = preprocess_img(
+            img,
+            input_size=self.input_size,
+            device=self.device,
+            half=self.half,
+        )
         im_h, im_w = img.shape[:2]
 
         blks, mask, lines_map = self.net(img_in)
@@ -153,11 +181,6 @@ class TextDetector:
         resize_ratio = (im_w / (self.input_size[0] - dw), im_h / (self.input_size[1] - dh))
         blks = postprocess_yolo(blks, self.conf_thresh, self.nms_thresh, resize_ratio)
 
-        if self.backend == 'opencv' and mask.shape[1] == 2:
-            # Some OpenCV versions return the two maps in the opposite order.
-            tmp = mask
-            mask = lines_map
-            lines_map = tmp
         mask = postprocess_mask(mask)
 
         lines, scores = self.seg_rep(self.input_size, lines_map)
@@ -207,7 +230,6 @@ def traverse_by_dict(img_dir_list, dict_dir):
 if __name__ == '__main__':
     device = 'cpu'
     model_path = 'data/comictextdetector.pt'
-    model_path = 'data/comictextdetector.pt.onnx'
     img_dir = r'data/examples'
     save_dir = r'data/backup'
     model2annotations(model_path, img_dir, save_dir, save_json=True)

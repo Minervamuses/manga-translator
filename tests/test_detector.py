@@ -1,14 +1,188 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+import torch
+from torch import nn
 
+from manga_translator import detector as detector_module
 from manga_translator.config import DetectionConfig, PostprocessConfig
+from manga_translator.ctd.basemodel import (
+    DetectorRuntimeContractError,
+    assert_detector_runtime_contract,
+)
+from manga_translator.ctd.inference import TextDetector, UnsupportedDetectorBackendError
 from manga_translator.detector import (
     TextRegion,
+    _classify_cuda_error,
     _conservative_text_mask,
     _extract_mask_fallback_regions,
+    _get_detector,
+    _resolve_detector_runtime,
+    detect_text_regions,
     postprocess_regions,
 )
+
+
+def test_text_detector_passes_resolved_half_mode_to_base_model(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeTextDetBase:
+        def __init__(self, _model_path, *, device, half, act):
+            captured.update(device=device, half=half, act=act)
+
+    monkeypatch.setattr("manga_translator.ctd.inference.TextDetBase", FakeTextDetBase)
+
+    detector = TextDetector("detector.pt", device="cpu", half=True)
+
+    assert captured["half"] is False
+    assert detector.half is False
+    assert detector.runtime_issues[0]["code"] == "detector_fp16_downgraded"
+
+    detector = TextDetector("detector.pt", device="cuda", half=True)
+
+    assert captured["half"] is True
+    assert detector.half is True
+    assert detector.runtime_issues == []
+
+
+def test_detector_runtime_contract_rejects_dtype_mismatch() -> None:
+    model = nn.Linear(4, 2).float()
+    half_input = torch.ones((1, 4), dtype=torch.float16)
+
+    with pytest.raises(DetectorRuntimeContractError, match="model/input contract mismatch"):
+        assert_detector_runtime_contract((model,), half_input)
+
+
+def test_detector_runtime_contract_rejects_device_mismatch() -> None:
+    model = nn.Linear(4, 2, device="meta")
+    cpu_input = torch.ones((1, 4), dtype=torch.float32)
+
+    with pytest.raises(DetectorRuntimeContractError, match=r"model devices=\['meta'\]"):
+        assert_detector_runtime_contract((model,), cpu_input)
+
+
+def test_onnx_backend_is_rejected_before_loading(tmp_path) -> None:
+    model_path = tmp_path / "detector.onnx"
+
+    with pytest.raises(UnsupportedDetectorBackendError, match="unsupported_detector_backend"):
+        TextDetector(model_path)
+    with pytest.raises(UnsupportedDetectorBackendError, match="only .pt") as captured:
+        _get_detector(DetectionConfig(model_path=model_path, device="cpu"))
+
+    assert captured.value.code == "unsupported_detector_backend"
+
+
+@pytest.mark.parametrize(
+    ("message", "classification"),
+    [
+        ("CUDA out of memory", "oom"),
+        ("no kernel image is available", "unsupported_kernel"),
+        ("CUDA error: device-side assert triggered", "device_lost"),
+        ("cuDNN execution failed", "other"),
+        ("ordinary CPU failure", None),
+    ],
+)
+def test_cuda_errors_have_stable_classification(message, classification) -> None:
+    assert _classify_cuda_error(RuntimeError(message)) == classification
+
+
+def test_cpu_half_request_is_explicitly_downgraded() -> None:
+    runtime = _resolve_detector_runtime(DetectionConfig(device="cpu", half=True))
+
+    assert runtime.device == "cpu"
+    assert runtime.half is False
+    assert [issue.code for issue in runtime.issues] == ["detector_fp16_downgraded"]
+
+
+def test_cuda_page_fallback_does_not_permanently_force_process_to_cpu(monkeypatch) -> None:
+    detector_loads: list[str] = []
+    failed_once = False
+
+    def fake_get_detector(_cfg, *, runtime=None):
+        assert runtime is not None
+        detector_loads.append(runtime.device)
+        return runtime.device
+
+    def fake_pass(detector, image, _input_size, _keep_mask):
+        nonlocal failed_once
+        if detector == "cuda" and not failed_once:
+            failed_once = True
+            raise RuntimeError("CUDA out of memory")
+        empty = np.zeros(image.shape[:2], dtype=np.uint8)
+        return empty, empty, []
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(detector_module, "_get_detector", fake_get_detector)
+    monkeypatch.setattr(detector_module, "_run_detector_pass", fake_pass)
+    image = np.zeros((16, 16, 3), dtype=np.uint8)
+    config = DetectionConfig(device="cuda", half=True)
+
+    first = detect_text_regions(image, config, PostprocessConfig())
+    second = detect_text_regions(image, config, PostprocessConfig())
+
+    assert detector_loads == ["cuda", "cpu", "cuda"]
+    assert first.issues[0].code == "detector_cuda_oom"
+    assert second.issues == []
+
+
+def test_cuda_initialization_failure_retries_only_current_page_on_cpu(monkeypatch) -> None:
+    detector_loads: list[str] = []
+    failed_once = False
+
+    def fake_get_detector(_cfg, *, runtime=None):
+        nonlocal failed_once
+        assert runtime is not None
+        detector_loads.append(runtime.device)
+        if runtime.device == "cuda" and not failed_once:
+            failed_once = True
+            raise RuntimeError("CUDA error: invalid device function")
+        return runtime.device
+
+    def fake_pass(_detector, image, _input_size, _keep_mask):
+        empty = np.zeros(image.shape[:2], dtype=np.uint8)
+        return empty, empty, []
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(detector_module, "_get_detector", fake_get_detector)
+    monkeypatch.setattr(detector_module, "_run_detector_pass", fake_pass)
+    image = np.zeros((16, 16, 3), dtype=np.uint8)
+    config = DetectionConfig(device="cuda", half=True)
+
+    first = detect_text_regions(image, config, PostprocessConfig())
+    second = detect_text_regions(image, config, PostprocessConfig())
+
+    assert detector_loads == ["cuda", "cpu", "cuda"]
+    assert first.issues[0].code == "detector_cuda_unsupported_kernel"
+    assert first.issues[0].details["stage"] == "initialization"
+    assert second.issues == []
+
+
+def test_runtime_downgrade_is_retained_on_detection_result(monkeypatch) -> None:
+    resolved_half: list[bool] = []
+
+    def fake_get_detector(_cfg, *, runtime=None):
+        assert runtime is not None
+        resolved_half.append(runtime.half)
+        return object()
+
+    def fake_pass(_detector, image, _input_size, _keep_mask):
+        empty = np.zeros(image.shape[:2], dtype=np.uint8)
+        return empty, empty, []
+
+    monkeypatch.setattr(detector_module, "_get_detector", fake_get_detector)
+    monkeypatch.setattr(detector_module, "_run_detector_pass", fake_pass)
+
+    result = detect_text_regions(
+        np.zeros((12, 12, 3), dtype=np.uint8),
+        DetectionConfig(device="cpu", half=True),
+        PostprocessConfig(),
+    )
+
+    assert resolved_half == [False]
+    assert [issue.code for issue in result.issues] == ["detector_fp16_downgraded"]
 
 
 def test_group_masks_are_local_and_preserve_pixel_mask() -> None:

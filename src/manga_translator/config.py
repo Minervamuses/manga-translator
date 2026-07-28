@@ -48,7 +48,7 @@ class DetectionConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     model_path: Path = Path("./models/comictextdetector.pt")
-    device: Literal["cuda", "cpu"] = "cuda"
+    device: Literal["cuda", "cpu", "mps"] = "cuda"
     input_size: int = Field(default=1024, ge=320, le=3072)
     # 額外尺寸會和主偵測結果合併。空陣列代表只跑一次。
     additional_input_sizes: list[int] = Field(default_factory=list)

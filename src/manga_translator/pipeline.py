@@ -955,6 +955,16 @@ def process_single_page(
     console.print(f"\n[bold]處理：{image_path.name}[/]")
 
     detection = detect_text_regions(image, config.detection, config.postprocess)
+    detection_issues = [
+        ResultIssue(
+            code=issue.code,
+            message=issue.message,
+            stage="detection",
+            page_id=page_id,
+            details=issue.details,
+        )
+        for issue in detection.issues
+    ]
     fallback_count = sum(region.source == "mask_fallback" for region in detection.regions_raw)
     console.print(
         f"  raw={len(detection.regions_raw)} post={len(detection.regions_post)} "
@@ -974,6 +984,7 @@ def process_single_page(
                 source_image=original,
                 regions=detection.regions_post,
                 issues=[
+                    *detection_issues,
                     ResultIssue(
                         code="ocr_initialization_failed",
                         message=str(error),
@@ -1131,7 +1142,9 @@ def process_single_page(
             dump_json=(dump_json or prep_manual),
         )
 
-    issues = [translation_issue] if translation_issue is not None else []
+    issues = list(detection_issues)
+    if translation_issue is not None:
+        issues.append(translation_issue)
     return PageResult(
         page_id=page_id,
         source_path=image_path,

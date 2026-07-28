@@ -226,6 +226,14 @@ def test_component_stages_resume_without_reloading_models_or_provider(
     _source(config)
     state = tmp_path / "state"
     calls, provider_payloads = _install_component_fakes(monkeypatch, config)
+    reconciliation_inputs = []
+    real_reconcile = pipeline_module.reconcile_regions
+
+    def reconcile_spy(**kwargs):
+        reconciliation_inputs.append(kwargs)
+        return real_reconcile(**kwargs)
+
+    monkeypatch.setattr(pipeline_module, "reconcile_regions", reconcile_spy)
 
     first = pipeline_module.run_pipeline(
         config, job_id="job-1", state_dir=state, resume=True, dump_json=True
@@ -245,6 +253,14 @@ def test_component_stages_resume_without_reloading_models_or_provider(
     assert calls == first_calls
     assert second_document is not None
     assert canonical_document_bytes(second_document) == first_bytes
+    assert all(
+        observation.crop_dhash is not None and observation.mask is not None
+        for call in reconciliation_inputs
+        for observation in call["observations"]
+    )
+    assert reconciliation_inputs[-1]["previous_masks"]
+    assert reconciliation_inputs[-1]["previous_crop_dhashes"]
+    assert all(revision.mask_refs for revision in second_document.region_revisions)
     assert len(second_document.translations) == 1
     raw_ref = second_document.translations[0].raw_response_ref
     assert ArtifactStore(state / "artifacts").read_bytes(raw_ref.sha256) == provider_payloads[0]

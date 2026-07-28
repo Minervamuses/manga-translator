@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from uuid import UUID
 
+import numpy as np
 import pytest
 
 from manga_translator.domain.ids import dhash_distance, page_id_from_bytes, revision_id_for
@@ -15,6 +16,7 @@ from manga_translator.domain.models import (
 from manga_translator.domain.reconcile import (
     ReconciliationConfig,
     RegionObservation,
+    _mask_iou,
     reconcile_regions,
     trace_ancestors,
 )
@@ -36,12 +38,19 @@ def _factory(iterator: Iterator[UUID]):
     return lambda: next(iterator)
 
 
-def _observation(x: float, *, width: float = 20.0, dhash: int = 0) -> RegionObservation:
+def _observation(
+    x: float,
+    *,
+    width: float = 20.0,
+    dhash: int = 0,
+    mask: np.ndarray | None = None,
+) -> RegionObservation:
     return RegionObservation(
         bbox=BoundingBox(x=x, y=10.0, width=width, height=20.0),
         detector_score=0.9,
         source="ctd",
         raw_index=int(x),
+        mask=mask,
         crop_dhash=dhash,
     )
 
@@ -111,6 +120,60 @@ def test_small_detector_drift_reuses_region_identity() -> None:
     assert second.current_identities[0].region_id == first.current_identities[0].region_id
     assert second.current_revisions[0].revision_id != first.current_revisions[0].revision_id
     assert len(second.revisions) == 2
+
+
+def test_bbox_local_masks_are_compared_in_page_coordinates() -> None:
+    ids = _ids()
+    local_mask = np.full((20, 20), 255, dtype=np.uint8)
+    first_observations = [
+        _observation(10.0, mask=local_mask),
+        _observation(80.0, mask=local_mask),
+    ]
+    first = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint=DETECTOR,
+        observations=first_observations,
+        id_factory=_factory(ids),
+    )
+    previous_masks = {
+        revision.revision_id: local_mask for revision in first.current_revisions
+    }
+    second = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint="e" * 64,
+        observations=[
+            _observation(11.0, mask=local_mask),
+            _observation(81.0, mask=local_mask),
+        ],
+        previous=_document(first),
+        previous_masks=previous_masks,
+        id_factory=_factory(ids),
+    )
+
+    assert second.current_region_ids == first.current_region_ids
+
+
+def test_bbox_local_mask_iou_handles_disjoint_positions_and_shape_drift() -> None:
+    baseline = np.full((20, 20), 255, dtype=np.uint8)
+    drifted = np.full((19, 21), 255, dtype=np.uint8)
+    baseline_bbox = BoundingBox(x=10.0, y=10.0, width=20.0, height=20.0)
+
+    assert (
+        _mask_iou(
+            baseline,
+            baseline_bbox,
+            baseline,
+            BoundingBox(x=80.0, y=10.0, width=20.0, height=20.0),
+        )
+        == 0.0
+    )
+    drift_score = _mask_iou(
+        baseline,
+        baseline_bbox,
+        drifted,
+        BoundingBox(x=11.0, y=10.0, width=21.0, height=19.0),
+    )
+    assert drift_score is not None and 0.8 < drift_score < 1.0
 
 
 def test_close_candidates_are_ambiguous_instead_of_guessing() -> None:

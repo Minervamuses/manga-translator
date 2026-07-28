@@ -1441,6 +1441,24 @@ def _decode_source_image(store: JobStore, reference: ArtifactRef) -> np.ndarray:
     return image
 
 
+def _source_crop_dhash(image: np.ndarray, bbox: BoundingBox) -> int | None:
+    height, width = image.shape[:2]
+    left = max(0, min(width, int(bbox.x)))
+    top = max(0, min(height, int(bbox.y)))
+    right = max(left, min(width, int(bbox.right)))
+    bottom = max(top, min(height, int(bbox.bottom)))
+    if right <= left or bottom <= top:
+        return None
+    crop = image[top:bottom, left:right]
+    grayscale = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    resized = cv2.resize(grayscale, (9, 8), interpolation=cv2.INTER_AREA)
+    comparisons = resized[:, 1:] > resized[:, :-1]
+    value = 0
+    for bit in comparisons.reshape(-1):
+        value = (value << 1) | int(bit)
+    return value
+
+
 def _png_payload(image: np.ndarray) -> bytes:
     encoded, buffer = cv2.imencode(".png", image)
     if not encoded:
@@ -2360,8 +2378,39 @@ def _document_from_page_result(
     store: JobStore,
     job_id: str,
 ) -> PageDocument:
+    if page.source_image is None:
+        raise ValueError("PageDocument reconciliation requires the immutable source image")
+    previous_masks: dict[str, np.ndarray] = {}
+    previous_crop_dhashes: dict[str, int] = {}
+    for revision in _active_region_revisions(previous):
+        crop_dhash = _source_crop_dhash(page.source_image, revision.bbox)
+        if crop_dhash is not None:
+            previous_crop_dhashes[revision.revision_id] = crop_dhash
+        if not revision.mask_refs:
+            continue
+        reference = revision.mask_refs[0]
+        if not reference.media_type.startswith("image/"):
+            raise ValueError(
+                f"region mask artifact {reference.sha256} is not an image"
+            )
+        raw = store.artifacts.read_bytes(
+            reference.sha256,
+            expected_size=reference.size_bytes,
+        )
+        mask = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError(
+                f"region mask artifact {reference.sha256} is not decodable"
+            )
+        previous_masks[revision.revision_id] = mask
     observations: list[RegionObservation] = []
     for region in page.regions:
+        bbox = BoundingBox(
+            x=float(region.x),
+            y=float(region.y),
+            width=float(region.w),
+            height=float(region.h),
+        )
         mask_refs: tuple[ArtifactRef, ...] = ()
         if region.local_mask is not None:
             encoded, buffer = cv2.imencode(".png", region.local_mask)
@@ -2375,17 +2424,14 @@ def _document_from_page_result(
                 mask_refs = (mask,)
         observations.append(
             RegionObservation(
-                bbox=BoundingBox(
-                    x=float(region.x),
-                    y=float(region.y),
-                    width=float(region.w),
-                    height=float(region.h),
-                ),
+                bbox=bbox,
                 detector_score=max(0.0, min(1.0, float(region.confidence))),
                 source=region.source,
                 raw_index=region.raw_index,
                 orientation="vertical" if region.vertical else "horizontal",
                 mask_refs=mask_refs,
+                mask=region.local_mask,
+                crop_dhash=_source_crop_dhash(page.source_image, bbox),
             )
         )
     reconciled = reconcile_regions(
@@ -2393,6 +2439,8 @@ def _document_from_page_result(
         detector_fingerprint=outcomes[StageName.DETECT].fingerprint,
         observations=observations,
         previous=previous,
+        previous_masks=previous_masks,
+        previous_crop_dhashes=previous_crop_dhashes,
     )
     revision_by_legacy_id = {
         region.id: revision

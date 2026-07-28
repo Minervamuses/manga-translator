@@ -89,13 +89,58 @@ def _polygon_iou(left: Polygon | None, right: Polygon | None) -> float | None:
     return left_shape.intersection(right_shape).area / union if union > 0 else 0.0
 
 
-def _mask_iou(left: np.ndarray | None, right: np.ndarray | None) -> float | None:
-    if left is None or right is None or left.shape != right.shape:
+def _mask_iou(
+    left: np.ndarray | None,
+    left_bbox: BoundingBox,
+    right: np.ndarray | None,
+    right_bbox: BoundingBox,
+) -> float | None:
+    if (
+        left is None
+        or right is None
+        or left.ndim != 2
+        or right.ndim != 2
+        or left.size == 0
+        or right.size == 0
+    ):
         return None
-    left_bool = left.astype(bool, copy=False)
-    right_bool = right.astype(bool, copy=False)
-    union = np.logical_or(left_bool, right_bool).sum()
-    return float(np.logical_and(left_bool, right_bool).sum() / union) if union else 0.0
+
+    def rasterize(mask: np.ndarray, bbox: BoundingBox) -> tuple[np.ndarray, tuple[int, ...]]:
+        x1 = math.floor(bbox.x)
+        y1 = math.floor(bbox.y)
+        x2 = math.ceil(bbox.right)
+        y2 = math.ceil(bbox.bottom)
+        target_height = max(1, y2 - y1)
+        target_width = max(1, x2 - x1)
+        rows = np.minimum(
+            np.arange(target_height) * mask.shape[0] // target_height,
+            mask.shape[0] - 1,
+        )
+        columns = np.minimum(
+            np.arange(target_width) * mask.shape[1] // target_width,
+            mask.shape[1] - 1,
+        )
+        return mask.astype(bool, copy=False)[np.ix_(rows, columns)], (x1, y1, x2, y2)
+
+    left_bool, (left_x1, left_y1, left_x2, left_y2) = rasterize(left, left_bbox)
+    right_bool, (right_x1, right_y1, right_x2, right_y2) = rasterize(right, right_bbox)
+    overlap_x1 = max(left_x1, right_x1)
+    overlap_y1 = max(left_y1, right_y1)
+    overlap_x2 = min(left_x2, right_x2)
+    overlap_y2 = min(left_y2, right_y2)
+    intersection = 0
+    if overlap_x2 > overlap_x1 and overlap_y2 > overlap_y1:
+        left_overlap = left_bool[
+            overlap_y1 - left_y1 : overlap_y2 - left_y1,
+            overlap_x1 - left_x1 : overlap_x2 - left_x1,
+        ]
+        right_overlap = right_bool[
+            overlap_y1 - right_y1 : overlap_y2 - right_y1,
+            overlap_x1 - right_x1 : overlap_x2 - right_x1,
+        ]
+        intersection = int(np.logical_and(left_overlap, right_overlap).sum())
+    union = int(left_bool.sum()) + int(right_bool.sum()) - intersection
+    return intersection / union if union else 0.0
 
 
 def _center_similarity(left: BoundingBox, right: BoundingBox) -> float:
@@ -114,7 +159,7 @@ def _similarity(
     previous_crop_dhash: int | None,
     config: ReconciliationConfig,
 ) -> tuple[float, float]:
-    mask_score = _mask_iou(current.mask, previous_mask)
+    mask_score = _mask_iou(current.mask, current.bbox, previous_mask, previous.bbox)
     polygon_score = _polygon_iou(current.polygon, previous.polygon)
     geometry_score = polygon_score if polygon_score is not None else _bbox_iou(
         current.bbox, previous.bbox

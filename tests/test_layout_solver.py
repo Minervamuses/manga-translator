@@ -14,7 +14,8 @@ from manga_translator.typography.layout import (
     RasterizedLayout,
 )
 from manga_translator.typography.safe_region import SafeRegionArtifacts
-from manga_translator.typography.solver import solve_layout
+from manga_translator.typography.shaping import ShapedFontRun
+from manga_translator.typography.solver import _candidate_specs, solve_layout
 
 
 class RectangleRasterizer:
@@ -43,6 +44,35 @@ class RectangleRasterizer:
             -1,
         )
         return RasterizedLayout(alpha, self.shaping, self.coverage, clipped)
+
+
+class ProvenanceRasterizer(RectangleRasterizer):
+    def __init__(self, font_sha256: str) -> None:
+        super().__init__()
+        self.font_sha256 = font_sha256
+
+    def rasterize(self, candidate: LayoutCandidate, shape: tuple[int, int]) -> RasterizedLayout:
+        base = super().rasterize(candidate, shape)
+        direction = "ttb" if candidate.direction is LayoutDirection.VERTICAL else "ltr"
+        run = ShapedFontRun(
+            text="".join(candidate.chunks),
+            font_sha256=self.font_sha256,
+            font_path="font.ttf",
+            glyph_coverage=tuple(sorted({ord(char) for char in "".join(candidate.chunks)})),
+            direction=direction,
+            language="zh-Hant-TW",
+            features=(),
+            bbox=(0.0, 0.0, 10.0, 20.0),
+            advance=20.0,
+            anchor=candidate.anchor,
+        )
+        return RasterizedLayout(
+            base.alpha,
+            base.shaping_succeeded,
+            base.glyph_coverage_complete,
+            base.clipped,
+            shaped_runs=(run,),
+        )
 
 
 def _safe_region(width: int = 180, height: int = 220, inset: int = 12) -> SafeRegionArtifacts:
@@ -89,6 +119,28 @@ def test_solver_uses_legal_breaks_and_natural_spacing() -> None:
     assert result.candidate.line_gap_em <= 1.12
     assert result.candidate.tracking_em <= 0.2
     assert result.warnings == ()
+
+
+def test_solver_retains_shaped_font_hash_provenance_in_plan_hash() -> None:
+    first = solve_layout(_request(), ProvenanceRasterizer("a" * 64))
+    second = solve_layout(_request(), ProvenanceRasterizer("b" * 64))
+
+    assert isinstance(first, AcceptedLayout)
+    assert isinstance(second, AcceptedLayout)
+    assert first.shaped_runs[0].font_sha256 == "a" * 64
+    assert second.shaped_runs[0].font_sha256 == "b" * 64
+    assert first.plan_hash != second.plan_hash
+
+
+def test_preferred_breaks_are_forwarded_to_candidate_scoring() -> None:
+    request = _request(
+        text="甲乙丙丁戊",
+        max_lines=2,
+        preferred_grapheme_breaks=(3,),
+    )
+    candidates = [candidate for _rough, candidate in _candidate_specs(request)]
+
+    assert any(candidate.break_indices == (3,) for candidate in candidates)
 
 
 def test_missing_glyph_or_shaping_failure_is_a_hard_rejection() -> None:

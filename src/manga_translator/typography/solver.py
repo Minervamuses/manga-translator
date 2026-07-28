@@ -21,7 +21,7 @@ from .breaking import (
     balanced_legal_breaks,
     validate_breaks,
 )
-from .fonts import FontResolver
+from .fonts import FontResolver, MissingGlyphError
 from .layout import (
     AcceptedLayout,
     LayoutCandidate,
@@ -31,7 +31,7 @@ from .layout import (
     LayoutResult,
     RasterizedLayout,
 )
-from .shaping import PillowRaqmEngine, RunShaper
+from .shaping import PillowRaqmEngine, RunShaper, ShapedFontRun
 
 
 class CandidateRasterizer(Protocol):
@@ -66,7 +66,11 @@ def _candidate_score(request: LayoutRequest, candidate: LayoutCandidate, alpha: 
     lengths = [len(grapheme_clusters(chunk)) for chunk in candidate.chunks]
     imbalance = (max(lengths) - min(lengths)) if lengths else 0
     break_preferences = {
-        item.index: item.preference for item in analyze_line_breaks(request.text).opportunities
+        item.index: item.preference
+        for item in analyze_line_breaks(
+            request.text,
+            preferred_grapheme_breaks=request.preferred_grapheme_breaks,
+        ).opportunities
     }
     semantic_reward = sum(break_preferences.get(index, 0) for index in candidate.break_indices)
     return (
@@ -84,7 +88,11 @@ def _candidate_score(request: LayoutRequest, candidate: LayoutCandidate, alpha: 
     )
 
 
-def _candidate_hash(candidate: LayoutCandidate, alpha: np.ndarray) -> str:
+def _candidate_hash(
+    candidate: LayoutCandidate,
+    alpha: np.ndarray,
+    shaped_runs: tuple[ShapedFontRun, ...],
+) -> str:
     payload = {
         "font": candidate.font.role.value,
         "weight": candidate.font.weight,
@@ -97,6 +105,20 @@ def _candidate_hash(candidate: LayoutCandidate, alpha: np.ndarray) -> str:
         "anchor": candidate.anchor,
         "rotation": candidate.rotation_degrees,
         "alpha_sha256": hashlib.sha256(alpha.tobytes()).hexdigest(),
+        "shaped_runs": [
+            {
+                "advance": run.advance,
+                "anchor": run.anchor,
+                "bbox": run.bbox,
+                "direction": run.direction,
+                "features": run.features,
+                "font_sha256": run.font_sha256,
+                "glyph_coverage": run.glyph_coverage,
+                "language": run.language,
+                "text": run.text,
+            }
+            for run in shaped_runs
+        ],
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -117,7 +139,11 @@ def _candidate_specs(request: LayoutRequest) -> Iterable[tuple[float, LayoutCand
     maximum_size = max(request.hard_font_floor, round(request.source_font_size * 1.15))
     sizes = range(maximum_size, request.hard_font_floor - 1, -1)
     for line_count in range(1, request.max_lines + 1):
-        breaks = balanced_legal_breaks(request.text, line_count)
+        breaks = balanced_legal_breaks(
+            request.text,
+            line_count,
+            preferred_grapheme_breaks=request.preferred_grapheme_breaks,
+        )
         chunks = _chunks_for_breaks(request.text, breaks)
         if len(chunks) != line_count and line_count > 1:
             continue
@@ -160,7 +186,16 @@ def solve_layout(request: LayoutRequest, rasterizer: CandidateRasterizer) -> Lay
         raise ValueError("neighbor_mask must share the safe-region ROI-local shape")
 
     rejected: Counter[str] = Counter()
-    feasible: list[tuple[float, tuple[object, ...], LayoutCandidate, np.ndarray, float]] = []
+    feasible: list[
+        tuple[
+            float,
+            tuple[object, ...],
+            LayoutCandidate,
+            np.ndarray,
+            float,
+            tuple[ShapedFontRun, ...],
+        ]
+    ] = []
     specs = sorted(_candidate_specs(request), key=lambda item: (item[0], item[1].stable_key()))
     for _rough, candidate in specs[: request.beam_width]:
         if candidate.font_size < request.hard_font_floor:
@@ -192,7 +227,16 @@ def solve_layout(request: LayoutRequest, rasterizer: CandidateRasterizer) -> Lay
             rejected["neighbor_collision"] += 1
             continue
         score = _candidate_score(request, candidate, raster.alpha)
-        feasible.append((score, candidate.stable_key(), candidate, raster.alpha, containment))
+        feasible.append(
+            (
+                score,
+                candidate.stable_key(),
+                candidate,
+                raster.alpha,
+                containment,
+                raster.shaped_runs,
+            )
+        )
 
     normal_tracking = [item for item in feasible if item[2].tracking_em <= 0.2]
     if normal_tracking:
@@ -202,14 +246,17 @@ def solve_layout(request: LayoutRequest, rasterizer: CandidateRasterizer) -> Lay
         feasible = []
     if not feasible:
         return _overflow(request, rejected)
-    score, _key, candidate, alpha, containment = min(feasible, key=lambda item: (item[0], item[1]))
+    score, _key, candidate, alpha, containment, shaped_runs = min(
+        feasible, key=lambda item: (item[0], item[1])
+    )
     warnings = ("tracking_exceeds_0.2em",) if candidate.tracking_em > 0.2 else ()
     return AcceptedLayout(
         candidate=candidate,
         alpha=alpha,
         containment=containment,
         score=score,
-        plan_hash=_candidate_hash(candidate, alpha),
+        plan_hash=_candidate_hash(candidate, alpha, shaped_runs),
+        shaped_runs=shaped_runs,
         warnings=warnings,
     )
 
@@ -257,6 +304,14 @@ class PillowLayoutRasterizer:
                 )
                 for chunk in candidate.chunks
             ]
+        except MissingGlyphError as error:
+            return RasterizedLayout(
+                np.zeros(shape, dtype=np.uint8),
+                shaping_succeeded=True,
+                glyph_coverage_complete=False,
+                clipped=False,
+                diagnostics=(str(error),),
+            )
         except Exception as error:  # noqa: BLE001 - hard rejection retains diagnostic
             return RasterizedLayout(
                 np.zeros(shape, dtype=np.uint8),
@@ -269,6 +324,7 @@ class PillowLayoutRasterizer:
         gap = candidate.font_size * candidate.line_gap_em
         extents = [sum(run.advance for run in runs) for runs in shaped_lines]
         clipped = False
+        positioned_runs: list[ShapedFontRun] = []
         for line_index, runs in enumerate(shaped_lines):
             extent = extents[line_index]
             if candidate.direction is LayoutDirection.HORIZONTAL:
@@ -279,6 +335,7 @@ class PillowLayoutRasterizer:
                 base_y = candidate.anchor[1] - extent / 2.0
             for run in runs:
                 positioned = replace(run, anchor=(base_x + run.anchor[0], base_y + run.anchor[1]))
+                positioned_runs.append(positioned)
                 x1, y1, x2, y2 = positioned.bbox
                 clipped |= (
                     positioned.anchor[0] + x1 < 0
@@ -303,4 +360,10 @@ class PillowLayoutRasterizer:
             or np.any(alpha[:, 0])
             or np.any(alpha[:, -1])
         )
-        return RasterizedLayout(alpha, True, True, clipped)
+        return RasterizedLayout(
+            alpha,
+            True,
+            True,
+            clipped,
+            shaped_runs=tuple(positioned_runs),
+        )

@@ -9,6 +9,7 @@ import numpy as np
 
 from .fonts import FontRole
 from .safe_region import SafeRegionArtifacts
+from .shaping import ShapedFontRun
 
 
 class LayoutDirection(StrEnum):
@@ -55,6 +56,7 @@ class RasterizedLayout:
     shaping_succeeded: bool
     glyph_coverage_complete: bool
     clipped: bool
+    shaped_runs: tuple[ShapedFontRun, ...] = ()
     diagnostics: tuple[str, ...] = ()
 
 
@@ -79,6 +81,7 @@ class LayoutRequest:
     neighbor_mask: np.ndarray | None = field(default=None, repr=False, compare=False)
     minimum_containment: float = 0.995
     beam_width: int = 4096
+    preferred_grapheme_breaks: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,7 @@ class AcceptedLayout:
     containment: float
     score: float
     plan_hash: str
+    shaped_runs: tuple[ShapedFontRun, ...] = ()
     warnings: tuple[str, ...] = ()
 
 

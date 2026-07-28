@@ -93,6 +93,10 @@ postprocess:
 
 # OCR 設定
 ocr:
+  model_id: "kha-white/manga-ocr-base"
+  revision: "aa6573bd10b0d446cbf622e29c3e084914df9741"
+  batch_size: 4
+  max_length: 300
   # 擴張 crop，避免描邊、小假名或傾斜字被框切掉
   crop_padding_ratio: 0.08
   crop_padding_min_px: 4

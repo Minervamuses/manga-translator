@@ -219,6 +219,15 @@ class OCRCandidate(DomainModel):
     confidence: Score
     confidence_kind: Literal["model", "heuristic", "ensemble", "unknown"]
     source_view: str = Field(min_length=1)
+    token_ids: tuple[int, ...] = ()
+    token_logprobs: tuple[float, ...] = ()
+    sequence: str = ""
+    length_normalized_transition_logprob: float | None = None
+    mean_token_entropy: float | None = Field(default=None, ge=0.0)
+    mean_token_margin: float | None = Field(default=None, ge=0.0, le=1.0)
+    truncated: bool = False
+    actual_batch_size: int = Field(default=1, ge=1)
+    generation_config: dict[str, Any] = Field(default_factory=dict)
 
 
 class OCRRecord(DomainModel):
@@ -226,6 +235,7 @@ class OCRRecord(DomainModel):
     revision_id: Sha256
     candidates: tuple[OCRCandidate, ...]
     selected_index: int | None = Field(default=None, ge=0)
+    model_id: str = Field(default="kha-white/manga-ocr-base", min_length=1)
     model_revision: str = Field(min_length=1)
     preprocess_version: str = Field(min_length=1)
 

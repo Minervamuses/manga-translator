@@ -1,19 +1,10 @@
-"""Transformers-compatible runtime for kha-white/manga-ocr-base.
-
-The PyPI ``manga-ocr==0.1.11`` loader uses ``AutoFeatureExtractor``.  Newer
-Transformers releases no longer route ViT image processors through that audio-
-focused auto class, so the old loader raises before the model is created.
-
-This module deliberately loads the same public model with explicit classes:
-``ViTImageProcessor`` + Japanese BERT tokenizer +
-``VisionEncoderDecoderModel``.  Imports stay lazy so detection-only commands do
-not pay the Transformers import cost.
-"""
+"""Pinned, batched Transformers runtime for kha-white/manga-ocr-base."""
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,10 +13,105 @@ from PIL import Image
 DEFAULT_MODEL_ID = "kha-white/manga-ocr-base"
 DEFAULT_MODEL_REVISION = "aa6573bd10b0d446cbf622e29c3e084914df9741"
 IMMUTABLE_REVISION_PATTERN = re.compile(r"[0-9a-f]{40}")
+TESTED_TRANSFORMERS_VERSION = "5.14.1"
+
+
+@dataclass(frozen=True)
+class GenerationTokenMetrics:
+    token_ids: tuple[int, ...]
+    token_logprobs: tuple[float, ...]
+    length_normalized_transition_logprob: float | None
+    mean_entropy: float | None
+    mean_margin: float | None
+    truncated: bool
+
+
+@dataclass(frozen=True)
+class OCRBatchResult:
+    text: str
+    sequence: str
+    metrics: GenerationTokenMetrics
+    model_id: str
+    model_revision: str
+    generation_config: dict[str, Any]
+    actual_batch_size: int
+
+
+@dataclass(frozen=True)
+class BatchRetryEvent:
+    offset: int
+    attempted_size: int
+    retry_size: int
+    reason: str
+
+
+def _score_generation(
+    sequences: Any,
+    scores: tuple[Any, ...],
+    *,
+    pad_token_id: int | None,
+    eos_token_id: int | tuple[int, ...] | list[int] | None,
+    max_length: int,
+    torch_module: Any,
+) -> tuple[GenerationTokenMetrics, ...]:
+    """Score generated tokens, including EOS and excluding padding."""
+
+    batch_size = int(sequences.shape[0])
+    step_count = len(scores)
+    eos_ids = (
+        set(eos_token_id)
+        if isinstance(eos_token_id, (tuple, list))
+        else ({eos_token_id} if eos_token_id is not None else set())
+    )
+    if step_count == 0:
+        return tuple(
+            GenerationTokenMetrics((), (), None, None, None, False)
+            for _ in range(batch_size)
+        )
+
+    generated_ids = sequences[:, -step_count:]
+    prompt_width = int(sequences.shape[1]) - step_count
+    log_probabilities = tuple(torch_module.log_softmax(step.float(), dim=-1) for step in scores)
+    probabilities = tuple(step.exp() for step in log_probabilities)
+    results: list[GenerationTokenMetrics] = []
+    for batch_index in range(batch_size):
+        token_ids: list[int] = []
+        token_logprobs: list[float] = []
+        entropies: list[float] = []
+        margins: list[float] = []
+        saw_eos = False
+        for step_index, (log_probs, probs) in enumerate(zip(log_probabilities, probabilities)):
+            token_id = int(generated_ids[batch_index, step_index].item())
+            if pad_token_id is not None and token_id == pad_token_id:
+                continue
+            row_log_probs = log_probs[batch_index]
+            row_probs = probs[batch_index]
+            token_ids.append(token_id)
+            token_logprobs.append(float(row_log_probs[token_id].item()))
+            entropies.append(float((-(row_probs * row_log_probs)).sum().item()))
+            top = torch_module.topk(row_probs, k=min(2, int(row_probs.shape[-1]))).values
+            margins.append(float((top[0] - top[1]).item()) if len(top) > 1 else float(top[0].item()))
+            if token_id in eos_ids:
+                saw_eos = True
+                break
+        count = len(token_logprobs)
+        results.append(
+            GenerationTokenMetrics(
+                token_ids=tuple(token_ids),
+                token_logprobs=tuple(token_logprobs),
+                length_normalized_transition_logprob=(sum(token_logprobs) / count if count else None),
+                mean_entropy=(sum(entropies) / count if count else None),
+                mean_margin=(sum(margins) / count if count else None),
+                truncated=bool(
+                    count and not saw_eos and step_count and prompt_width + step_count >= max_length
+                ),
+            )
+        )
+    return tuple(results)
 
 
 class MangaOcrRuntime:
-    """Small, dependency-stable inference wrapper for manga-ocr-base."""
+    """Direct, revision-pinned runtime with order-preserving micro-batches."""
 
     def __init__(
         self,
@@ -34,108 +120,170 @@ class MangaOcrRuntime:
         revision: str = DEFAULT_MODEL_REVISION,
         force_cpu: bool = False,
         max_length: int = 300,
+        batch_size: int = 4,
     ) -> None:
         self.model_id = str(pretrained_model_name_or_path)
         self.revision = str(revision).strip().lower()
         if IMMUTABLE_REVISION_PATTERN.fullmatch(self.revision) is None:
             raise ValueError("OCR model revision must be an immutable 40-character commit hash")
         self.max_length = int(max_length)
+        self.batch_size = max(1, int(batch_size))
+        self.last_batch_retries: tuple[BatchRetryEvent, ...] = ()
 
         try:
             import torch
+            import transformers
             from transformers import (
                 AutoTokenizer,
                 VisionEncoderDecoderModel,
                 ViTImageProcessor,
             )
-            try:
-                from transformers import GenerationMixin
-            except ImportError:  # pragma: no cover - compatibility with older 4.x
-                from transformers.generation.utils import GenerationMixin
         except Exception as error:  # pragma: no cover - exercised through caller tests
             raise RuntimeError(
                 "OCR 執行元件無法匯入；需要 transformers、torch、fugashi 與 unidic-lite。"
             ) from error
-
-        self._torch = torch
-        model_class: type[Any]
-        if issubclass(VisionEncoderDecoderModel, GenerationMixin):
-            model_class = VisionEncoderDecoderModel
-        else:
-            # Transformers 新版不再保證 PreTrainedModel 自帶 GenerationMixin。
-            # 與 manga-ocr 上游目前的相容作法一致，明確補回 generate()。
-            model_class = type(
-                "CompatibleMangaOcrModel",
-                (VisionEncoderDecoderModel, GenerationMixin),
-                {},
+        if str(transformers.__version__) != TESTED_TRANSFORMERS_VERSION:
+            raise RuntimeError(
+                "OCR runtime 僅支援 lockfile 驗證版本："
+                f"transformers=={TESTED_TRANSFORMERS_VERSION}，目前為 {transformers.__version__}"
             )
 
-        self.processor = ViTImageProcessor.from_pretrained(
-            self.model_id, revision=self.revision
+        self._torch = torch
+        loader = {"revision": self.revision}
+        self.processor = ViTImageProcessor.from_pretrained(self.model_id, **loader)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.model_id,
+            revision=self.revision,
+            tokenizer_type="bert-japanese",
+            use_fast=False,
         )
-        self.tokenizer = self._load_tokenizer(AutoTokenizer)
-        self.model = model_class.from_pretrained(self.model_id, revision=self.revision)
+        self.model = VisionEncoderDecoderModel.from_pretrained(self.model_id, **loader)
         self.device = self._select_device(force_cpu=force_cpu)
         self.model.to(self.device)
         self.model.eval()
-
-    def _load_tokenizer(self, auto_tokenizer: type[Any]) -> Any:
-        """Force the slow Japanese BERT tokenizer on Transformers 5.x.
-
-        Starting with recent Transformers versions, auto-detection may choose an
-        incompatible fast-only tokenizer for a VisionEncoderDecoder config.  The
-        model is fixed and known to use the Japanese BERT tokenizer, so making
-        that choice explicit is safer than relying on config inference.
-        """
-
-        kwargs = {
-            "revision": self.revision,
-            "tokenizer_type": "bert-japanese",
-            "use_fast": False,
+        model_config = getattr(self.model, "config", None)
+        model_generation = getattr(self.model, "generation_config", None)
+        self.pad_token_id = next(
+            (
+                value
+                for value in (
+                    getattr(self.tokenizer, "pad_token_id", None),
+                    getattr(model_config, "pad_token_id", None),
+                    getattr(model_generation, "pad_token_id", None),
+                )
+                if value is not None
+            ),
+            None,
+        )
+        self.eos_token_id = next(
+            (
+                value
+                for value in (
+                    getattr(self.tokenizer, "eos_token_id", None),
+                    getattr(model_config, "eos_token_id", None),
+                    getattr(model_generation, "eos_token_id", None),
+                )
+                if value is not None
+            ),
+            None,
+        )
+        self.generation_config = {
+            "max_length": self.max_length,
+            "num_beams": 1,
+            "do_sample": False,
+            "return_dict_in_generate": True,
+            "output_scores": True,
         }
-        try:
-            return auto_tokenizer.from_pretrained(self.model_id, **kwargs)
-        except TypeError as error:
-            # Very old supported Transformers builds may not accept
-            # ``tokenizer_type``.  Keep a narrow fallback without hiding model or
-            # network errors from the user.
-            if "tokenizer_type" not in str(error):
-                raise
-            return auto_tokenizer.from_pretrained(
-                self.model_id, revision=self.revision, use_fast=False
-            )
 
     def _select_device(self, *, force_cpu: bool) -> Any:
         torch = self._torch
         if not force_cpu and torch.cuda.is_available():
             return torch.device("cuda")
-
-        backends = getattr(torch, "backends", None)
-        mps = getattr(backends, "mps", None)
-        if not force_cpu and mps is not None and mps.is_available():
+        if not force_cpu and torch.backends.mps.is_available():
             return torch.device("mps")
         return torch.device("cpu")
 
-    def __call__(self, img_or_path: str | Path | Image.Image) -> str:
+    @staticmethod
+    def _prepare_image(img_or_path: str | Path | Image.Image) -> Image.Image:
         if isinstance(img_or_path, (str, Path)):
             with Image.open(img_or_path) as opened:
-                image = opened.convert("L").convert("RGB")
-        elif isinstance(img_or_path, Image.Image):
-            image = img_or_path.convert("L").convert("RGB")
-        else:
-            raise TypeError(
-                "img_or_path 必須是圖片路徑或 PIL.Image，"
-                f"實際收到：{type(img_or_path).__name__}"
-            )
+                return opened.convert("L").convert("RGB")
+        if isinstance(img_or_path, Image.Image):
+            return img_or_path.convert("L").convert("RGB")
+        raise TypeError(
+            "img_or_path 必須是圖片路徑或 PIL.Image，"
+            f"實際收到：{type(img_or_path).__name__}"
+        )
 
-        pixel_values = self.processor(image, return_tensors="pt").pixel_values
-        pixel_values = pixel_values.to(self.device)
+    def _infer_batch(self, images: list[Image.Image]) -> tuple[OCRBatchResult, ...]:
+        encoded = self.processor(images=images, return_tensors="pt")
+        pixel_values = encoded.pixel_values.to(self.device)
         with self._torch.inference_mode():
-            generated = self.model.generate(pixel_values, max_length=self.max_length)
+            generated = self.model.generate(pixel_values, **self.generation_config)
+        sequences = generated.sequences.detach().cpu()
+        scores = tuple(score.detach().cpu() for score in generated.scores)
+        metrics = _score_generation(
+            sequences,
+            scores,
+            pad_token_id=self.pad_token_id,
+            eos_token_id=self.eos_token_id,
+            max_length=self.max_length,
+            torch_module=self._torch,
+        )
+        decoded = self.tokenizer.batch_decode(sequences, skip_special_tokens=True)
+        actual_size = len(images)
+        return tuple(
+            OCRBatchResult(
+                text=_post_process(sequence),
+                sequence=sequence,
+                metrics=token_metrics,
+                model_id=self.model_id,
+                model_revision=self.revision,
+                generation_config=dict(self.generation_config),
+                actual_batch_size=actual_size,
+            )
+            for sequence, token_metrics in zip(decoded, metrics)
+        )
 
-        token_ids = generated[0].detach().cpu()
-        text = self.tokenizer.decode(token_ids, skip_special_tokens=True)
-        return _post_process(text)
+    def _is_oom(self, error: BaseException) -> bool:
+        oom_type = getattr(self._torch, "OutOfMemoryError", ())
+        return isinstance(error, oom_type) or "out of memory" in str(error).lower()
+
+    def recognize_batch(
+        self,
+        images: list[str | Path | Image.Image],
+        *,
+        batch_size: int | None = None,
+    ) -> tuple[OCRBatchResult, ...]:
+        prepared = [self._prepare_image(image) for image in images]
+        requested_size = max(1, int(batch_size or self.batch_size))
+        results: list[OCRBatchResult] = []
+        retries: list[BatchRetryEvent] = []
+        offset = 0
+        while offset < len(prepared):
+            attempt_size = min(requested_size, len(prepared) - offset)
+            while True:
+                try:
+                    batch = prepared[offset : offset + attempt_size]
+                    results.extend(self._infer_batch(batch))
+                    offset += attempt_size
+                    break
+                except RuntimeError as error:
+                    if not self._is_oom(error) or attempt_size <= 1:
+                        raise
+                    retry_size = max(1, attempt_size // 2)
+                    retries.append(
+                        BatchRetryEvent(offset, attempt_size, retry_size, type(error).__name__)
+                    )
+                    attempt_size = retry_size
+                    cuda = getattr(self._torch, "cuda", None)
+                    if cuda is not None and cuda.is_available():
+                        cuda.empty_cache()
+        self.last_batch_retries = tuple(retries)
+        return tuple(results)
+
+    def __call__(self, img_or_path: str | Path | Image.Image) -> str:
+        return self.recognize_batch([img_or_path], batch_size=1)[0].text
 
 
 def _post_process(text: str) -> str:
@@ -144,16 +292,11 @@ def _post_process(text: str) -> str:
     text = "".join(str(text or "").split())
     text = text.replace("…", "...")
     text = re.sub(r"[・.]{2,}", lambda match: "." * len(match.group(0)), text)
-    # Normalizes half-width kana and width variants.  The project's outer OCR
-    # sanitizer performs the final punctuation/noise cleanup.
     return unicodedata.normalize("NFKC", text)
 
 
 def check_runtime_dependencies() -> dict[str, str]:
-    """Import-only health check used by the CLI doctor command.
-
-    This intentionally does not download or initialize the ~400 MB OCR model.
-    """
+    """Import-only health check used by the CLI doctor command."""
 
     versions: dict[str, str] = {}
     try:
@@ -165,9 +308,12 @@ def check_runtime_dependencies() -> dict[str, str]:
         raise RuntimeError(
             "OCR 執行元件不完整；需要 transformers、torch、fugashi 與 unidic-lite。"
         ) from error
-
+    if str(transformers.__version__) != TESTED_TRANSFORMERS_VERSION:
+        raise RuntimeError(
+            f"transformers 必須鎖定 {TESTED_TRANSFORMERS_VERSION}，目前為 {transformers.__version__}"
+        )
     versions["torch"] = str(getattr(torch, "__version__", "unknown"))
-    versions["transformers"] = str(getattr(transformers, "__version__", "unknown"))
+    versions["transformers"] = str(transformers.__version__)
     versions["fugashi"] = str(getattr(fugashi, "__version__", "installed"))
     versions["unidic_lite"] = str(getattr(unidic_lite, "__version__", "installed"))
     return versions

@@ -114,6 +114,14 @@ class PostprocessConfig(BaseModel):
 
 
 class OCRConfig(BaseModel):
+    model_id: str = Field(default="kha-white/manga-ocr-base", min_length=1)
+    revision: str = Field(
+        default="aa6573bd10b0d446cbf622e29c3e084914df9741",
+        min_length=7,
+        pattern=r"^[0-9a-f]{7,64}$",
+    )
+    batch_size: int = Field(default=4, ge=1, le=64)
+    max_length: int = Field(default=300, ge=2, le=1024)
     # OCR crop 會向外擴張，避免字體描邊或小假名被 bbox 切掉。
     crop_padding_ratio: float = Field(default=0.08, ge=0.0, le=0.5)
     crop_padding_min_px: int = Field(default=4, ge=0, le=128)

@@ -102,6 +102,15 @@ def test_canonical_round_trip_is_byte_identical() -> None:
     assert first.index(b'"issues"') < first.index(b'"schema_version"')
 
 
+def test_identity_active_flag_defaults_for_pre_history_documents() -> None:
+    payload = json.loads(canonical_document_bytes(_document()))
+    del payload["region_identities"][0]["is_active"]
+
+    parsed = parse_document(json.dumps(payload))
+
+    assert parsed.region_identities[0].is_active is True
+
+
 def test_newer_and_older_schemas_require_explicit_handling() -> None:
     payload = json.loads(canonical_document_bytes(_document()))
     payload["schema_version"] = "2.0"

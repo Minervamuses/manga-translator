@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Sequence
 from uuid import UUID, uuid4
 
@@ -31,10 +32,18 @@ def canonical_geometry_bytes(
     bbox: BoundingBox,
     polygon: Polygon | None = None,
     line_polygons: Sequence[Polygon] = (),
+    angle_degrees: float = 0.0,
+    orientation: str = "unknown",
 ) -> bytes:
+    if not math.isfinite(angle_degrees):
+        raise ValueError("angle_degrees must be finite")
+    if orientation not in {"horizontal", "vertical", "rotated", "unknown"}:
+        raise ValueError("orientation is unsupported")
     payload = {
+        "angle_degrees": 0.0 if angle_degrees == 0.0 else angle_degrees,
         "bbox": bbox.model_dump(mode="json"),
         "line_polygons": [item.model_dump(mode="json") for item in line_polygons],
+        "orientation": orientation,
         "polygon": polygon.model_dump(mode="json") if polygon is not None else None,
     }
     return json.dumps(
@@ -53,6 +62,8 @@ def revision_id_for(
     bbox: BoundingBox,
     polygon: Polygon | None = None,
     line_polygons: Sequence[Polygon] = (),
+    angle_degrees: float = 0.0,
+    orientation: str = "unknown",
     mask_refs: Sequence[ArtifactRef] = (),
 ) -> str:
     """Hash every input that defines a detector revision, excluding its durable identity."""
@@ -63,8 +74,20 @@ def revision_id_for(
     for label, value in (
         (b"page", page_id.encode("ascii")),
         (b"detector", detector_fingerprint.encode("ascii")),
-        (b"geometry", canonical_geometry_bytes(bbox, polygon, line_polygons)),
-        (b"masks", json.dumps(sorted(ref.sha256 for ref in mask_refs)).encode("ascii")),
+        (
+            b"geometry",
+            canonical_geometry_bytes(
+                bbox,
+                polygon,
+                line_polygons,
+                angle_degrees,
+                orientation,
+            ),
+        ),
+        (
+            b"masks",
+            json.dumps([ref.sha256 for ref in mask_refs], separators=(",", ":")).encode("ascii"),
+        ),
     ):
         digest.update(len(label).to_bytes(2, "big"))
         digest.update(label)

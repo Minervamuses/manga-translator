@@ -47,6 +47,8 @@ class ReconciliationConfig:
     geometry_weight: float = 0.30
     center_weight: float = 0.20
     crop_weight: float = 0.15
+    content_match_threshold: float = 0.80
+    content_conflict_margin: float = 0.25
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,18 @@ class ReconciliationResult:
     identities: tuple[RegionIdentity, ...]
     revisions: tuple[RegionRevision, ...]
     issues: tuple[Issue, ...]
+    current_region_ids: tuple[UUID, ...] = ()
+    current_revision_ids: tuple[str, ...] = ()
+
+    @property
+    def current_identities(self) -> tuple[RegionIdentity, ...]:
+        by_id = {item.region_id: item for item in self.identities}
+        return tuple(by_id[item] for item in self.current_region_ids)
+
+    @property
+    def current_revisions(self) -> tuple[RegionRevision, ...]:
+        by_id = {item.revision_id: item for item in self.revisions}
+        return tuple(by_id[item] for item in self.current_revision_ids)
 
 
 def _bbox_iou(left: BoundingBox, right: BoundingBox) -> float:
@@ -164,6 +178,7 @@ def reconcile_regions(
         [
             revision
             for identity in previous.region_identities
+            if identity.is_active
             if (revision := next(
                 (
                     candidate
@@ -185,15 +200,19 @@ def reconcile_regions(
             bbox=item.bbox,
             polygon=item.polygon,
             line_polygons=item.line_polygons,
+            angle_degrees=item.angle_degrees,
+            orientation=item.orientation,
             mask_refs=item.mask_refs,
         )
         for item in observations
     ]
     exact = {item.revision_id: item for item in previous_revisions}
     score_rows: list[list[tuple[int, float]]] = []
+    content_rows: list[list[tuple[int, float]]] = []
     overlap_rows: list[list[tuple[int, float]]] = []
     for observation in observations:
         scores: list[tuple[int, float]] = []
+        content_scores: list[tuple[int, float]] = []
         overlaps: list[tuple[int, float]] = []
         for index, old_revision in enumerate(previous_revisions):
             score, overlap = _similarity(
@@ -205,12 +224,20 @@ def reconcile_regions(
             )
             scores.append((index, score))
             overlaps.append((index, overlap))
+            previous_dhash = previous_crop_dhashes.get(old_revision.revision_id)
+            if observation.crop_dhash is not None and previous_dhash is not None:
+                content_scores.append(
+                    (index, 1.0 - dhash_distance(observation.crop_dhash, previous_dhash))
+                )
         score_rows.append(sorted(scores, key=lambda item: (-item[1], item[0])))
+        content_rows.append(sorted(content_scores, key=lambda item: (-item[1], item[0])))
         overlap_rows.append(overlaps)
 
     proposed: dict[int, int] = {}
     ambiguous: dict[int, tuple[int, ...]] = {}
-    for current_index, (revision_id, candidates) in enumerate(zip(revision_ids, score_rows)):
+    for current_index, (revision_id, candidates, content_candidates) in enumerate(
+        zip(revision_ids, score_rows, content_rows)
+    ):
         exact_revision = exact.get(revision_id)
         if exact_revision is not None:
             proposed[current_index] = previous_revisions.index(exact_revision)
@@ -225,6 +252,17 @@ def reconcile_regions(
                 if candidates[0][1] - score < config.ambiguity_margin
             )
             continue
+        if content_candidates and content_candidates[0][0] != candidates[0][0]:
+            selected_content_score = dict(content_candidates).get(candidates[0][0], 0.0)
+            best_content_score = content_candidates[0][1]
+            if (
+                best_content_score >= config.content_match_threshold
+                and best_content_score - selected_content_score >= config.content_conflict_margin
+            ):
+                ambiguous[current_index] = tuple(
+                    dict.fromkeys((candidates[0][0], content_candidates[0][0]))
+                )
+                continue
         proposed[current_index] = candidates[0][0]
 
     owners: dict[int, list[int]] = {}
@@ -236,8 +274,8 @@ def reconcile_regions(
                 proposed.pop(current_index, None)
                 ambiguous[current_index] = (previous_index,)
 
-    identities: list[RegionIdentity] = []
-    revisions: list[RegionRevision] = []
+    current_identities: list[RegionIdentity] = []
+    current_revisions: list[RegionRevision] = []
     issues: list[Issue] = []
     for index, (observation, revision_id) in enumerate(zip(observations, revision_ids)):
         lineage_kind, lineage_indexes = _lineage_kind(
@@ -285,11 +323,40 @@ def reconcile_regions(
             source=observation.source,
             raw_index=observation.raw_index,
         )
-        identities.append(
-            RegionIdentity(region_id=region_id, active_revision_id=revision_id, lineage=lineage)
+        current_identities.append(
+            RegionIdentity(
+                region_id=region_id,
+                active_revision_id=revision_id,
+                lineage=lineage,
+                is_active=True,
+            )
         )
-        revisions.append(revision)
-    return ReconciliationResult(tuple(identities), tuple(revisions), tuple(issues))
+        current_revisions.append(revision)
+
+    identity_history = [item.model_copy(update={"is_active": False}) for item in previous_identities.values()]
+    identity_indexes = {item.region_id: index for index, item in enumerate(identity_history)}
+    for identity in current_identities:
+        existing_index = identity_indexes.get(identity.region_id)
+        if existing_index is None:
+            identity_indexes[identity.region_id] = len(identity_history)
+            identity_history.append(identity)
+        else:
+            identity_history[existing_index] = identity
+
+    revision_history = list(previous.region_revisions) if previous is not None else []
+    known_revision_ids = {item.revision_id for item in revision_history}
+    for revision in current_revisions:
+        if revision.revision_id not in known_revision_ids:
+            revision_history.append(revision)
+            known_revision_ids.add(revision.revision_id)
+
+    return ReconciliationResult(
+        identities=tuple(identity_history),
+        revisions=tuple(revision_history),
+        issues=tuple(issues),
+        current_region_ids=tuple(item.region_id for item in current_identities),
+        current_revision_ids=tuple(item.revision_id for item in current_revisions),
+    )
 
 
 def trace_ancestors(identities: Sequence[RegionIdentity], region_id: UUID) -> tuple[UUID, ...]:

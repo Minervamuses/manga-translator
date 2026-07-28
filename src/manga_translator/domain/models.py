@@ -156,6 +156,7 @@ class RegionIdentity(DomainModel):
     region_id: UUID
     active_revision_id: Sha256
     lineage: Lineage = Field(default_factory=Lineage)
+    is_active: bool = True
 
 
 class RegionRevision(DomainModel):
@@ -296,6 +297,20 @@ class PageDocument(DomainModel):
             revision = revisions.get(identity.active_revision_id)
             if revision is None or revision.region_id != identity.region_id:
                 raise ValueError("active revision must exist and belong to region")
+            lineage_refs = (
+                *identity.lineage.parents,
+                *identity.lineage.supersedes,
+                *identity.lineage.possible_predecessors,
+            )
+            if identity.region_id in lineage_refs:
+                raise ValueError("region lineage must not reference itself")
+            for name, references in (
+                ("parents", identity.lineage.parents),
+                ("supersedes", identity.lineage.supersedes),
+                ("possible_predecessors", identity.lineage.possible_predecessors),
+            ):
+                if len(set(references)) != len(references):
+                    raise ValueError(f"region lineage {name} must not contain duplicates")
         for revision in self.region_revisions:
             if revision.region_id not in identities:
                 raise ValueError("revision references unknown region")

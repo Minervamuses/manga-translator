@@ -1,0 +1,49 @@
+{
+  "gate": "G4",
+  "name": "translation, entity, and privacy gate",
+  "date": "2026-07-28",
+  "branch": "reapir_p4",
+  "implementation_head": "c4cbb15",
+  "status": "blocked",
+  "automated_assertions": {
+    "strict_structured_output": "tests/test_structured_translation.py",
+    "exact_id_mapping": "tests/test_structured_translation.py::test_exact_id_failures_reject_the_whole_response",
+    "array_reorder_safe": "tests/test_structured_translation.py::test_reordered_array_still_maps_by_exact_id",
+    "entity_candidates_not_auto_approved": "tests/test_entity_ledger.py::test_ocr_aliases_reuse_one_candidate_and_model_cannot_auto_approve",
+    "approved_names_are_hard_constraints": "tests/test_entity_ledger.py::test_only_human_approval_turns_an_entity_into_a_hard_constraint",
+    "non_destructive_validation": "tests/test_translation_validation.py::test_quote_dash_ellipsis_and_fullwidth_punctuation_golden_are_lossless",
+    "targeted_and_compact_repair_no_erase": "tests/test_translation_validation.py",
+    "visual_context_default_off": "tests/test_visual_escalation.py::test_disabled_visual_context_never_calls_provider_or_sends_image",
+    "visual_requests_manifest_auditable": "tests/test_visual_escalation.py::test_triggered_visual_request_uploads_low_resolution_overlay_and_maps_exact_id",
+    "visual_zdr_default": "tests/test_visual_escalation.py::test_zdr_requirement_blocks_unsupported_endpoint_unless_explicitly_relaxed"
+  },
+  "automated_tests": {
+    "result": "278 passed, 1 skipped, 2 deselected",
+    "ruff": "passed",
+    "compileall": "passed",
+    "diff_check": "passed"
+  },
+  "privacy_defaults": {
+    "visual_context_enabled": false,
+    "data_collection": "deny",
+    "visual_zdr_required": true,
+    "non_zdr_requires_explicit_override": true
+  },
+  "human_benchmark": {
+    "manifest": "benchmarks/translation_zh_tw_v1/manifest.json",
+    "verified_units": 0,
+    "required_units": 200,
+    "titles": 0,
+    "required_titles": 3,
+    "qualified_reviewer_adjudication": false
+  },
+  "blockers": [
+    "qualified Japanese to Taiwan Traditional Chinese human corpus has 0 of 200 required units",
+    "corpus has 0 of 3 required manga titles",
+    "qualified reviewer and adjudication records are unavailable"
+  ],
+  "translation_flow_switch": "not_performed",
+  "model_upgrade_claim": "not_allowed",
+  "legacy_context_window_parser_retained": true,
+  "visual_upload_default": "disabled"
+}

@@ -353,6 +353,48 @@ def test_content_geometry_conflict_is_ambiguous_instead_of_swapping_ids() -> Non
     assert len(swapped.issues) == 2
 
 
+def test_strong_content_winner_conflict_is_ambiguous_even_below_delta_margin() -> None:
+    ids = _ids()
+    local_mask = np.full((20, 20), 255, dtype=np.uint8)
+    current_dhash = 0
+    first = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint=DETECTOR,
+        observations=[
+            _observation(10.0, dhash=(1 << 16) - 1, mask=local_mask),
+            _observation(80.0, dhash=(1 << 4) - 1, mask=local_mask),
+        ],
+        id_factory=_factory(ids),
+    )
+    previous_hashes = {
+        revision.revision_id: observation.crop_dhash
+        for revision, observation in zip(
+            first.current_revisions,
+            (
+                _observation(10.0, dhash=(1 << 16) - 1),
+                _observation(80.0, dhash=(1 << 4) - 1),
+            ),
+        )
+    }
+    reconciled = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint="e" * 64,
+        observations=[_observation(10.0, dhash=current_dhash, mask=local_mask)],
+        previous=_document(first),
+        previous_masks={
+            revision.revision_id: local_mask for revision in first.current_revisions
+        },
+        previous_crop_dhashes=previous_hashes,
+        id_factory=_factory(ids),
+    )
+
+    old_ids = {identity.region_id for identity in first.current_identities}
+    current = reconciled.current_identities[0]
+    assert current.region_id not in old_ids
+    assert set(current.lineage.possible_predecessors) == old_ids
+    assert len(reconciled.issues) == 1
+
+
 def test_reconciliation_retains_multiple_revision_generations() -> None:
     ids = _ids()
     first = reconcile_regions(

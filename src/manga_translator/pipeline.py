@@ -83,7 +83,12 @@ from .stages.base import (
     StageOutputs,
 )
 from .stages.runner import StageFailureContext, StageOutcome, StageRunner
-from .stages.state import PipelineStageState, decode_pipeline_state, encode_pipeline_state
+from .stages.state import (
+    MASK_MEDIA_TYPE,
+    PipelineStageState,
+    decode_pipeline_state,
+    encode_pipeline_state,
+)
 from .storage import ArtifactStore, JobStore
 from .translator import (
     load_glossary,
@@ -1459,6 +1464,50 @@ def _source_crop_dhash(image: np.ndarray, bbox: BoundingBox) -> int | None:
     return value
 
 
+def _expected_local_mask_shape(bbox: BoundingBox) -> tuple[int, int]:
+    return (
+        max(1, int(np.ceil(bbox.bottom)) - int(np.floor(bbox.y))),
+        max(1, int(np.ceil(bbox.right)) - int(np.floor(bbox.x))),
+    )
+
+
+def _validate_local_mask(
+    mask: np.ndarray,
+    bbox: BoundingBox,
+    *,
+    identity: str,
+) -> np.ndarray:
+    if mask.ndim != 2 or mask.size == 0:
+        raise ValueError(f"region mask {identity} must be a non-empty grayscale raster")
+    expected = _expected_local_mask_shape(bbox)
+    if mask.shape != expected:
+        raise ValueError(
+            f"region mask {identity} dimensions {mask.shape} do not match bbox {expected}"
+        )
+    return mask
+
+
+def _read_local_mask_artifact(
+    store: JobStore,
+    reference: ArtifactRef,
+    bbox: BoundingBox,
+) -> np.ndarray:
+    if reference.media_type != MASK_MEDIA_TYPE:
+        raise ValueError(
+            f"region mask artifact {reference.sha256} must use {MASK_MEDIA_TYPE}"
+        )
+    raw = store.artifacts.read_bytes(
+        reference.sha256,
+        expected_size=reference.size_bytes,
+    )
+    if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError(f"region mask artifact {reference.sha256} is not canonical PNG")
+    mask = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        raise ValueError(f"region mask artifact {reference.sha256} is not decodable")
+    return _validate_local_mask(mask, bbox, identity=reference.sha256)
+
+
 def _png_payload(image: np.ndarray) -> bytes:
     encoded, buffer = cv2.imencode(".png", image)
     if not encoded:
@@ -2389,20 +2438,11 @@ def _document_from_page_result(
         if not revision.mask_refs:
             continue
         reference = revision.mask_refs[0]
-        if not reference.media_type.startswith("image/"):
-            raise ValueError(
-                f"region mask artifact {reference.sha256} is not an image"
-            )
-        raw = store.artifacts.read_bytes(
-            reference.sha256,
-            expected_size=reference.size_bytes,
+        previous_masks[revision.revision_id] = _read_local_mask_artifact(
+            store,
+            reference,
+            revision.bbox,
         )
-        mask = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-        if mask is None:
-            raise ValueError(
-                f"region mask artifact {reference.sha256} is not decodable"
-            )
-        previous_masks[revision.revision_id] = mask
     observations: list[RegionObservation] = []
     for region in page.regions:
         bbox = BoundingBox(
@@ -2413,15 +2453,21 @@ def _document_from_page_result(
         )
         mask_refs: tuple[ArtifactRef, ...] = ()
         if region.local_mask is not None:
-            encoded, buffer = cv2.imencode(".png", region.local_mask)
-            if encoded:
-                mask = store.store_artifact(
-                    buffer.tobytes(),
-                    media_type="image/png",
-                    owner_type="region_mask",
-                    owner_id=f"{job_id}:{page.page_id}:{region.id}",
-                )
-                mask_refs = (mask,)
+            local_mask = _validate_local_mask(
+                region.local_mask,
+                bbox,
+                identity=region.id,
+            )
+            encoded, buffer = cv2.imencode(".png", local_mask)
+            if not encoded:
+                raise ValueError(f"region mask {region.id} could not be encoded as PNG")
+            mask = store.store_artifact(
+                buffer.tobytes(),
+                media_type=MASK_MEDIA_TYPE,
+                owner_type="region_mask",
+                owner_id=f"{job_id}:{page.page_id}:{region.id}",
+            )
+            mask_refs = (mask,)
         observations.append(
             RegionObservation(
                 bbox=bbox,
@@ -2430,7 +2476,7 @@ def _document_from_page_result(
                 raw_index=region.raw_index,
                 orientation="vertical" if region.vertical else "horizontal",
                 mask_refs=mask_refs,
-                mask=region.local_mask,
+                mask=(local_mask if region.local_mask is not None else None),
                 crop_dhash=_source_crop_dhash(page.source_image, bbox),
             )
         )

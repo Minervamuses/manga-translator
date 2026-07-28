@@ -8,6 +8,7 @@ from uuid import UUID
 
 import cv2
 import numpy as np
+import pytest
 from click.testing import CliRunner
 
 from manga_translator import cli as cli_module
@@ -217,6 +218,39 @@ def _install_component_fakes(
 def _open_document(state: Path, page_id: str):
     with JobStore(state / "jobs.sqlite3", ArtifactStore(state / "artifacts")) as store:
         return store.load_page_document(job_id="job-1", page_id=page_id)
+
+
+def test_region_mask_artifacts_require_canonical_png_and_bbox_dimensions(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state"
+    bbox = pipeline_module.BoundingBox(x=1.0, y=2.0, width=12.0, height=18.0)
+    with JobStore(state / "jobs.sqlite3", ArtifactStore(state / "artifacts")) as store:
+        encoded_jpeg, jpeg = cv2.imencode(
+            ".jpg", np.full((18, 12), 255, dtype=np.uint8)
+        )
+        assert encoded_jpeg
+        jpeg_ref = store.store_artifact(
+            jpeg.tobytes(),
+            media_type="image/png",
+            owner_type="test",
+            owner_id="jpeg-mask",
+        )
+        with pytest.raises(ValueError, match="not canonical PNG"):
+            pipeline_module._read_local_mask_artifact(store, jpeg_ref, bbox)
+
+        encoded_png, png = cv2.imencode(
+            ".png", np.full((17, 12), 255, dtype=np.uint8)
+        )
+        assert encoded_png
+        wrong_shape_ref = store.store_artifact(
+            png.tobytes(),
+            media_type="image/png",
+            owner_type="test",
+            owner_id="wrong-shape-mask",
+        )
+        with pytest.raises(ValueError, match="do not match bbox"):
+            pipeline_module._read_local_mask_artifact(store, wrong_shape_ref, bbox)
 
 
 def test_component_stages_resume_without_reloading_models_or_provider(

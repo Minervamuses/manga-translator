@@ -302,7 +302,8 @@ def reconcile_regions(
             best_content_score = content_candidates[0][1]
             if (
                 best_content_score >= config.content_match_threshold
-                and best_content_score - selected_content_score >= config.content_conflict_margin
+                or best_content_score - selected_content_score
+                >= config.content_conflict_margin
             ):
                 ambiguous[current_index] = tuple(
                     dict.fromkeys((candidates[0][0], content_candidates[0][0]))

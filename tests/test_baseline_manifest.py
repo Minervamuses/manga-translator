@@ -179,6 +179,7 @@ def test_release_archive_excludes_runtime_and_build_files() -> None:
         "dist/package.whl",
         "input/page.png",
         "output/page.png",
+        "custom-output/artifacts/translation-responses/raw.json",
     ]
     result = subprocess.run(
         ["git", "check-attr", "export-ignore", "--", *paths],
@@ -190,3 +191,16 @@ def test_release_archive_excludes_runtime_and_build_files() -> None:
 
     assert len(result.stdout.splitlines()) == len(paths)
     assert all(line.endswith("export-ignore: set") for line in result.stdout.splitlines())
+
+
+def test_provider_response_artifacts_are_ignored_at_custom_output_paths() -> None:
+    path = "custom-output/artifacts/translation-responses/raw.json"
+    result = subprocess.run(
+        ["git", "check-ignore", "--no-index", path],
+        cwd=project_root(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == path

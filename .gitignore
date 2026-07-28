@@ -48,6 +48,7 @@ Thumbs.db
 # Local runtime assets (images are local-only)
 input/
 output/
+**/artifacts/translation-responses/
 
 # Extra generated debug/test images in project root
 detect_*.jpg

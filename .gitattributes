@@ -21,3 +21,4 @@
 /dist/** export-ignore
 /input/** export-ignore
 /output/** export-ignore
+**/artifacts/translation-responses/** export-ignore

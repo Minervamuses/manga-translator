@@ -1069,12 +1069,11 @@ def _request_translations(
     return bind_validated_responses(request, responses)
 
 
-def _translate_groups(
+def _prepare_translation_groups(
     groups: list[TextGroup],
     page_id: str,
     config: AppConfig,
-    glossary: dict[str, str],
-) -> ResultIssue | None:
+) -> list[TextGroup]:
     translatable: list[TextGroup] = []
     for group in groups:
         if not group.mapping_region_key:
@@ -1097,6 +1096,44 @@ def _translate_groups(
             continue
         group.status = "ocr_accepted"
         translatable.append(group)
+    return translatable
+
+
+def _apply_translation_batch(
+    groups: list[TextGroup],
+    translations: ValidatedTranslationBatch,
+    config: AppConfig,
+) -> None:
+    for group in groups:
+        raw_translation = translations.by_region_key[group.mapping_region_key]
+        translation = sanitize_translation_text(raw_translation, source=group.ocr_text)
+        validation = validate_translation(group.ocr_text, translation, config.openrouter)
+        group.mapping_chain = translations.chain_for(group.mapping_region_key)
+        group.translation = translation if validation.valid else ""
+        group.translation_valid = validation.valid
+        if validation.valid:
+            group.mapping_chain["validated_translation"] = hashlib.sha256(
+                group.translation.encode("utf-8")
+            ).hexdigest()
+            group.status = "ready"
+            group.skip_reason = ""
+        else:
+            group.mapping_chain["validated_translation"] = None
+            group.status = "translation_rejected"
+            group.skip_reason = ",".join(validation.issues) or "empty_translation"
+        console.print(
+            f"  [{group.id}] {group.ocr_text} → {group.translation or '[保留原文]'}",
+            markup=False,
+        )
+
+
+def _translate_groups(
+    groups: list[TextGroup],
+    page_id: str,
+    config: AppConfig,
+    glossary: dict[str, str],
+) -> ResultIssue | None:
+    translatable = _prepare_translation_groups(groups, page_id, config)
 
     if not translatable:
         return None
@@ -1133,27 +1170,7 @@ def _translate_groups(
             details=details,
         )
 
-    for group in translatable:
-        raw_translation = translations.by_region_key[group.mapping_region_key]
-        translation = sanitize_translation_text(raw_translation, source=group.ocr_text)
-        validation = validate_translation(group.ocr_text, translation, config.openrouter)
-        group.mapping_chain = translations.chain_for(group.mapping_region_key)
-        group.translation = translation if validation.valid else ""
-        group.translation_valid = validation.valid
-        if validation.valid:
-            group.mapping_chain["validated_translation"] = hashlib.sha256(
-                group.translation.encode("utf-8")
-            ).hexdigest()
-            group.status = "ready"
-            group.skip_reason = ""
-        else:
-            group.mapping_chain["validated_translation"] = None
-            group.status = "translation_rejected"
-            group.skip_reason = ",".join(validation.issues) or "empty_translation"
-        console.print(
-            f"  [{group.id}] {group.ocr_text} → {group.translation or '[保留原文]'}",
-            markup=False,
-        )
+    _apply_translation_batch(translatable, translations, config)
     return None
 
 

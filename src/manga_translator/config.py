@@ -38,6 +38,13 @@ class OpenRouterConfig(BaseModel):
         return env_key or cfg_key
 
 
+class VisualContextConfig(BaseModel):
+    enabled: bool = False
+    max_image_side: int = Field(default=1024, ge=128, le=2048)
+    require_zdr: bool = True
+    allow_non_zdr: bool = False
+
+
 class PathsConfig(BaseModel):
     input_dir: Path = Path("./input")
     output_dir: Path = Path("./output")
@@ -218,6 +225,7 @@ class InpaintingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     openrouter: OpenRouterConfig
+    visual_context: VisualContextConfig = Field(default_factory=VisualContextConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     postprocess: PostprocessConfig = Field(default_factory=PostprocessConfig)

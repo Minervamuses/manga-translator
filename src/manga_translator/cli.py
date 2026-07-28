@@ -145,6 +145,13 @@ def inspect_job(config: str, state_dir: Path | None, job_id: str, page_id: str |
             document = store.load_page_document(job_id=job_id, page_id=str(row[0]))
             if document is None:
                 continue
+            stage_attempts = store.list_stage_runs(
+                job_id=job_id, page_id=document.source.page_id
+            )
+            cache_hits = {
+                (str(attempt[0]), str(attempt[1])): int(attempt[7]) > 0
+                for attempt in stage_attempts
+            }
             pages.append(
                 {
                     "page_id": document.source.page_id,
@@ -158,13 +165,16 @@ def inspect_job(config: str, state_dir: Path | None, job_id: str, page_id: str |
                             "revision_id": identity.active_revision_id,
                         }
                         for identity in document.region_identities
+                        if identity.is_active
                     ],
                     "stages": [
                         {
                             "stage": stage.stage.value,
                             "fingerprint": stage.fingerprint,
                             "status": stage.status.value,
-                            "cache_hit": stage.cache_hit,
+                            "cache_hit": cache_hits.get(
+                                (stage.stage.value, stage.fingerprint), False
+                            ),
                             "artifacts": [
                                 {
                                     "sha256": sha256,
@@ -187,9 +197,7 @@ def inspect_job(config: str, state_dir: Path | None, job_id: str, page_id: str |
                             "cache_hit_count": attempt[7],
                             "last_cache_hit_at": attempt[8],
                         }
-                        for attempt in store.list_stage_runs(
-                            job_id=job_id, page_id=document.source.page_id
-                        )
+                        for attempt in stage_attempts
                     ],
                     "issues": [issue.model_dump(mode="json") for issue in document.issues],
                 }

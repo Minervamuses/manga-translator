@@ -486,6 +486,20 @@ def test_inspect_and_replay_need_only_durable_state(tmp_path: Path, monkeypatch)
         config, job_id="job-1", state_dir=state, resume=True
     )
     page_id = result.pages[0].page_id
+    resumed = pipeline_module.run_pipeline(
+        config, job_id="job-1", state_dir=state, resume=True
+    )
+    assert resumed.status == "succeeded"
+    with JobStore(state / "jobs.sqlite3", ArtifactStore(state / "artifacts")) as store:
+        document = store.load_page_document(job_id="job-1", page_id=page_id)
+        assert document is not None
+        identities = (
+            document.region_identities[0].model_copy(update={"is_active": False}),
+            *document.region_identities[1:],
+        )
+        store.store_page_document(
+            "job-1", document.model_copy(update={"region_identities": identities})
+        )
     source.unlink()
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -535,5 +549,7 @@ def test_inspect_and_replay_need_only_durable_state(tmp_path: Path, monkeypatch)
     assert manifest.read_bytes() == canonical_document_bytes(document)
     assert cv2.imread(str(image)) is not None
     inspection = json.loads(inspected.output)
-    assert len(inspection["pages"][0]["active_regions"]) == 2
-    assert str(state / "artifacts") in inspection["pages"][0]["document_artifact"]["path"]
+    inspected_page = inspection["pages"][0]
+    assert len(inspected_page["active_regions"]) == 1
+    assert all(stage["cache_hit"] for stage in inspected_page["stages"])
+    assert str(state / "artifacts") in inspected_page["document_artifact"]["path"]

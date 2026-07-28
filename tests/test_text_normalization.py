@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from manga_translator.text import grapheme_clusters, normalize_text
-from manga_translator.typesetter import _balanced_chunks, _sanitize_render_text, _visible_length
+from manga_translator.typesetter import _sanitize_render_text, _visible_length
+from manga_translator.typography.breaking import balanced_legal_chunks
 
 
 def test_crlf_controls_and_outer_whitespace_are_auditable_and_reversible() -> None:
@@ -30,7 +31,13 @@ def test_uax29_keeps_emoji_combining_marks_and_variation_selectors_together() ->
     text = "👨‍👩‍👧‍👦e\u0301✈️"
     assert grapheme_clusters(text) == ("👨‍👩‍👧‍👦", "e\u0301", "✈️")
     assert _visible_length(text) == 3
-    assert _balanced_chunks(text, 2) == ("👨‍👩‍👧‍👦e\u0301", "✈️")
+    chunks = balanced_legal_chunks(text, 2)
+    assert "".join(chunks) == text
+    assert all(
+        cluster in grapheme_clusters(text)
+        for chunk in chunks
+        for cluster in grapheme_clusters(chunk)
+    )
 
 
 def test_explicit_newlines_and_preferred_break_markers_are_preserved() -> None:

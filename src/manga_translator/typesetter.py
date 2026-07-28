@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 from .config import TypesettingConfig
 from .detector import TextGroup, TextRegion
 from .text import grapheme_clusters, normalize_text
+from .typography.breaking import balanced_legal_chunks, greedy_legal_wrap
 
 
 @dataclass(frozen=True)
@@ -133,24 +134,11 @@ def _decide_direction(obj: TextRegion | TextGroup, config_dir: str) -> str:
 
 
 def _wrap_horizontal(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
-    lines: list[str] = []
-    current = ""
-    for ch in grapheme_clusters(text):
-        if ch == "\n":
-            lines.append(current)
-            current = ""
-            continue
-        test = current + ch
-        bbox = font.getbbox(test)
-        width = int(bbox[2] - bbox[0])
-        if width > max_w and current:
-            lines.append(current)
-            current = ch
-        else:
-            current = test
-    if current:
-        lines.append(current)
-    return lines
+    def measure(value: str) -> float:
+        bbox = font.getbbox(value)
+        return float(bbox[2] - bbox[0])
+
+    return list(greedy_legal_wrap(text, measure, max_w))
 
 
 def _font_bounds(cfg: TypesettingConfig, preferred_font_size: float | None) -> tuple[int, int]:
@@ -759,19 +747,6 @@ def _select_layout_bbox(
     return bubble if bubble is not None else base
 
 
-def _balanced_chunks(text: str, count: int) -> tuple[str, ...]:
-    clusters = grapheme_clusters(text)
-    count = max(1, min(count, len(clusters)))
-    base, remainder = divmod(len(clusters), count)
-    lengths = [base + (1 if index < remainder else 0) for index in range(count)]
-    chunks: list[str] = []
-    cursor = 0
-    for length in lengths:
-        chunks.append("".join(clusters[cursor : cursor + length]))
-        cursor += length
-    return tuple(chunks)
-
-
 def _clamp(value: float, lower: float, upper: float) -> float:
     if upper < lower:
         return lower
@@ -870,7 +845,7 @@ def _plan_vertical(
         )
 
         for columns in range(1, max_columns + 1):
-            chunks = _balanced_chunks(text, columns)
+            chunks = balanced_legal_chunks(text, columns)
             max_items = max(len(grapheme_clusters(chunk)) for chunk in chunks)
             if columns > 1 and text_length / columns < cfg.min_chars_per_column * 0.65:
                 sparse_penalty = (cfg.min_chars_per_column - text_length / columns) * 0.7

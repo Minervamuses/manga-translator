@@ -429,6 +429,19 @@ def doctor(config: str, strict_api_key: bool):
     except Exception:  # noqa: BLE001 - optional accelerator failure is non-fatal
         warn("pyclipper 不可用；會自動改用 Shapely，功能正常但幾何後處理稍慢")
 
+    try:
+        from importlib.metadata import version
+
+        from uniseg.linebreak import line_break_boundaries
+
+        uniseg_version = version("uniseg")
+        if tuple(line_break_boundaries("繁體中文")):
+            ok(f"Unicode line breaking 可用：uniseg {uniseg_version}")
+        else:
+            fail("uniseg 未回傳 UAX #14 斷行邊界")
+    except Exception as e:  # noqa: BLE001 - doctor converts dependency failures to diagnostics
+        fail(f"Unicode line breaking 不可用：{e}")
+
     from .runtime.capabilities import pillow_capabilities
 
     shaping = pillow_capabilities()

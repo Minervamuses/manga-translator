@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import tomllib
 from pathlib import Path
 
 from manga_translator.baseline import (
@@ -15,6 +18,9 @@ from manga_translator.baseline import (
     load_manifest,
     project_root,
     validate_fixture_schema,
+    verify_manifest,
+    verify_regression_manifest,
+    verify_snapshot_manifest,
 )
 
 
@@ -86,3 +92,101 @@ def test_manifest_preserves_67_legacy_test_names() -> None:
     assert len(legacy) == 67
     current = collect_test_names(root, excluded=LEGACY_TEST_EXCLUDES)
     assert set(legacy) <= set(current)
+
+
+def test_historical_snapshot_and_current_regression_are_distinct() -> None:
+    root = project_root()
+    manifest = load_manifest(root / MANIFEST_RELATIVE_PATH)
+
+    snapshot_errors = verify_snapshot_manifest(root, manifest)
+    regression_errors = verify_regression_manifest(root, manifest)
+
+    assert any(error.startswith("source tree fingerprint mismatch:") for error in snapshot_errors)
+    assert regression_errors == []
+
+
+def test_runtime_contract_uses_conda_python_311_not_capture_patch(monkeypatch) -> None:
+    root = project_root()
+    manifest = load_manifest(root / MANIFEST_RELATIVE_PATH)
+    assert manifest["python"]["version"] == "3.12.10"
+    assert manifest["python"]["purpose"] == "historical_capture_metadata"
+    assert manifest["runtime_contract"]["python"] == {
+        "implementation": "CPython",
+        "major": 3,
+        "minor": 11,
+    }
+    assert os.environ.get("CONDA_PREFIX")
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+
+    assert verify_manifest(root, manifest, mode="regression") == []
+
+
+def test_runtime_contract_matches_conda_and_project_python_constraints() -> None:
+    root = project_root()
+    manifest = load_manifest(root / MANIFEST_RELATIVE_PATH)
+    environment = (root / "environment.yml").read_text(encoding="utf-8")
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "  - python=3.11\n" in environment
+    assert project["project"]["requires-python"] == ">=3.11"
+    assert manifest["runtime_contract"]["python"] == {
+        "implementation": "CPython",
+        "major": 3,
+        "minor": 11,
+    }
+
+
+def test_runtime_contract_rejects_non_conda_execution(monkeypatch) -> None:
+    root = project_root()
+    manifest = load_manifest(root / MANIFEST_RELATIVE_PATH)
+    monkeypatch.delenv("CONDA_PREFIX", raising=False)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+
+    errors = verify_manifest(root, manifest, mode="regression")
+
+    assert "active Conda environment required" in errors
+
+
+def test_legacy_manifest_falls_back_to_exact_captured_python() -> None:
+    root = project_root()
+    manifest = load_manifest(root / MANIFEST_RELATIVE_PATH)
+    manifest.pop("runtime_contract")
+
+    errors = verify_manifest(root, manifest, mode="regression")
+
+    assert any(error.startswith("Python version differs: expected 3.12.10") for error in errors)
+
+
+def test_unknown_verification_mode_is_rejected() -> None:
+    root = project_root()
+    manifest = load_manifest(root / MANIFEST_RELATIVE_PATH)
+
+    try:
+        verify_manifest(root, manifest, mode="unknown")  # type: ignore[arg-type]
+    except ValueError as error:
+        assert str(error) == "unknown baseline verification mode: unknown"
+    else:
+        raise AssertionError("unknown verification mode must fail closed")
+
+
+def test_release_archive_excludes_runtime_and_build_files() -> None:
+    paths = [
+        "src/manga_translator/__pycache__/pipeline.cpython-311.pyc",
+        ".pytest_cache/v/cache/nodeids",
+        ".ruff_cache/0/cache",
+        ".venv/pyvenv.cfg",
+        "build/lib/module.py",
+        "dist/package.whl",
+        "input/page.png",
+        "output/page.png",
+    ]
+    result = subprocess.run(
+        ["git", "check-attr", "export-ignore", "--", *paths],
+        cwd=project_root(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert len(result.stdout.splitlines()) == len(paths)
+    assert all(line.endswith("export-ignore: set") for line in result.stdout.splitlines())

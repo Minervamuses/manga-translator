@@ -5,3 +5,19 @@
 *.png binary
 *.pt binary
 *.ttf binary
+
+# Runtime/build files must never enter release archives.
+**/__pycache__/** export-ignore
+**/.pytest_cache/** export-ignore
+**/.ruff_cache/** export-ignore
+**/.mypy_cache/** export-ignore
+**/.tox/** export-ignore
+**/.venv/** export-ignore
+**/venv/** export-ignore
+**/env/** export-ignore
+**/*.egg-info/** export-ignore
+*.py[cod] export-ignore
+/build/** export-ignore
+/dist/** export-ignore
+/input/** export-ignore
+/output/** export-ignore

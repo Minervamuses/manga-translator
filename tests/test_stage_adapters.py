@@ -6,7 +6,10 @@ import pytest
 
 from manga_translator.config import AppConfig, OpenRouterConfig, PathsConfig
 from manga_translator.domain.issues import StageName
-from manga_translator.stages.adapters import build_pipeline_stage_specs
+from manga_translator.stages.adapters import (
+    SOURCE_MEDIA_TYPE,
+    build_pipeline_stage_specs,
+)
 from manga_translator.stages.base import ArtifactPayload, StageOutputs
 from manga_translator.stages.runner import STAGE_DAG
 
@@ -55,3 +58,10 @@ def test_pipeline_stage_specs_declare_every_input_and_output_contract(
         assert specs[stage].run is _callback
         assert set(specs[stage].input_contracts) == set(dependencies)
         assert specs[stage].output_contract is not None
+    assert SOURCE_MEDIA_TYPE in specs[StageName.STYLE].output_contract.additional_media_types
+    assert (
+        specs[StageName.LAYOUT]
+        .input_contracts[StageName.STYLE]
+        .additional_media_types
+        == specs[StageName.STYLE].output_contract.additional_media_types
+    )

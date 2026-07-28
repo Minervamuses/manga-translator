@@ -1609,7 +1609,18 @@ def _build_pipeline_stage_runners(
         )
 
     def style_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
-        return adapter_state(inputs, adapter="style")
+        encoded = adapter_state(inputs, adapter="style")
+        reference = _source_artifact(inputs)
+        return StageOutputs(
+            (
+                *encoded.artifacts,
+                ArtifactPayload(
+                    store.artifacts.read_bytes(reference.sha256),
+                    reference.media_type,
+                    "legacy_layout_reference",
+                ),
+            )
+        )
 
     def safe_region_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
         return adapter_state(inputs, adapter="safe_region")
@@ -1780,12 +1791,14 @@ def _build_pipeline_stage_runners(
         state = _read_stage_state(store, inputs, StageName.TRANSLATE)
         style = _read_stage_state(store, inputs, StageName.STYLE)
         safe_region = _read_stage_state(store, inputs, StageName.SAFE_REGION)
-        reference = _source_ref_from_extras(state.extras)
+        reference = _source_ref_from_extras(style.extras)
         if (
-            _source_ref_from_extras(style.extras) != reference
+            _source_ref_from_extras(state.extras) != reference
             or _source_ref_from_extras(safe_region.extras) != reference
         ):
             raise ValueError("layout stage received inconsistent source lineage")
+        if reference not in inputs.upstream[StageName.STYLE]:
+            raise ValueError("layout reference is not a declared style-stage artifact")
         original = _decode_source_image(store, reference)
         detection = state.detection
         regions_by_id = {region.id: region for region in detection.regions_post}

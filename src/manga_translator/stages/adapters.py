@@ -32,6 +32,10 @@ STATE_CONTRACT = ArtifactSetContract(
     required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
     additional_media_types=(MASK_MEDIA_TYPE,),
 )
+STATE_WITH_SOURCE_CONTRACT = ArtifactSetContract(
+    required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
+    additional_media_types=(MASK_MEDIA_TYPE, SOURCE_MEDIA_TYPE),
+)
 RENDER_CONTRACT = ArtifactSetContract(
     required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
     additional_media_types=(MASK_MEDIA_TYPE, ENCODED_MEDIA_TYPE),
@@ -140,7 +144,7 @@ def build_pipeline_stage_specs(
     output_contracts: Mapping[StageName, ArtifactSetContract] = {
         StageName.SOURCE: SOURCE_CONTRACT,
         StageName.DETECT: STATE_CONTRACT,
-        StageName.STYLE: STATE_CONTRACT,
+        StageName.STYLE: STATE_WITH_SOURCE_CONTRACT,
         StageName.SAFE_REGION: STATE_CONTRACT,
         StageName.OCR: STATE_CONTRACT,
         StageName.ORDER: STATE_CONTRACT,

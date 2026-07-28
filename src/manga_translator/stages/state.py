@@ -12,10 +12,11 @@ import cv2
 import numpy as np
 
 from ..detector import DetectionResult, DetectorIssue, TextGroup, TextRegion
+from ..domain.issues import StageName
 from ..domain.models import ArtifactRef
 from .base import ArtifactPayload, StageOutputs
 
-STATE_SCHEMA = "pipeline_stage_state.v1"
+STATE_SCHEMA = "pipeline_stage_state.v2"
 STATE_MEDIA_TYPE = "application/vnd.manga-translator.pipeline-state+json"
 MASK_MEDIA_TYPE = "image/png"
 
@@ -105,22 +106,74 @@ def _group_payload(group: TextGroup, payloads: dict[str, bytes]) -> dict[str, An
         "skip_reason": group.skip_reason,
         "sort_key": list(group.sort_key),
         "status": group.status,
+        "stable_group_key": _stable_group_key(group),
         "translation": group.translation,
         "translation_valid": group.translation_valid,
         "vertical": group.vertical,
     }
 
 
+def _stable_group_key(group: TextGroup) -> str:
+    material = _canonical_json(
+        {
+            "bbox": list(group.bbox),
+            "region_ids": sorted(group.region_ids),
+            "vertical": group.vertical,
+        }
+    )
+    return hashlib.sha256(material).hexdigest()
+
+
+_REQUIRED_EXTRAS: dict[StageName, frozenset[str]] = {
+    StageName.DETECT: frozenset({"source_artifact"}),
+    StageName.STYLE: frozenset({"source_artifact", "style_adapter"}),
+    StageName.SAFE_REGION: frozenset({"safe_region_adapter", "source_artifact"}),
+    StageName.OCR: frozenset({"ocr_adapter", "source_artifact"}),
+    StageName.ORDER: frozenset(
+        {"order_adapter", "ordered_region_ids", "reading_order", "source_artifact"}
+    ),
+    StageName.TRANSLATE: frozenset(
+        {"mapping_snapshots", "provider_response_artifacts", "source_artifact"}
+    ),
+    StageName.LAYOUT: frozenset(
+        {"layout_plans", "mapping_snapshots", "source_artifact"}
+    ),
+    StageName.INPAINT_RENDER: frozenset(
+        {
+            "inpainted_image_sha256",
+            "mapping_snapshots",
+            "rendered_image_sha256",
+            "source_artifact",
+        }
+    ),
+}
+
+
+def _validate_stage_extras(stage: StageName, extras: Mapping[str, Any]) -> None:
+    required = _REQUIRED_EXTRAS.get(stage)
+    if required is None:
+        raise ValueError(f"stage {stage.value} does not produce pipeline state")
+    missing = required - set(extras)
+    if missing:
+        raise ValueError(
+            f"{stage.value} state is missing required extras: {sorted(missing)}"
+        )
+
+
 def encode_pipeline_state(
     detection: DetectionResult,
     *,
+    producer_stage: StageName,
     extras: Mapping[str, Any] | None = None,
 ) -> StageOutputs:
     """Encode mutable legacy objects without putting masks in JSON."""
 
     mask_payloads: dict[str, bytes] = {}
+    material_extras = dict(extras or {})
+    _validate_stage_extras(producer_stage, material_extras)
     payload = {
         "schema_version": STATE_SCHEMA,
+        "producer_stage": producer_stage.value,
         "detection": {
             "groups": [_group_payload(group, mask_payloads) for group in detection.groups],
             "issues": [
@@ -136,7 +189,7 @@ def encode_pipeline_state(
                 _region_payload(region, mask_payloads) for region in detection.regions_raw
             ],
         },
-        "extras": dict(extras or {}),
+        "extras": material_extras,
     }
     artifacts = [ArtifactPayload(_canonical_json(payload), STATE_MEDIA_TYPE, "state")]
     artifacts.extend(
@@ -239,6 +292,8 @@ def _group_from_payload(
         mapping_chain=dict(payload["mapping_chain"]),
         mask=mask,
     )
+    if payload.get("stable_group_key") != _stable_group_key(group):
+        raise ValueError(f"group {group.id} stable identity key mismatch")
     if mask is not None and mask.shape[:2] != (group.h, group.w):
         raise ValueError(f"group {group.id} mask dimensions do not match its bbox")
     return group
@@ -247,6 +302,7 @@ def _group_from_payload(
 def decode_pipeline_state(
     artifacts: Sequence[ArtifactRef],
     *,
+    expected_stage: StageName,
     read_bytes: Callable[[str], bytes],
 ) -> PipelineStageState:
     states = [artifact for artifact in artifacts if artifact.media_type == STATE_MEDIA_TYPE]
@@ -262,10 +318,16 @@ def decode_pipeline_state(
         raise ValueError("pipeline state artifact is not valid JSON") from error
     if not isinstance(payload, dict) or payload.get("schema_version") != STATE_SCHEMA:
         raise ValueError("unsupported pipeline state schema")
+    if payload.get("producer_stage") != expected_stage.value:
+        raise ValueError(
+            "pipeline state producer mismatch: "
+            f"expected {expected_stage.value}, got {payload.get('producer_stage')}"
+        )
     detection_payload = payload.get("detection")
     extras = payload.get("extras")
     if not isinstance(detection_payload, dict) or not isinstance(extras, dict):
         raise TypeError("pipeline state must contain detection and extras objects")
+    _validate_stage_extras(expected_stage, extras)
     allowed = {
         artifact.sha256 for artifact in artifacts if artifact.media_type == MASK_MEDIA_TYPE
     }

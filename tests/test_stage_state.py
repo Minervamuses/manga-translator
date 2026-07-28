@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from manga_translator.detector import DetectionResult, DetectorIssue, TextGroup, TextRegion
+from manga_translator.domain.issues import StageName
 from manga_translator.domain.models import ArtifactRef
 from manga_translator.stages.state import (
     MASK_MEDIA_TYPE,
@@ -77,9 +78,24 @@ def _materialize(outputs):
     return tuple(refs), content
 
 
+def _extras() -> dict[str, object]:
+    return {
+        "source_artifact": {
+            "sha256": "a" * 64,
+            "media_type": "image/png",
+            "size_bytes": 10,
+        }
+    }
+
+
 def test_pipeline_state_round_trip_is_deterministic_and_artifact_backed() -> None:
-    first = encode_pipeline_state(_detection(), extras={"order": ["g1"]})
-    second = encode_pipeline_state(_detection(), extras={"order": ["g1"]})
+    extras = {**_extras(), "order": ["g1"]}
+    first = encode_pipeline_state(
+        _detection(), producer_stage=StageName.DETECT, extras=extras
+    )
+    second = encode_pipeline_state(
+        _detection(), producer_stage=StageName.DETECT, extras=extras
+    )
     assert first == second
     refs, content = _materialize(first)
 
@@ -88,21 +104,94 @@ def test_pipeline_state_round_trip_is_deterministic_and_artifact_backed() -> Non
     assert len(state_refs) == 1
     assert len(mask_refs) == 2  # local/group masks deduplicate; aggregate mask deduplicates too
     metadata = json.loads(content[state_refs[0].sha256])
+    assert metadata["producer_stage"] == "detect"
+    assert len(metadata["detection"]["groups"][0]["stable_group_key"]) == 64
     assert metadata["detection"]["groups"][0]["mask"] in {ref.sha256 for ref in mask_refs}
     assert "data" not in metadata["detection"]["groups"][0]
 
-    restored = decode_pipeline_state(refs, read_bytes=content.__getitem__)
-    assert restored.extras == {"order": ["g1"]}
+    restored = decode_pipeline_state(
+        refs,
+        expected_stage=StageName.DETECT,
+        read_bytes=content.__getitem__,
+    )
+    assert restored.extras == extras
     assert restored.detection.groups[0].ocr_text == "猫"
     assert np.array_equal(restored.detection.groups[0].mask, np.array([[0, 255], [255, 0]]))
     assert np.array_equal(restored.detection.mask, _detection().mask)
 
 
 def test_pipeline_state_rejects_mask_reference_not_declared_by_stage_output() -> None:
-    outputs = encode_pipeline_state(_detection())
+    outputs = encode_pipeline_state(
+        _detection(), producer_stage=StageName.DETECT, extras=_extras()
+    )
     refs, content = _materialize(outputs)
     state_ref = next(ref for ref in refs if ref.media_type == STATE_MEDIA_TYPE)
     without_masks = (state_ref,)
 
     with pytest.raises(ValueError, match="undeclared mask artifact"):
-        decode_pipeline_state(without_masks, read_bytes=content.__getitem__)
+        decode_pipeline_state(
+            without_masks,
+            expected_stage=StageName.DETECT,
+            read_bytes=content.__getitem__,
+        )
+
+
+def test_pipeline_state_rejects_wrong_producer_stage() -> None:
+    outputs = encode_pipeline_state(
+        _detection(), producer_stage=StageName.DETECT, extras=_extras()
+    )
+    refs, content = _materialize(outputs)
+
+    with pytest.raises(ValueError, match="producer mismatch"):
+        decode_pipeline_state(
+            refs,
+            expected_stage=StageName.OCR,
+            read_bytes=content.__getitem__,
+        )
+
+
+def test_pipeline_state_rejects_tampered_stable_group_key() -> None:
+    outputs = encode_pipeline_state(
+        _detection(), producer_stage=StageName.DETECT, extras=_extras()
+    )
+    refs, content = _materialize(outputs)
+    state_ref = next(ref for ref in refs if ref.media_type == STATE_MEDIA_TYPE)
+    payload = json.loads(content[state_ref.sha256])
+    payload["detection"]["groups"][0]["stable_group_key"] = "0" * 64
+    tampered = (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
+    tampered_sha256 = hashlib.sha256(tampered).hexdigest()
+    content[tampered_sha256] = tampered
+    tampered_refs = tuple(
+        ArtifactRef(
+            sha256=tampered_sha256,
+            media_type=reference.media_type,
+            size_bytes=len(tampered),
+        )
+        if reference == state_ref
+        else reference
+        for reference in refs
+    )
+
+    with pytest.raises(ValueError, match="stable identity key mismatch"):
+        decode_pipeline_state(
+            tampered_refs,
+            expected_stage=StageName.DETECT,
+            read_bytes=content.__getitem__,
+        )
+
+
+def test_pipeline_state_rejects_missing_stage_specific_extras() -> None:
+    with pytest.raises(ValueError, match="missing required extras"):
+        encode_pipeline_state(
+            _detection(),
+            producer_stage=StageName.ORDER,
+            extras=_extras(),
+        )

@@ -1414,6 +1414,7 @@ def _read_stage_state(
 ) -> PipelineStageState:
     return decode_pipeline_state(
         inputs.upstream[stage],
+        expected_stage=stage,
         read_bytes=store.artifacts.read_bytes,
     )
 
@@ -1591,12 +1592,14 @@ def _build_pipeline_stage_runners(
         )
         return encode_pipeline_state(
             detection,
+            producer_stage=StageName.DETECT,
             extras={"source_artifact": reference.model_dump(mode="json")},
         )
 
     def adapter_state(
         inputs: StageInputs,
         *,
+        stage: StageName,
         adapter: str,
     ) -> StageOutputs:
         state = _read_stage_state(store, inputs, StageName.DETECT)
@@ -1605,11 +1608,12 @@ def _build_pipeline_stage_runners(
             raise ValueError(f"{adapter} stage received inconsistent source lineage")
         return encode_pipeline_state(
             state.detection,
+            producer_stage=stage,
             extras={**state.extras, f"{adapter}_adapter": "v0.3.2-pass-through"},
         )
 
     def style_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
-        encoded = adapter_state(inputs, adapter="style")
+        encoded = adapter_state(inputs, stage=StageName.STYLE, adapter="style")
         reference = _source_artifact(inputs)
         return StageOutputs(
             (
@@ -1623,7 +1627,11 @@ def _build_pipeline_stage_runners(
         )
 
     def safe_region_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
-        return adapter_state(inputs, adapter="safe_region")
+        return adapter_state(
+            inputs,
+            stage=StageName.SAFE_REGION,
+            adapter="safe_region",
+        )
 
     def ocr_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
         state = _read_stage_state(store, inputs, StageName.DETECT)
@@ -1687,7 +1695,11 @@ def _build_pipeline_stage_runners(
                 group.status = "ocr_failed"
                 group.skip_reason = str(error)
         detection.groups = groups
-        return encode_pipeline_state(detection, extras=state.extras)
+        return encode_pipeline_state(
+            detection,
+            producer_stage=StageName.OCR,
+            extras={**state.extras, "ocr_adapter": "v0.3.2-ensemble"},
+        )
 
     def order_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
         state = _read_stage_state(store, inputs, StageName.DETECT)
@@ -1700,8 +1712,10 @@ def _build_pipeline_stage_runners(
         )
         return encode_pipeline_state(
             state.detection,
+            producer_stage=StageName.ORDER,
             extras={
                 **state.extras,
+                "order_adapter": "v0.3.2-reading-order",
                 "reading_order": config.postprocess.reading_order,
                 "ordered_region_ids": [
                     list(group.region_ids) for group in state.detection.groups
@@ -1780,6 +1794,7 @@ def _build_pipeline_stage_runners(
         detection.groups = groups
         return encode_pipeline_state(
             detection,
+            producer_stage=StageName.TRANSLATE,
             extras={
                 **state.extras,
                 "mapping_snapshots": _mapping_snapshot_payload(groups),
@@ -1812,6 +1827,7 @@ def _build_pipeline_stage_runners(
         detection.groups = groups
         return encode_pipeline_state(
             detection,
+            producer_stage=StageName.LAYOUT,
             extras={
                 **state.extras,
                 "layout_plans": {
@@ -1872,6 +1888,7 @@ def _build_pipeline_stage_runners(
         detection.groups = groups
         encoded_state = encode_pipeline_state(
             detection,
+            producer_stage=StageName.INPAINT_RENDER,
             extras={
                 **state.extras,
                 "inpainted_image_sha256": hashlib.sha256(inpainted_raw).hexdigest(),
@@ -1960,6 +1977,7 @@ def _page_result_from_stage_outcomes(
 ) -> PageResult:
     render_state = decode_pipeline_state(
         outcomes[StageName.INPAINT_RENDER].outputs,
+        expected_stage=StageName.INPAINT_RENDER,
         read_bytes=store.artifacts.read_bytes,
     )
     encoded_outputs = outcomes[StageName.ENCODE].outputs

@@ -1384,32 +1384,34 @@ def run_pipeline(
     ) as progress:
         task = progress.add_task("翻譯中...", total=len(image_files))
         for image_path in image_files:
-            try:
-                page = process_single_page(
-                    image_path=image_path,
-                    config=config,
-                    glossary=glossary,
-                    debug=debug,
-                    dump_json=dump_json,
-                    save_intermediate=save_intermediate,
-                    prep_manual=prep_manual,
-                )
-            except OCRInitializationError as error:
-                page = _failed_page_result(
-                    image_path,
-                    code="ocr_initialization_failed",
-                    stage="ocr",
-                    error=error,
-                    blocked=True,
-                )
-            except Exception as error:  # noqa: BLE001 - page boundary records typed failure
-                page = _failed_page_result(
-                    image_path,
-                    code="page_processing_failed",
-                    stage="pipeline",
-                    error=error,
-                )
-            _persist_page_result(page, output_dir)
+            page_id = _page_id_for_path(image_path)
+            with profile_page(page_id, str(image_path)):
+                try:
+                    page = process_single_page(
+                        image_path=image_path,
+                        config=config,
+                        glossary=glossary,
+                        debug=debug,
+                        dump_json=dump_json,
+                        save_intermediate=save_intermediate,
+                        prep_manual=prep_manual,
+                    )
+                except OCRInitializationError as error:
+                    page = _failed_page_result(
+                        image_path,
+                        code="ocr_initialization_failed",
+                        stage="ocr",
+                        error=error,
+                        blocked=True,
+                    )
+                except Exception as error:  # noqa: BLE001 - page boundary records typed failure
+                    page = _failed_page_result(
+                        image_path,
+                        code="page_processing_failed",
+                        stage="pipeline",
+                        error=error,
+                    )
+                _persist_page_result(page, output_dir)
             page.image = None
             page.source_image = None
             pages.append(page)

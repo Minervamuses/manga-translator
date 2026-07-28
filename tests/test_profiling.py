@@ -4,8 +4,12 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
+
+from manga_translator import pipeline as pipeline_module
 from manga_translator.benchmark import performance as performance_module
 from manga_translator.benchmark.performance import REQUIRED_STAGES, run_performance_baseline
+from manga_translator.config import AppConfig, OpenRouterConfig, PathsConfig
 from manga_translator.profiling import (
     RunProfiler,
     activate_profiler,
@@ -15,6 +19,7 @@ from manga_translator.profiling import (
     record_api_profile,
     set_page_profile_metrics,
 )
+from manga_translator.result import PageResult
 
 
 def test_disabled_profiler_does_not_change_output_or_record_spans() -> None:
@@ -56,6 +61,65 @@ def test_profile_records_page_stage_resources_and_api_usage() -> None:
     assert report["resources"]["cpu_rss_peak_bytes"] is None or report["resources"][
         "cpu_rss_peak_bytes"
     ] > 0
+
+
+def test_nested_same_page_profile_context_records_one_page_wall() -> None:
+    profiler = RunProfiler("nested-page", environment_kind="mock")
+
+    with (
+        activate_profiler(profiler),
+        profile_page("page-1", "page.png"),
+        profile_page("page-1", "page.png"),
+        profile_span("decode"),
+    ):
+        pass
+
+    page_spans = [span for span in profiler.spans if span.page_id == "page-1"]
+    assert [span.stage for span in page_spans].count("page_wall") == 1
+    assert page_spans[-1].stage == "page_wall"
+
+
+def test_run_pipeline_profiles_encode_inside_single_page_wall(tmp_path, monkeypatch) -> None:
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    source = input_dir / "page.png"
+    source.write_bytes(b"stable-page-bytes")
+    page_id = hashlib.sha256(source.read_bytes()).hexdigest()
+    config = AppConfig(
+        openrouter=OpenRouterConfig(api_key="test", model="test/model"),
+        paths=PathsConfig(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            glossary=tmp_path / "missing-glossary.json",
+            font=tmp_path / "missing-font.ttf",
+            font_fallback=tmp_path / "missing-fallback.ttf",
+        ),
+    )
+
+    def process_page(image_path, *_args, **_kwargs):
+        with profile_page(page_id, str(image_path)), profile_span("decode"):
+            return PageResult(
+                page_id=page_id,
+                source_path=image_path,
+                status="succeeded",
+                image=np.full((8, 8, 3), 127, dtype=np.uint8),
+            )
+
+    monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
+    monkeypatch.setattr(pipeline_module, "process_single_page", process_page)
+    profiler = RunProfiler("pipeline-page", environment_kind="mock")
+
+    with activate_profiler(profiler):
+        result = pipeline_module.run_pipeline(config)
+
+    assert result.status == "succeeded"
+    page_spans = [span for span in profiler.spans if span.page_id == page_id]
+    page_walls = [span for span in page_spans if span.stage == "page_wall"]
+    encode = next(span for span in page_spans if span.stage == "encode")
+    assert len(page_walls) == 1
+    assert encode.sequence < page_walls[0].sequence
+    assert page_walls[0].wall_ms >= encode.wall_ms
 
 
 def test_gpu_span_uses_cuda_events_and_synchronizes(monkeypatch) -> None:

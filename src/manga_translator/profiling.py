@@ -153,6 +153,10 @@ class RunProfiler:
         if not self.enabled:
             yield
             return
+        if _ACTIVE_PAGE.get() == page_id:
+            self.pages.setdefault(page_id, {"source_path": source_path})
+            yield
+            return
         token = _ACTIVE_PAGE.set(page_id)
         self.pages.setdefault(page_id, {"source_path": source_path})
         try:

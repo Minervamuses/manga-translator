@@ -23,11 +23,8 @@ env/
 Thumbs.db
 
 # Local runtime assets (images are local-only)
-input/**
-output/**
-!input/.gitkeep
-!output/.gitkeep
-!output/debug/.gitkeep
+input/
+output/
 
 # Extra generated debug/test images in project root
 detect_*.jpg

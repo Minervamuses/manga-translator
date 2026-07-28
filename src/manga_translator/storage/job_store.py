@@ -119,8 +119,8 @@ class JobStore:
         connection.execute(f"PRAGMA user_version={target}")
 
     @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        self.connection.execute("BEGIN IMMEDIATE")
+    def transaction(self, *, exclusive: bool = False) -> Iterator[sqlite3.Connection]:
+        self.connection.execute("BEGIN EXCLUSIVE" if exclusive else "BEGIN IMMEDIATE")
         try:
             yield self.connection
         except BaseException:
@@ -184,10 +184,12 @@ class JobStore:
         owner_type: str,
         owner_id: str,
     ) -> ArtifactRef:
-        artifact = self.artifacts.put_bytes(data, media_type=media_type)
-        if not self.artifacts.exists(artifact.sha256, expected_size=artifact.size_bytes):
-            raise RuntimeError("artifact did not become durable")
         with self.transaction() as connection:
+            artifact = self.artifacts.put_bytes(data, media_type=media_type)
+            if not self.artifacts.exists(
+                artifact.sha256, expected_size=artifact.size_bytes
+            ):
+                raise RuntimeError("artifact did not become durable")
             self._insert_artifact(connection, artifact)
             connection.execute(
                 """
@@ -245,12 +247,14 @@ class JobStore:
 
     def store_page_document(self, job_id: str, document: PageDocument) -> ArtifactRef:
         data = canonical_document_bytes(document)
-        artifact = self.artifacts.put_bytes(data, media_type="application/json")
-        if not self.artifacts.exists(artifact.sha256, expected_size=artifact.size_bytes):
-            raise RuntimeError("PageDocument artifact did not become durable")
         owner_id = f"{job_id}:{document.source.page_id}:document"
         with self.transaction() as connection:
             member_hashes = self._require_page_document_members(connection, document)
+            artifact = self.artifacts.put_bytes(data, media_type="application/json")
+            if not self.artifacts.exists(
+                artifact.sha256, expected_size=artifact.size_bytes
+            ):
+                raise RuntimeError("PageDocument artifact did not become durable")
             self._insert_artifact(connection, artifact)
             connection.execute(
                 "DELETE FROM artifact_references WHERE owner_type='page_document' AND owner_id=?",
@@ -511,15 +515,20 @@ class JobStore:
             )
 
     def gc(self) -> GarbageCollectionResult:
-        referenced = self.referenced_hashes()
-        registered = {
-            str(row[0]) for row in self.connection.execute("SELECT sha256 FROM artifacts")
-        }
-        unreferenced = registered - referenced
-        with self.transaction() as connection:
+        removed_files = 0
+        with self.transaction(exclusive=True) as connection:
+            referenced = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT sha256 FROM artifact_references"
+                )
+            }
+            registered = {
+                str(row[0]) for row in connection.execute("SELECT sha256 FROM artifacts")
+            }
+            unreferenced = registered - referenced
             for sha256 in unreferenced:
                 connection.execute("DELETE FROM artifacts WHERE sha256=?", (sha256,))
-        removed_files = 0
-        for sha256 in set(self.artifacts.iter_hashes()) - referenced:
-            removed_files += int(self.artifacts.delete(sha256))
+            for sha256 in set(self.artifacts.iter_hashes()) - referenced:
+                removed_files += int(self.artifacts.delete(sha256))
         return GarbageCollectionResult(len(unreferenced), removed_files)

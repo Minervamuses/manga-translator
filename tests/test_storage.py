@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from importlib.resources import files
 from pathlib import Path
 
@@ -236,6 +237,88 @@ def test_gc_removes_unreferenced_records_and_orphan_files(tmp_path: Path) -> Non
         assert artifacts.exists(kept.sha256)
         assert not artifacts.exists(orphan.sha256)
         assert not artifacts.exists(registered_orphan.sha256)
+
+
+def test_gc_cannot_race_durable_file_to_reference_commit(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    artifact_root = tmp_path / "artifacts"
+    with JobStore(database, ArtifactStore(artifact_root)) as setup:
+        setup.create_job("job-1")
+
+    store_ready = threading.Event()
+    gc_ready = threading.Event()
+    begin_store = threading.Event()
+    begin_gc = threading.Event()
+    artifact_written = threading.Event()
+    allow_reference = threading.Event()
+    gc_entering = threading.Event()
+    gc_finished = threading.Event()
+    failures: list[BaseException] = []
+    stored: list[ArtifactRef] = []
+    collected = []
+
+    class BlockingArtifactStore(ArtifactStore):
+        def put_bytes(self, data: bytes, *, media_type: str) -> ArtifactRef:
+            artifact = super().put_bytes(data, media_type=media_type)
+            artifact_written.set()
+            if not allow_reference.wait(timeout=5):
+                raise TimeoutError("test did not release artifact reference commit")
+            return artifact
+
+    def store_worker() -> None:
+        try:
+            with JobStore(database, BlockingArtifactStore(artifact_root)) as jobs:
+                store_ready.set()
+                if not begin_store.wait(timeout=5):
+                    raise TimeoutError("test did not start artifact store")
+                stored.append(
+                    jobs.store_artifact(
+                        b"kept",
+                        media_type="text/plain",
+                        owner_type="test",
+                        owner_id="racing",
+                    )
+                )
+        except (OSError, RuntimeError, sqlite3.Error) as exc:
+            failures.append(exc)
+
+    def gc_worker() -> None:
+        try:
+            with JobStore(database, ArtifactStore(artifact_root)) as jobs:
+                gc_ready.set()
+                if not begin_gc.wait(timeout=5):
+                    raise TimeoutError("test did not start garbage collection")
+                gc_entering.set()
+                collected.append(jobs.gc())
+                gc_finished.set()
+        except (OSError, RuntimeError, sqlite3.Error) as exc:
+            failures.append(exc)
+
+    store_thread = threading.Thread(target=store_worker)
+    gc_thread = threading.Thread(target=gc_worker)
+    store_thread.start()
+    gc_thread.start()
+    assert store_ready.wait(timeout=5)
+    assert gc_ready.wait(timeout=5)
+    begin_store.set()
+    assert artifact_written.wait(timeout=5)
+    begin_gc.set()
+    assert gc_entering.wait(timeout=5)
+    assert not gc_finished.wait(timeout=0.2)
+    allow_reference.set()
+    store_thread.join(timeout=5)
+    gc_thread.join(timeout=5)
+
+    assert not store_thread.is_alive()
+    assert not gc_thread.is_alive()
+    assert not failures
+    assert len(stored) == 1
+    assert collected[0].files == 0
+    with JobStore(database, ArtifactStore(artifact_root)) as jobs:
+        assert stored[0].sha256 in jobs.referenced_hashes()
+        assert jobs.artifacts.exists(
+            stored[0].sha256, expected_size=stored[0].size_bytes
+        )
 
 
 def test_explicit_network_share_is_rejected() -> None:

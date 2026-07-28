@@ -12,7 +12,7 @@ from click.testing import CliRunner
 from manga_translator import cli as cli_module
 from manga_translator import pipeline as pipeline_module
 from manga_translator.config import AppConfig, OpenRouterConfig, PathsConfig
-from manga_translator.detector import DetectionResult, TextGroup
+from manga_translator.detector import DetectionResult, TextGroup, TextRegion
 from manga_translator.image_io import ImageEncodeError, ImageWriteError
 from manga_translator.pipeline import _translate_groups
 from manga_translator.result import BatchResult, PageResult, ResultIssue
@@ -239,3 +239,103 @@ def test_api_failure_has_distinct_issue_and_preserves_group_text(monkeypatch) ->
     assert group.status == "translation_failed"
     assert not group.translation_valid
     assert group.translation == ""
+
+
+def test_group_ocr_exception_is_blocked_and_preserves_source(tmp_path, monkeypatch) -> None:
+    config = _config(tmp_path)
+    source = config.paths.input_dir / "page.png"
+    _write_source(source, 231)
+    region = TextRegion(id="r1", x=1, y=1, w=8, h=8, source="ctd")
+    group = TextGroup(
+        id="g000",
+        region_ids=[region.id],
+        bbox=(1, 1, 8, 8),
+        vertical=True,
+        mask=np.full((8, 8), 255, dtype=np.uint8),
+    )
+    detection = DetectionResult(
+        regions_raw=[region],
+        regions_post=[region],
+        groups=[group],
+        mask=np.full((12, 12), 255, dtype=np.uint8),
+    )
+    monkeypatch.setattr(pipeline_module, "initialize_ocr_model", lambda: None)
+    monkeypatch.setattr(pipeline_module, "detect_text_regions", lambda *_args: detection)
+    monkeypatch.setattr(
+        pipeline_module,
+        "ocr_group_detailed",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("region OCR exploded")),
+    )
+    monkeypatch.setattr(pipeline_module, "_preflight_layout_plans", lambda *_args: {})
+
+    result = pipeline_module.run_pipeline(config)
+
+    assert result.status == "blocked"
+    page = result.pages[0]
+    assert page.status == "blocked"
+    assert page.stage_failure == "ocr"
+    assert page.source_preserved
+    assert page.output_path == config.paths.output_dir / "failed" / "page.source-preserved.png"
+    assert page.output_path.read_bytes() == source.read_bytes()
+    assert not (config.paths.output_dir / "page.png").exists()
+    assert group.status == "ocr_failed"
+    assert not group.translation_valid
+    assert len(page.issues) == 1
+    assert page.issues[0].code == "ocr_group_failed"
+    assert page.issues[0].stage == "ocr"
+    assert page.issues[0].details == {
+        "group_id": "g000",
+        "group_status": "ocr_failed",
+        "reason": "region OCR exploded",
+        "region_ids": ["r1"],
+    }
+    manifest = json.loads((config.paths.output_dir / "batch-manifest.json").read_text("utf-8"))
+    assert manifest["status"] == "blocked"
+    assert manifest["pages"][0]["issues"][0]["message"] == "region OCR exploded"
+
+
+@pytest.mark.parametrize(
+    ("status", "issue_code", "stage"),
+    [
+        ("ocr_failed", "ocr_group_failed", "ocr"),
+        ("translation_rejected", "translation_rejected", "translation"),
+        ("layout_rejected", "layout_rejected", "layout"),
+        ("layout_collision_rejected", "layout_collision_rejected", "layout"),
+    ],
+)
+def test_group_failures_have_typed_issues(status, issue_code, stage) -> None:
+    group = TextGroup(
+        id="g007",
+        region_ids=["r4", "r5"],
+        bbox=(0, 0, 10, 10),
+        vertical=True,
+        status=status,
+        skip_reason="specific failure",
+    )
+
+    issues = pipeline_module._group_failure_issues([group], "page-id")
+
+    assert len(issues) == 1
+    assert issues[0].code == issue_code
+    assert issues[0].stage == stage
+    assert issues[0].page_id == "page-id"
+    assert issues[0].details == {
+        "group_id": "g007",
+        "group_status": status,
+        "reason": "specific failure",
+        "region_ids": ["r4", "r5"],
+    }
+
+
+@pytest.mark.parametrize("status", ["ocr_rejected", "render_collision_rejected", "ready"])
+def test_expected_group_filtering_does_not_create_failure_issue(status) -> None:
+    group = TextGroup(
+        id="g1",
+        region_ids=["r1"],
+        bbox=(0, 0, 10, 10),
+        vertical=True,
+        status=status,
+        skip_reason="expected filtering",
+    )
+
+    assert pipeline_module._group_failure_issues([group], "page-id") == []

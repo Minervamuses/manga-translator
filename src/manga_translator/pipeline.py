@@ -835,7 +835,7 @@ def _translate_groups(
 ) -> ResultIssue | None:
     translatable: list[TextGroup] = []
     for group in groups:
-        if group.status == "ocr_rejected":
+        if group.status in {"ocr_rejected", "ocr_failed"}:
             continue
         accepted = bool(group.ocr_text_norm) and (
             group.ocr_confidence >= config.ocr.min_quality_score
@@ -891,6 +891,40 @@ def _translate_groups(
             markup=False,
         )
     return None
+
+
+def _group_failure_issues(
+    groups: list[TextGroup],
+    page_id: str,
+) -> list[ResultIssue]:
+    failure_kinds = {
+        "ocr_failed": ("ocr_group_failed", "ocr"),
+        "translation_rejected": ("translation_rejected", "translation"),
+        "layout_rejected": ("layout_rejected", "layout"),
+        "layout_collision_rejected": ("layout_collision_rejected", "layout"),
+    }
+    issues: list[ResultIssue] = []
+    for group in groups:
+        failure = failure_kinds.get(group.status)
+        if failure is None:
+            continue
+        code, stage = failure
+        reason = group.skip_reason or group.status
+        issues.append(
+            ResultIssue(
+                code=code,
+                message=reason,
+                stage=stage,
+                page_id=page_id,
+                details={
+                    "group_id": group.id,
+                    "group_status": group.status,
+                    "reason": reason,
+                    "region_ids": list(group.region_ids),
+                },
+            )
+        )
+    return issues
 
 
 def _dump_debug_artifacts(
@@ -1180,21 +1214,23 @@ def _process_single_page_impl(
             dump_json=(dump_json or prep_manual),
         )
 
-    issues = list(detection_issues)
+    group_issues = _group_failure_issues(groups, page_id)
+    issues = [*detection_issues, *group_issues]
     if translation_issue is not None:
         issues.append(translation_issue)
+    blocking_issue = translation_issue or (group_issues[0] if group_issues else None)
     set_page_profile_metrics(page_id, final_groups=len(groups), renderable_groups=len(renderable))
     return PageResult(
         page_id=page_id,
         source_path=image_path,
-        status="blocked" if translation_issue is not None else "succeeded",
+        status="blocked" if blocking_issue is not None else "succeeded",
         image=result,
         source_image=original,
         regions=detection.regions_post,
         ocr_results=[group.ocr_text for group in groups],
         translations=[group.translation for group in groups],
         issues=issues,
-        stage_failure="translation" if translation_issue is not None else None,
+        stage_failure=blocking_issue.stage if blocking_issue is not None else None,
     )
 
 

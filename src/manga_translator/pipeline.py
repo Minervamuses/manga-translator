@@ -70,6 +70,7 @@ from .result import (
     derive_batch_status,
 )
 from .stages.adapters import (
+    LAYOUT_PLANS_MEDIA_TYPE,
     build_pipeline_stage_specs,
     glossary_fingerprint,
     stage_config,
@@ -1534,6 +1535,34 @@ def _layout_plan_from_payload(payload: object) -> TextLayoutPlan:
     )
 
 
+def _layout_plan_bundle(plans: dict[str, TextLayoutPlan]) -> bytes:
+    return _canonical_json_bytes(
+        {
+            "plans": {
+                group_id: _layout_plan_payload(plan)
+                for group_id, plan in sorted(plans.items())
+            },
+            "schema_version": "layout_plan_bundle.v1",
+        }
+    )
+
+
+def _decode_layout_plan_bundle(raw: bytes) -> dict[str, TextLayoutPlan]:
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("layout plan artifact is not valid JSON") from error
+    if not isinstance(payload, dict) or payload.get("schema_version") != "layout_plan_bundle.v1":
+        raise ValueError("unsupported layout plan artifact schema")
+    plans = payload.get("plans")
+    if not isinstance(plans, dict):
+        raise TypeError("layout plan artifact plans must be an object")
+    return {
+        str(group_id): _layout_plan_from_payload(plan)
+        for group_id, plan in plans.items()
+    }
+
+
 def _persist_provider_raw_artifacts(
     raw_artifacts: dict[str, tuple[RawResponseRef, bytes]],
     *,
@@ -1823,20 +1852,39 @@ def _build_pipeline_stage_runners(
         with profile_span("layout", group_count=len(groups)):
             plans = _preflight_layout_plans(original, groups, regions_by_id, config)
         _record_mapping_layout_plans(groups)
+        plan_bundle = _layout_plan_bundle(plans)
+        plan_reference = ArtifactRef(
+            sha256=hashlib.sha256(plan_bundle).hexdigest(),
+            media_type=LAYOUT_PLANS_MEDIA_TYPE,
+            size_bytes=len(plan_bundle),
+        )
+        for group in groups:
+            if group.id in plans:
+                group.mapping_chain["layout_plan"] = {
+                    "artifact": plan_reference.model_dump(mode="json"),
+                    "plan_id": group.id,
+                }
         detection.groups = groups
-        return encode_pipeline_state(
+        encoded_state = encode_pipeline_state(
             detection,
             producer_stage=StageName.LAYOUT,
             extras={
                 **state.extras,
-                "layout_plans": {
-                    group_id: _layout_plan_payload(plan)
-                    for group_id, plan in sorted(plans.items())
-                },
+                "layout_plan_artifact": plan_reference.model_dump(mode="json"),
                 "mapping_snapshots": _merge_mapping_snapshot_payloads(
                     state.extras.get("mapping_snapshots"), groups
                 ),
             },
+        )
+        return StageOutputs(
+            (
+                *encoded_state.artifacts,
+                ArtifactPayload(
+                    plan_bundle,
+                    LAYOUT_PLANS_MEDIA_TYPE,
+                    "layout_plans",
+                ),
+            )
         )
 
     def inpaint_render_stage(
@@ -1850,17 +1898,20 @@ def _build_pipeline_stage_runners(
         detection = state.detection
         groups = list(detection.groups)
         regions_by_id = {region.id: region for region in detection.regions_post}
-        layout_payloads = state.extras.get("layout_plans")
-        if not isinstance(layout_payloads, dict):
-            raise TypeError("render stage is missing layout plans")
-        plans = {
-            str(group_id): _layout_plan_from_payload(payload)
-            for group_id, payload in layout_payloads.items()
-        }
+        layout_reference_payload = state.extras.get("layout_plan_artifact")
+        if not isinstance(layout_reference_payload, dict):
+            raise TypeError("render stage is missing its layout plan artifact")
+        layout_reference = ArtifactRef.model_validate(layout_reference_payload)
+        if layout_reference not in inputs.upstream[StageName.LAYOUT]:
+            raise ValueError("layout plan is not a declared layout-stage artifact")
+        plans = _decode_layout_plan_bundle(
+            store.artifacts.read_bytes(layout_reference.sha256)
+        )
         detection.groups = groups
         with profile_span("inpaint"):
             inpainted = inpaint_regions(original, detection, config.inpainting)
         rendered = inpainted.copy()
+        rendered_group_ids: list[str] = []
         for group in groups:
             if not (
                 group.translation_valid
@@ -1880,10 +1931,21 @@ def _build_pipeline_stage_runners(
                     layout_plan=plans[group.id],
                     layout_reference_image=original,
                 )
-            group.mapping_chain["render_target"] = f"render:{group.id}"
+            rendered_group_ids.append(group.id)
         inpainted_raw = _png_payload(inpainted)
         rendered_raw = _png_payload(rendered)
         rendered_sha256 = hashlib.sha256(rendered_raw).hexdigest()
+        rendered_reference = ArtifactRef(
+            sha256=rendered_sha256,
+            media_type="image/png",
+            size_bytes=len(rendered_raw),
+        )
+        for group in groups:
+            if group.id in rendered_group_ids:
+                group.mapping_chain["render_target"] = {
+                    "artifact": rendered_reference.model_dump(mode="json"),
+                    "group_id": group.id,
+                }
         detection.groups = groups
         encoded_state = encode_pipeline_state(
             detection,
@@ -2419,15 +2481,37 @@ def _document_from_page_result(
         for entity in previous.entities
         if entity.entity_id != "_page_result" and entity.kind != "mapping_snapshot"
     )
-    mapping_entities = tuple(
-        EntityRecord(
-            entity_id=f"_mapping:{index:04d}",
-            kind="mapping_snapshot",
-            canonical_name=snapshot.group_status or "unknown",
-            attributes=snapshot.to_manifest(),
+    mapping_entities: list[EntityRecord] = []
+    for index, snapshot in enumerate(page.mapping_chains):
+        snapshot_revisions = [
+            revision_by_legacy_id[legacy_region_id]
+            for legacy_region_id in snapshot.region_ids
+            if legacy_region_id in revision_by_legacy_id
+        ]
+        durable_region_ids = [
+            str(revision.region_id) for revision in snapshot_revisions
+        ]
+        durable_revision_ids = [
+            revision.revision_id for revision in snapshot_revisions
+        ]
+        attributes = snapshot.to_manifest()
+        attributes["region_ids"] = durable_region_ids
+        attributes["revision_ids"] = durable_revision_ids
+        chain = dict(attributes["chain"])
+        chain["region"] = {
+            "mapping_region_key": snapshot.chain.get("region"),
+            "region_ids": durable_region_ids,
+            "revision_ids": durable_revision_ids,
+        }
+        attributes["chain"] = chain
+        mapping_entities.append(
+            EntityRecord(
+                entity_id=f"_mapping:{index:04d}",
+                kind="mapping_snapshot",
+                canonical_name=snapshot.group_status or "unknown",
+                attributes=attributes,
+            )
         )
-        for index, snapshot in enumerate(page.mapping_chains)
-    )
     return PageDocument(
         source=previous.source,
         region_identities=reconciled.identities,
@@ -2451,7 +2535,7 @@ def _document_from_page_result(
                 attributes={"stage_failure": page.stage_failure},
             ),
         )
-        + mapping_entities,
+        + tuple(mapping_entities),
     )
 
 
@@ -2484,12 +2568,17 @@ def _page_result_from_document(
 ) -> PageResult:
     raw = store.artifacts.read_bytes(encoded.sha256)
     image = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("encoded PageDocument projection is not a decodable image")
+    source_image = _decode_source_image(store, document.source.original_artifact)
     entity = next((item for item in document.entities if item.entity_id == "_page_result"), None)
     status = entity.canonical_name if entity is not None else "succeeded"
     if status not in {"succeeded", "failed", "blocked"}:
         status = "failed"
-    active_revision_ids = {
-        revision.revision_id for revision in _active_region_revisions(document)
+    active_revisions = _active_region_revisions(document)
+    active_revision_ids = {revision.revision_id for revision in active_revisions}
+    active_by_region_id = {
+        str(revision.region_id): revision for revision in active_revisions
     }
     regions = [
         TextRegion(
@@ -2503,13 +2592,106 @@ def _page_result_from_document(
             source=revision.source,
             raw_index=revision.raw_index,
         )
-        for revision in _active_region_revisions(document)
+        for revision in active_revisions
     ]
+    mappings = _mapping_snapshots_from_extras(
+        {
+            "mapping_snapshots": [
+                item.attributes
+                for item in document.entities
+                if item.kind == "mapping_snapshot"
+            ]
+        }
+    )
+    ocr_by_revision = {
+        record.revision_id: record
+        for record in document.ocr_records
+        if record.revision_id in active_revision_ids
+    }
+    translation_by_revision = {
+        record.revision_id: record
+        for record in document.translations
+        if record.revision_id in active_revision_ids
+    }
+    groups: list[TextGroup] = []
+    for snapshot in mappings:
+        revisions = [
+            active_by_region_id[region_id]
+            for region_id in snapshot.region_ids
+            if region_id in active_by_region_id
+        ]
+        if not revisions:
+            continue
+        x1 = min(revision.bbox.x for revision in revisions)
+        y1 = min(revision.bbox.y for revision in revisions)
+        x2 = max(revision.bbox.right for revision in revisions)
+        y2 = max(revision.bbox.bottom for revision in revisions)
+        ocr_record = next(
+            (
+                ocr_by_revision[revision.revision_id]
+                for revision in revisions
+                if revision.revision_id in ocr_by_revision
+            ),
+            None,
+        )
+        translation_record = next(
+            (
+                translation_by_revision[revision.revision_id]
+                for revision in revisions
+                if revision.revision_id in translation_by_revision
+            ),
+            None,
+        )
+        candidate = (
+            ocr_record.candidates[ocr_record.selected_index]
+            if ocr_record is not None and ocr_record.selected_index is not None
+            else None
+        )
+        region_chain = snapshot.chain.get("region")
+        mapping_region_key = (
+            str(region_chain.get("mapping_region_key", ""))
+            if isinstance(region_chain, dict)
+            else str(region_chain or "")
+        )
+        groups.append(
+            TextGroup(
+                id=snapshot.group_id,
+                region_ids=list(snapshot.region_ids),
+                bbox=(
+                    int(x1),
+                    int(y1),
+                    max(1, int(x2 - x1)),
+                    max(1, int(y2 - y1)),
+                ),
+                vertical=sum(
+                    revision.orientation == "vertical" for revision in revisions
+                )
+                >= len(revisions) / 2,
+                ocr_text=candidate.raw_text if candidate is not None else "",
+                ocr_text_norm=(
+                    candidate.normalized_text if candidate is not None else ""
+                ),
+                ocr_confidence=candidate.confidence if candidate is not None else 0.0,
+                ocr_source=candidate.source_view if candidate is not None else "",
+                translation=(
+                    translation_record.validated_text
+                    if translation_record is not None
+                    else ""
+                ),
+                translation_valid=snapshot.translation_valid,
+                status=snapshot.group_status,
+                skip_reason=snapshot.skip_reason,
+                duplicate_of=snapshot.duplicate_of,
+                mapping_region_key=mapping_region_key,
+                mapping_chain=snapshot.chain,
+            )
+        )
     return PageResult(
         page_id=document.source.page_id,
         source_path=Path(document.source.source_path),
         status=status,
         image=image,
+        source_image=source_image,
         regions=regions,
         ocr_results=[
             record.candidates[record.selected_index].raw_text
@@ -2522,15 +2704,8 @@ def _page_result_from_document(
             for record in document.translations
             if record.revision_id in active_revision_ids
         ],
-        mapping_chains=_mapping_snapshots_from_extras(
-            {
-                "mapping_snapshots": [
-                    item.attributes
-                    for item in document.entities
-                    if item.kind == "mapping_snapshot"
-                ]
-            }
-        ),
+        groups=groups,
+        mapping_chains=mappings,
         issues=[
             ResultIssue(
                 code=issue.code.value,
@@ -2547,6 +2722,65 @@ def _page_result_from_document(
             else None
         ),
     )
+
+
+def _materialize_staged_debug_artifacts(
+    *,
+    page: PageResult,
+    image_path: Path,
+    config: AppConfig,
+    store: JobStore,
+    outcomes: dict[StageName, StageOutcome],
+    debug: bool,
+    save_intermediate: bool,
+    prep_manual: bool,
+) -> None:
+    if not (debug or save_intermediate or prep_manual):
+        return
+    if page.source_image is None or page.image is None:
+        raise ValueError("durable debug projection requires source and encoded images")
+    state = decode_pipeline_state(
+        outcomes[StageName.INPAINT_RENDER].outputs,
+        expected_stage=StageName.INPAINT_RENDER,
+        read_bytes=store.artifacts.read_bytes,
+    )
+    inpainted_sha256 = state.extras.get("inpainted_image_sha256")
+    if not isinstance(inpainted_sha256, str):
+        raise TypeError("render state is missing its inpainted image identity")
+    declared_hashes = {
+        artifact.sha256 for artifact in outcomes[StageName.INPAINT_RENDER].outputs
+    }
+    if inpainted_sha256 not in declared_hashes:
+        raise ValueError("inpainted debug image is not a declared stage artifact")
+    inpainted_raw = store.artifacts.read_bytes(inpainted_sha256)
+    inpainted = cv2.imdecode(
+        np.frombuffer(inpainted_raw, dtype=np.uint8),
+        cv2.IMREAD_COLOR,
+    )
+    if inpainted is None:
+        raise ValueError("inpainted stage artifact is not a decodable image")
+
+    if prep_manual or save_intermediate:
+        intermediate_dir = config.paths.output_dir / "intermediate"
+        write_image(intermediate_dir / f"{image_path.stem}_original.png", page.source_image)
+        write_image(intermediate_dir / f"{image_path.stem}_inpainted.png", inpainted)
+        write_image(intermediate_dir / f"{image_path.stem}_blanked.png", inpainted)
+    if debug or prep_manual:
+        projection = DetectionResult(
+            regions_raw=page.regions,
+            regions_post=page.regions,
+            groups=page.groups,
+            mask=np.zeros(page.source_image.shape[:2], dtype=np.uint8),
+        )
+        _dump_debug_artifacts(
+            image_path=image_path,
+            config=config,
+            original_img=page.source_image,
+            detection=projection,
+            groups=page.groups,
+            inpainted_img=inpainted,
+            final_img=page.image,
+        )
 
 
 def process_single_page_staged(
@@ -2629,6 +2863,21 @@ def process_single_page_staged(
         job_id=job_id,
     )
     store.store_page_document(job_id, document)
+    page = _page_result_from_document(
+        document,
+        outcomes[StageName.ENCODE].outputs[0],
+        store,
+    )
+    _materialize_staged_debug_artifacts(
+        page=page,
+        image_path=image_path,
+        config=config,
+        store=store,
+        outcomes=outcomes,
+        debug=debug,
+        save_intermediate=save_intermediate,
+        prep_manual=prep_manual,
+    )
     if dump_json or prep_manual:
         dump_page_document(config.paths.output_dir, image_path.name, document)
     return page

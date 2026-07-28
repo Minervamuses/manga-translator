@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections import Counter
 from pathlib import Path
+from uuid import UUID
 
 import cv2
 import numpy as np
@@ -261,6 +262,19 @@ def test_component_stages_resume_without_reloading_models_or_provider(
         }
         for snapshot in second.pages[0].mapping_chains
     )
+    translated_mapping = next(
+        snapshot
+        for snapshot in second.pages[0].mapping_chains
+        if snapshot.translation_valid
+    )
+    assert all(UUID(region_id) for region_id in translated_mapping.region_ids)
+    assert isinstance(translated_mapping.chain["region"], dict)
+    assert translated_mapping.chain["region"]["revision_ids"]
+    for key in ("layout_plan", "render_target"):
+        artifact = translated_mapping.chain[key]["artifact"]
+        assert ArtifactStore(state / "artifacts").exists(
+            artifact["sha256"], expected_size=artifact["size_bytes"]
+        )
 
 
 def test_font_and_glossary_mutations_invalidate_only_true_downstream_components(

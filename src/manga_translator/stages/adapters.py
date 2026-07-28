@@ -24,6 +24,7 @@ from .state import MASK_MEDIA_TYPE, STATE_MEDIA_TYPE
 
 SOURCE_MEDIA_TYPE = "image/*"
 ENCODED_MEDIA_TYPE = "image/png"
+LAYOUT_PLANS_MEDIA_TYPE = "application/vnd.manga-translator.layout-plans+json"
 
 SOURCE_CONTRACT = ArtifactSetContract(
     required=(ArtifactContract("source", SOURCE_MEDIA_TYPE),)
@@ -39,6 +40,10 @@ STATE_WITH_SOURCE_CONTRACT = ArtifactSetContract(
 RENDER_CONTRACT = ArtifactSetContract(
     required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
     additional_media_types=(MASK_MEDIA_TYPE, ENCODED_MEDIA_TYPE),
+)
+LAYOUT_CONTRACT = ArtifactSetContract(
+    required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
+    additional_media_types=(MASK_MEDIA_TYPE, LAYOUT_PLANS_MEDIA_TYPE),
 )
 ENCODE_CONTRACT = ArtifactSetContract(
     required=(ArtifactContract("encoded_page", ENCODED_MEDIA_TYPE),)
@@ -149,7 +154,7 @@ def build_pipeline_stage_specs(
         StageName.OCR: STATE_CONTRACT,
         StageName.ORDER: STATE_CONTRACT,
         StageName.TRANSLATE: STATE_CONTRACT,
-        StageName.LAYOUT: STATE_CONTRACT,
+        StageName.LAYOUT: LAYOUT_CONTRACT,
         StageName.INPAINT_RENDER: RENDER_CONTRACT,
         StageName.ENCODE: ENCODE_CONTRACT,
     }

@@ -136,7 +136,7 @@ _REQUIRED_EXTRAS: dict[StageName, frozenset[str]] = {
         {"mapping_snapshots", "provider_response_artifacts", "source_artifact"}
     ),
     StageName.LAYOUT: frozenset(
-        {"layout_plans", "mapping_snapshots", "source_artifact"}
+        {"layout_plan_artifact", "mapping_snapshots", "source_artifact"}
     ),
     StageName.INPAINT_RENDER: frozenset(
         {

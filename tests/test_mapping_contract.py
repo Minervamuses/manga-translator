@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import replace
 
 import pytest
 
 from manga_translator.contracts.mapping import (
     MappingContractError,
+    bind_validated_responses,
     build_request_map,
     validate_response_items,
 )
@@ -35,6 +38,7 @@ def test_response_array_reorder_preserves_region_mapping() -> None:
     request = _request()
     batch = validate_response_items(request, list(reversed(_valid_items(request))))
     assert batch.by_region_key == {"r-a": "是貓", "r-b": "是狗"}
+    assert [response.response_index for response in batch.responses] == [1, 0]
 
 
 @pytest.mark.parametrize(
@@ -119,7 +123,46 @@ def test_mapping_chain_covers_request_through_render_placeholders() -> None:
     chain = batch.chain_for("r-a")
     assert chain["region"] == "r-a"
     assert chain["request_item"] == request.items[0].item_id
-    assert chain["raw_response_item"] == request.items[0].item_id
+    assert chain["raw_response_item"]["item_id"] == request.items[0].item_id
+    assert chain["raw_response_item"]["response_index"] == 0
+    assert chain["raw_response_item"]["artifact"] is None
     assert chain["validated_translation"]
     assert chain["layout_plan"] is None
     assert chain["render_target"] is None
+
+
+def test_parsed_response_chain_records_raw_payload_hash() -> None:
+    request = _request()
+    response_text = json.dumps(
+        {"translations": list(reversed(_valid_items(request)))},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+    batch = parse_translation_response(response_text, request)
+    first_chain = batch.chain_for("r-a")
+    artifact = first_chain["raw_response_item"]["artifact"]
+
+    assert first_chain["raw_response_item"]["response_index"] == 1
+    assert artifact["sha256"] == hashlib.sha256(response_text.encode("utf-8")).hexdigest()
+    assert artifact["media_type"] == "application/json"
+    assert artifact["size_bytes"] == len(response_text.encode("utf-8"))
+    assert artifact["relative_path"] is None
+
+
+def test_rebinding_typed_responses_preserves_provenance_and_revalidates_source() -> None:
+    request = _request()
+    parsed = parse_translation_response(
+        json.dumps({"translations": list(reversed(_valid_items(request)))}),
+        request,
+    )
+
+    rebound = bind_validated_responses(request, parsed.responses)
+
+    assert [response.response_index for response in rebound.responses] == [1, 0]
+    assert rebound.responses[0].raw_response_ref == parsed.responses[0].raw_response_ref
+
+    corrupted = (replace(parsed.responses[0], source_sha256="0" * 64), parsed.responses[1])
+    with pytest.raises(MappingContractError) as captured:
+        bind_validated_responses(request, corrupted)
+    assert "source_binding_mismatch" in _codes(captured.value)

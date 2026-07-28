@@ -51,11 +51,43 @@ class RequestMap:
 
 
 @dataclass(frozen=True)
+class RawResponseRef:
+    sha256: str
+    media_type: str
+    size_bytes: int
+    relative_path: str | None = None
+
+    @classmethod
+    def from_bytes(
+        cls,
+        payload: bytes,
+        *,
+        media_type: str,
+        relative_path: str | None = None,
+    ) -> RawResponseRef:
+        return cls(
+            sha256=hashlib.sha256(payload).hexdigest(),
+            media_type=media_type,
+            size_bytes=len(payload),
+            relative_path=relative_path,
+        )
+
+    def to_dict(self) -> dict[str, str | int | None]:
+        return {
+            "sha256": self.sha256,
+            "media_type": self.media_type,
+            "size_bytes": self.size_bytes,
+            "relative_path": self.relative_path,
+        }
+
+
+@dataclass(frozen=True)
 class ResponseItem:
     item_id: str
     source_sha256: str
     translation: str
-    raw_index: int
+    response_index: int
+    raw_response_ref: RawResponseRef | None = None
 
 
 @dataclass(frozen=True)
@@ -70,15 +102,27 @@ class ValidatedTranslationBatch:
             {item.region_key: response_by_id[item.item_id] for item in self.request.items}
         )
 
-    def chain_for(self, region_key: str) -> dict[str, str | None]:
+    def chain_for(self, region_key: str) -> dict[str, Any]:
         request_item = self.request.by_region_key[region_key]
-        translation = self.by_region_key[region_key]
+        response_item = next(
+            response for response in self.responses if response.item_id == request_item.item_id
+        )
         return {
             "region": region_key,
             "ocr_record": f"ocr:{region_key}",
             "request_item": request_item.item_id,
-            "raw_response_item": request_item.item_id,
-            "validated_translation": hashlib.sha256(translation.encode("utf-8")).hexdigest(),
+            "raw_response_item": {
+                "item_id": response_item.item_id,
+                "response_index": response_item.response_index,
+                "artifact": (
+                    response_item.raw_response_ref.to_dict()
+                    if response_item.raw_response_ref is not None
+                    else None
+                ),
+            },
+            "validated_translation": hashlib.sha256(
+                response_item.translation.encode("utf-8")
+            ).hexdigest(),
             "layout_plan": None,
             "render_target": None,
         }
@@ -139,7 +183,10 @@ def request_map_from_ids(
 
 
 def validate_response_items(
-    request: RequestMap, raw_items: Any
+    request: RequestMap,
+    raw_items: Any,
+    *,
+    raw_response_ref: RawResponseRef | None = None,
 ) -> ValidatedTranslationBatch:
     issues: list[MappingIssue] = []
     if not isinstance(raw_items, list):
@@ -186,7 +233,8 @@ def validate_response_items(
                 item_id=item_id,
                 source_sha256=response_source_hash,
                 translation=translation.strip(),
-                raw_index=index,
+                response_index=index,
+                raw_response_ref=raw_response_ref,
             )
         )
 
@@ -211,6 +259,51 @@ def validate_response_items(
         raise MappingContractError(issues)
 
     response_by_id = {item.item_id: item for item in responses}
+    ordered = tuple(response_by_id[item.item_id] for item in request.items)
+    return ValidatedTranslationBatch(request=request, responses=ordered)
+
+
+def bind_validated_responses(
+    request: RequestMap,
+    responses: Iterable[ResponseItem],
+) -> ValidatedTranslationBatch:
+    material = tuple(responses)
+    issues: list[MappingIssue] = []
+    expected = request.by_item_id
+    response_by_id: dict[str, ResponseItem] = {}
+    duplicates: list[str] = []
+    unknown: list[str] = []
+    for response in material:
+        if response.item_id in response_by_id:
+            duplicates.append(response.item_id)
+            continue
+        response_by_id[response.item_id] = response
+        request_item = expected.get(response.item_id)
+        if request_item is None:
+            unknown.append(response.item_id)
+            continue
+        if response.source_sha256 != request_item.source_sha256:
+            issues.append(MappingIssue("source_binding_mismatch", {"id": response.item_id}))
+        if not response.translation.strip():
+            issues.append(MappingIssue("empty_translation", {"id": response.item_id}))
+
+    if duplicates:
+        issues.append(MappingIssue("duplicate_id", {"ids": sorted(set(duplicates))}))
+    if unknown:
+        issues.append(MappingIssue("unknown_id", {"ids": sorted(set(unknown))}))
+        issues.append(MappingIssue("extra_id", {"ids": sorted(set(unknown))}))
+    missing = sorted(set(expected) - set(response_by_id))
+    if missing:
+        issues.append(MappingIssue("missing_id", {"ids": missing}))
+    if len(material) != len(request.items):
+        issues.append(
+            MappingIssue(
+                "count_mismatch",
+                {"expected": len(request.items), "actual": len(material)},
+            )
+        )
+    if issues:
+        raise MappingContractError(issues)
     ordered = tuple(response_by_id[item.item_id] for item in request.items)
     return ValidatedTranslationBatch(request=request, responses=ordered)
 

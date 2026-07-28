@@ -7,6 +7,7 @@ import json
 from .mapping import (
     MappingContractError,
     MappingIssue,
+    RawResponseRef,
     RequestMap,
     ValidatedTranslationBatch,
     validate_response_items,
@@ -14,7 +15,10 @@ from .mapping import (
 
 
 def parse_translation_response(
-    response_text: str, request: RequestMap
+    response_text: str,
+    request: RequestMap,
+    *,
+    raw_response_ref: RawResponseRef | None = None,
 ) -> ValidatedTranslationBatch:
     try:
         payload = json.loads(response_text)
@@ -26,4 +30,13 @@ def parse_translation_response(
         raise MappingContractError(
             [MappingIssue("invalid_response_envelope", {"keys": list(payload) if isinstance(payload, dict) else []})]
         )
-    return validate_response_items(request, payload["translations"])
+    if raw_response_ref is None:
+        raw_response_ref = RawResponseRef.from_bytes(
+            response_text.encode("utf-8"),
+            media_type="application/json",
+        )
+    return validate_response_items(
+        request,
+        payload["translations"],
+        raw_response_ref=raw_response_ref,
+    )

@@ -38,6 +38,7 @@ from .domain.models import (
     OCRCandidate,
     OCRRecord,
     PageDocument,
+    RegionRevision,
     SourcePage,
     StageRecord,
     TranslationRecord,
@@ -1343,7 +1344,8 @@ def _document_from_legacy_result(
         previous=previous,
     )
     revision_by_legacy_id = {
-        region.id: revision for region, revision in zip(page.regions, reconciled.revisions)
+        region.id: revision
+        for region, revision in zip(page.regions, reconciled.current_revisions, strict=True)
     }
     ocr_records: list[OCRRecord] = []
     translations: list[TranslationRecord] = []
@@ -1453,6 +1455,15 @@ def _stage_records(outcomes: dict[StageName, StageOutcome]) -> tuple[StageRecord
     )
 
 
+def _active_region_revisions(document: PageDocument) -> tuple[RegionRevision, ...]:
+    revision_by_id = {revision.revision_id: revision for revision in document.region_revisions}
+    return tuple(
+        revision_by_id[identity.active_revision_id]
+        for identity in document.region_identities
+        if identity.is_active
+    )
+
+
 def _page_result_from_document(
     document: PageDocument, encoded: ArtifactRef, store: JobStore
 ) -> PageResult:
@@ -1474,7 +1485,7 @@ def _page_result_from_document(
             source=revision.source,
             raw_index=revision.raw_index,
         )
-        for revision in document.region_revisions
+        for revision in _active_region_revisions(document)
     ]
     return PageResult(
         page_id=document.source.page_id,

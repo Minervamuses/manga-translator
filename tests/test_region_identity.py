@@ -18,6 +18,7 @@ from manga_translator.domain.reconcile import (
     reconcile_regions,
     trace_ancestors,
 )
+from manga_translator.pipeline import _active_region_revisions
 
 PAGE_BYTES = b"unchanged original page bytes"
 PAGE_ID = page_id_from_bytes(PAGE_BYTES)
@@ -348,3 +349,27 @@ def test_inactive_ancestor_is_never_an_exact_match_candidate() -> None:
     inactive_root_ids = {item.region_id for item in roots.current_identities}
     assert repeated_root_revision.current_identities[0].region_id not in inactive_root_ids
     assert all(not item.is_active for item in repeated_root_revision.identities if item.region_id in inactive_root_ids)
+
+
+def test_pipeline_conversion_exposes_only_current_revisions_without_dropping_history() -> None:
+    ids = _ids()
+    roots = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint=DETECTOR,
+        observations=[_observation(10.0), _observation(31.0)],
+        id_factory=_factory(ids),
+    )
+    merged = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint="e" * 64,
+        observations=[_observation(10.0, width=41.0)],
+        previous=_document(roots),
+        id_factory=_factory(ids),
+    )
+    document = _document(merged)
+
+    active_revisions = _active_region_revisions(document)
+
+    assert active_revisions == merged.current_revisions
+    assert len(active_revisions) == 1
+    assert len(document.region_revisions) == 3

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..contracts.mapping import (
     RequestMap,
@@ -19,15 +19,22 @@ class StructuredTranslationItem(BaseModel):
 
     id: str = Field(min_length=1)
     translation: str = Field(min_length=1)
-    source_choice: str | None = None
-    uncertainty: str | None = None
-    entity_refs: list[str] | None = None
+    source_choice: str | None = Field(default=None, min_length=1)
+    uncertainty: str | None = Field(default=None, min_length=1)
+    entity_refs: list[Annotated[str, Field(min_length=1)]] | None = None
+
+    @field_validator("entity_refs")
+    @classmethod
+    def entity_refs_must_be_unique(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("entity_refs must not contain duplicates")
+        return value
 
 
 class StructuredTranslationEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    translations: list[StructuredTranslationItem]
+    translations: list[StructuredTranslationItem] = Field(min_length=1)
 
 
 class StructuredResponseSchemaError(ValueError):

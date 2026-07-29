@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import time
 from collections import defaultdict
 from dataclasses import dataclass
@@ -36,6 +37,18 @@ class RetryPolicy:
     schema: int = 1
     content: int = 1
     backoff_seconds: float = 0.0
+
+    def __post_init__(self) -> None:
+        for name in ("transport", "http", "schema", "content"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} retry budget must be a non-negative integer")
+        if (
+            isinstance(self.backoff_seconds, bool)
+            or not math.isfinite(float(self.backoff_seconds))
+            or self.backoff_seconds < 0
+        ):
+            raise ValueError("retry backoff_seconds must be finite and non-negative")
 
     def limit(self, category: FailureCategory) -> int:
         return int(getattr(self, category))
@@ -110,13 +123,33 @@ class StructuredTranslationClient:
         timeout: float = 90.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        api_key = api_key.strip()
+        model = model.strip()
+        if not api_key:
+            raise ValueError("translation API key must not be empty")
+        if not model:
+            raise ValueError("translation model must not be empty")
+        endpoint_url = httpx.URL(endpoint)
+        if (
+            endpoint_url.scheme != "https"
+            or not endpoint_url.host
+            or endpoint_url.userinfo
+            or endpoint_url.query
+            or endpoint_url.fragment
+        ):
+            raise ValueError(
+                "translation endpoint must be an HTTPS URL without credentials, query, or fragment"
+            )
+        if not math.isfinite(float(timeout)) or timeout <= 0:
+            raise ValueError("translation timeout must be finite and positive")
         self.model = model
-        self.endpoint = endpoint
+        self.endpoint = str(endpoint_url)
         self.policy = policy or ProviderPolicy()
         self.retry_policy = retry_policy or RetryPolicy()
         self._client = httpx.AsyncClient(
             timeout=timeout,
             transport=transport,
+            follow_redirects=False,
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         )
 
@@ -147,12 +180,26 @@ class StructuredTranslationClient:
     ) -> StructuredTranslationResult:
         if self.is_closed:
             raise RuntimeError("structured translation client is closed")
+        if not request.items:
+            raise ValueError("structured translation request must contain at least one item")
+        item_ids = tuple(item.item_id for item in request.items)
+        if any(not item_id for item_id in item_ids) or len(set(item_ids)) != len(item_ids):
+            raise ValueError("structured translation request item IDs must be non-empty and unique")
+        if not prompt.strip():
+            raise ValueError("structured translation prompt must not be empty")
+        if (
+            isinstance(temperature, bool)
+            or not math.isfinite(float(temperature))
+            or not 0.0 <= temperature <= 2.0
+        ):
+            raise ValueError("translation temperature must be finite and between zero and two")
         payload = build_openrouter_payload(
             model=self.model,
             prompt=prompt,
             policy=self.policy,
             temperature=temperature,
         )
+        json.dumps(payload, allow_nan=False)
         counters: dict[str, int] = defaultdict(int)
         attempts: list[TranslationAttempt] = []
         started = time.perf_counter()
@@ -169,7 +216,7 @@ class StructuredTranslationClient:
                 continue
 
             raw_response = response.text
-            if response.status_code >= 400:
+            if not 200 <= response.status_code < 300:
                 attempts.append(
                     TranslationAttempt("http", response.status_code, raw_response, "HTTP failure")
                 )
@@ -214,10 +261,13 @@ class StructuredTranslationClient:
             attempts.append(TranslationAttempt("success", response.status_code, raw_response, None))
             elapsed_ms = (time.perf_counter() - started) * 1000
             schema_bytes = json.dumps(
-                translation_json_schema(), sort_keys=True, separators=(",", ":")
+                translation_json_schema(),
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
             ).encode()
             provenance = TranslationProvenance(
-                sanitized_request=json.loads(json.dumps(payload)),
+                sanitized_request=json.loads(json.dumps(payload, allow_nan=False)),
                 raw_response=raw_response,
                 actual_provider=provider,
                 actual_model=actual_model,

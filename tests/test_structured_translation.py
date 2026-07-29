@@ -13,6 +13,7 @@ from manga_translator.translation.client import (
     StructuredOutputUnsupported,
     StructuredTranslationClient,
     TranslationContentError,
+    TranslationHTTPError,
     TranslationSchemaError,
 )
 from manga_translator.translation.provider import ProviderPolicy
@@ -80,7 +81,9 @@ def test_schema_is_strict_and_payload_denies_collection_by_default() -> None:
     }
     schema = translation_json_schema()
     assert schema["additionalProperties"] is False
-    assert schema["$defs"]["StructuredTranslationItem"]["additionalProperties"] is False
+    item_schema = schema["$defs"]["StructuredTranslationItem"]
+    assert item_schema["additionalProperties"] is False
+    assert set(item_schema["required"]) == {"id", "translation"}
     assert "top-secret" not in json.dumps(result.provenance.sanitized_request)
     assert result.provenance.actual_provider == "fixture-provider"
     assert result.provenance.actual_model == "fixture/model"
@@ -238,3 +241,135 @@ def test_policy_can_explicitly_relax_zdr_without_changing_collection_default() -
     policy = ProviderPolicy(zdr=False)
     assert policy.data_collection == "deny"
     assert not policy.zdr
+
+    with pytest.raises(ValueError):
+        ProviderPolicy(require_parameters=False)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"api_key": ""}, "API key"),
+        ({"model": ""}, "model"),
+        ({"endpoint": "http://example.com/api"}, "HTTPS"),
+        ({"endpoint": "https://example.com/api?secret=value"}, "query"),
+        ({"timeout": 0.0}, "timeout"),
+    ],
+)
+def test_client_configuration_fails_closed(kwargs: dict[str, object], message: str) -> None:
+    values = {"api_key": "test", "model": "test/model", **kwargs}
+    with pytest.raises(ValueError, match=message):
+        StructuredTranslationClient(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("temperature", [float("nan"), -0.1, 2.1, True])
+def test_invalid_temperature_is_rejected_before_transport(temperature: float) -> None:
+    calls = 0
+
+    def handler(_http_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return _provider_response(_items(_request()))
+
+    async def scenario() -> None:
+        async with StructuredTranslationClient(
+            api_key="test",
+            model="test/model",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            await client.translate(_request(), "prompt", temperature=temperature)
+
+    with pytest.raises(ValueError, match="temperature"):
+        _run(scenario())
+    assert calls == 0
+
+
+def test_empty_requests_and_redirects_fail_without_schema_fallback() -> None:
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(307, headers={"Location": "https://other.example/api"})
+
+    async def scenario() -> None:
+        async with StructuredTranslationClient(
+            api_key="test",
+            model="test/model",
+            transport=httpx.MockTransport(handler),
+            retry_policy=RetryPolicy(http=0),
+        ) as client:
+            with pytest.raises(ValueError, match="at least one item"):
+                await client.translate(RequestMap("request", "page", ()), "prompt")
+            with pytest.raises(TranslationHTTPError) as error:
+                await client.translate(_request(), "prompt")
+            assert error.value.attempts[-1].category == "http"
+
+    _run(scenario())
+    assert calls == 1
+
+
+def test_retry_policy_accepts_explicit_zero_budgets() -> None:
+    policy = RetryPolicy(transport=0, http=0, schema=0, content=0)
+    assert policy.limit("transport") == 0
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"transport": -1}, {"http": True}, {"backoff_seconds": float("nan")}],
+)
+def test_retry_policy_rejects_invalid_budgets(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        RetryPolicy(**kwargs)  # type: ignore[arg-type]
+
+
+def test_provider_metadata_and_usage_must_be_traceable_json() -> None:
+    request = _request()
+    responses = iter(
+        (
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps({"translations": _items(request)})
+                            }
+                        }
+                    ],
+                    "usage": {},
+                },
+            ),
+            httpx.Response(
+                200,
+                content=json.dumps(
+                    {
+                        "provider": "fixture-provider",
+                        "model": "fixture/model",
+                        "usage": {"cost": float("nan")},
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps({"translations": _items(request)})
+                                }
+                            }
+                        ],
+                    },
+                    allow_nan=True,
+                ).encode(),
+                headers={"Content-Type": "application/json"},
+            ),
+        )
+    )
+
+    async def scenario() -> None:
+        async with StructuredTranslationClient(
+            api_key="test",
+            model="test/model",
+            transport=httpx.MockTransport(lambda _request: next(responses)),
+            retry_policy=RetryPolicy(schema=1),
+        ) as client:
+            await client.translate(request, "prompt")
+
+    with pytest.raises(TranslationSchemaError):
+        _run(scenario())

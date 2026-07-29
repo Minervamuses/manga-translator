@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from manga_translator.benchmark import detector_parity
 from manga_translator.benchmark import cli as benchmark_cli
+from manga_translator.benchmark import detector_parity
 from manga_translator.benchmark.detector_parity import (
     DetectorParityBlocked,
     run_detector_parity,

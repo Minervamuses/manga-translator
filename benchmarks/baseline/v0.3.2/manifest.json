@@ -506,7 +506,7 @@
       "manager": "conda",
       "definition": {
         "path": "environment.yml",
-        "sha256": "3e5f1146937b217dd27e50598d242c1706848f20229acedc092a46ad721babd9"
+        "sha256": "87dfc5928ec875258374c50529e423b6db52f6a47d28e349dfec0b2c3aeba31d"
       }
     },
     "python": {

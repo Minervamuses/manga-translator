@@ -9,6 +9,7 @@ import pytest
 from manga_translator import pipeline as pipeline_module
 from manga_translator.config import AppConfig, OpenRouterConfig, PathsConfig
 from manga_translator.detector import DetectionResult, TextRegion
+from manga_translator.stages.render import RenderProfile, RenderStageResult
 from manga_translator.style.extract import extract_style_fingerprint
 
 
@@ -52,6 +53,35 @@ def test_white_fill_black_outline_has_distinct_stroke() -> None:
     assert style.stroke.value is not None and max(style.stroke.value) <= 10
     assert style.stroke_width.status == "known"
     assert style.stroke_width.sample_count > 0
+
+
+def test_contrast_guard_allows_only_legible_low_confidence_outline() -> None:
+    mask = _rect_mask()
+    image = _canvas((34, 34, 34))
+    image[mask > 0] = (228, 228, 228)
+    image[13:27, 17:23] = (34, 34, 34)
+    style = extract_style_fingerprint(image, mask, bbox=(0, 0, 40, 40))
+    assert style.stroke.value is not None
+
+    accepted = style.renderer_values(
+        min_confidence=0.99,
+        default_fill=(34, 34, 34),
+        default_stroke=None,
+        stroke_min_confidence=0.0,
+        minimum_stroke_contrast=96.0,
+    )
+    rejected = style.renderer_values(
+        min_confidence=0.99,
+        default_fill=(34, 34, 34),
+        default_stroke=None,
+        stroke_min_confidence=0.0,
+        minimum_stroke_contrast=255.0,
+    )
+
+    assert accepted["stroke_rgb"] == style.stroke.value
+    assert accepted["stroke_width"] != 0.0
+    assert rejected["stroke_rgb"] is None
+    assert rejected["stroke_width"] == 0.0
 
 
 def test_gradient_background_does_not_override_colored_ink() -> None:
@@ -118,13 +148,17 @@ def test_pipeline_extracts_style_before_inpaint(tmp_path: Path, monkeypatch) -> 
         events.append("style")
         return real_extract(*args, **kwargs)
 
-    def inpaint(image, *_args, **_kwargs):
+    def render_page(image, requests, *_args, **_kwargs):
         events.append("inpaint")
-        return image.copy()
+        return RenderStageResult(
+            image.copy(),
+            (),
+            RenderProfile(1, int(image.nbytes), 0, 0, len(requests)),
+        )
 
     monkeypatch.setattr(pipeline_module, "detect_text_regions", lambda *_args: detection)
     monkeypatch.setattr(pipeline_module, "extract_style_fingerprint", extract)
-    monkeypatch.setattr(pipeline_module, "inpaint_regions", inpaint)
+    monkeypatch.setattr(pipeline_module, "render_page_atomic", render_page)
     config = AppConfig(
         openrouter=OpenRouterConfig(api_key="test", model="test"),
         paths=PathsConfig(output_dir=tmp_path / "output"),

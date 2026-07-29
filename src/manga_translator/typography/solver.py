@@ -21,7 +21,7 @@ from .breaking import (
     balanced_legal_breaks,
     validate_breaks,
 )
-from .fonts import FontResolver, MissingGlyphError
+from .fonts import FontResolver, FontRole, MissingGlyphError
 from .layout import (
     AcceptedLayout,
     LayoutCandidate,
@@ -88,11 +88,13 @@ def _candidate_score(request: LayoutRequest, candidate: LayoutCandidate, alpha: 
     )
 
 
-def _candidate_hash(
+def layout_plan_hash(
     candidate: LayoutCandidate,
     alpha: np.ndarray,
     shaped_runs: tuple[ShapedFontRun, ...],
 ) -> str:
+    """Fingerprint the exact shaped candidate and raster accepted for rendering."""
+
     payload = {
         "font": candidate.font.role.value,
         "weight": candidate.font.weight,
@@ -255,7 +257,7 @@ def solve_layout(request: LayoutRequest, rasterizer: CandidateRasterizer) -> Lay
         alpha=alpha,
         containment=containment,
         score=score,
-        plan_hash=_candidate_hash(candidate, alpha, shaped_runs),
+        plan_hash=layout_plan_hash(candidate, alpha, shaped_runs),
         shaped_runs=shaped_runs,
         warnings=warnings,
     )
@@ -281,6 +283,30 @@ class PillowLayoutRasterizer:
         self.engine = PillowRaqmEngine()
         self.shaper = RunShaper(resolver, self.engine)
         self.stroke_width = stroke_width
+        self._shape_cache: dict[
+            tuple[str, FontRole, int, str, int], tuple[ShapedFontRun, ...]
+        ] = {}
+
+    def _shape(
+        self,
+        text: str,
+        *,
+        role: FontRole,
+        size: int,
+        direction: str,
+    ) -> tuple[ShapedFontRun, ...]:
+        key = (text, role, size, direction, self.stroke_width)
+        cached = self._shape_cache.get(key)
+        if cached is None:
+            cached = self.shaper.shape(
+                text,
+                role=role,
+                size=size,
+                direction=direction,
+                stroke_width=self.stroke_width,
+            )
+            self._shape_cache[key] = cached
+        return cached
 
     def rasterize(self, candidate: LayoutCandidate, shape: tuple[int, int]) -> RasterizedLayout:
         if candidate.tracking_em != 0:
@@ -295,12 +321,11 @@ class PillowLayoutRasterizer:
         direction = "ttb" if candidate.direction is LayoutDirection.VERTICAL else "ltr"
         try:
             shaped_lines = [
-                self.shaper.shape(
+                self._shape(
                     chunk,
                     role=candidate.font.role,
                     size=candidate.font_size,
                     direction=direction,
-                    stroke_width=self.stroke_width,
                 )
                 for chunk in candidate.chunks
             ]

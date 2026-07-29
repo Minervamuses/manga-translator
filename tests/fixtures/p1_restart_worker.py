@@ -25,9 +25,19 @@ from manga_translator.detector import DetectionResult, MaskSource, TextGroup, Te
 from manga_translator.domain.issues import StageName
 from manga_translator.domain.serialization import canonical_document_bytes
 from manga_translator.ocr import OCRCandidate, OCRResult
+from manga_translator.stages.render import RenderProfile, RenderStageResult
 from manga_translator.storage import ArtifactStore, JobStore
 from manga_translator.translator import TranslationValidation
-from manga_translator.typesetter import TextLayoutPlan
+from manga_translator.typography.fonts import FontRole
+from manga_translator.typography.layout import (
+    AcceptedLayout,
+    FontChoice,
+    LayoutCandidate,
+    LayoutDirection,
+)
+from manga_translator.typography.render import AtomicRenderOutcome
+from manga_translator.typography.shaping import ShapedFontRun
+from manga_translator.typography.solver import layout_plan_hash
 
 
 def _arguments() -> argparse.Namespace:
@@ -179,29 +189,68 @@ def _install_fakes(state: Path, config: AppConfig, kill_point: str) -> None:
             ],
         )
 
-    def layout(_original, groups, _regions, _config):
-        return {
-            group.id: TextLayoutPlan(
-                bbox=group.bbox,
-                direction="vertical",
-                font_size=12,
-                chunks=(group.translation,),
-                primary_step=12.0,
-                secondary_step=12.0,
-                center_x=18.0,
-                center_y=20.0,
-                block_width=16.0,
-                block_height=20.0,
+    def layout(_original, groups, _regions, _config, safe_regions, _store):
+        def accepted(group: TextGroup) -> AcceptedLayout:
+            entry = pipeline_module._safe_region_entry(group, safe_regions)
+            assert entry is not None
+            roi_bbox = tuple(
+                int(value) for value in entry["roi_bbox"]
             )
+            _left, _top, width, height = roi_bbox
+            alpha = np.zeros((height, width), dtype=np.uint8)
+            alpha[height // 2, width // 2] = 255
+            candidate = LayoutCandidate(
+                font=FontChoice(FontRole.NEUTRAL_SANS),
+                font_size=12,
+                direction=LayoutDirection.VERTICAL,
+                chunks=(group.translation,),
+                break_indices=(),
+                line_gap_em=1.0,
+                tracking_em=0.0,
+                anchor=(width / 2.0, height / 2.0),
+                rotation_degrees=0.0,
+            )
+            run = ShapedFontRun(
+                text=group.translation,
+                font_sha256="a" * 64,
+                font_path="fixture-font.ttf",
+                glyph_coverage=tuple(ord(character) for character in group.translation),
+                direction="ttb",
+                language="zh-Hant",
+                features=("vert", "vrt2"),
+                bbox=(0.0, 0.0, 1.0, 1.0),
+                advance=1.0,
+                anchor=(width / 2.0, height / 2.0),
+            )
+            shaped_runs = (run,)
+            return AcceptedLayout(
+                candidate,
+                alpha,
+                1.0,
+                0.0,
+                layout_plan_hash(candidate, alpha, shaped_runs),
+                shaped_runs,
+            )
+
+        return {
+            group.id: accepted(group)
             for group in groups
             if group.translation_valid
         }
 
-    def render(*, image, group, **_kwargs):
+    def render_page(original, requests, _config):
         _kill_once(state, kill_point, "render-before")
-        rendered = image.copy()
-        rendered[group.y, group.x] = (0, 0, 0)
-        return rendered
+        rendered = original.copy()
+        outcomes = []
+        for request in requests:
+            x, y, _width, _height = request.roi_bbox
+            rendered[y, x] = (0, 0, 0)
+            outcomes.append(AtomicRenderOutcome(True, request.roi_bbox, 1, 0))
+        return RenderStageResult(
+            rendered,
+            tuple(outcomes),
+            RenderProfile(1, int(original.nbytes), 0, len(requests), 0),
+        )
 
     real_apply = pipeline_module._apply_translation_batch
 
@@ -240,9 +289,8 @@ def _install_fakes(state: Path, config: AppConfig, kill_point: str) -> None:
     )
     pipeline_module._request_translations = request
     pipeline_module._apply_translation_batch = apply_translation
-    pipeline_module._preflight_layout_plans = layout
-    pipeline_module.inpaint_regions = lambda original, *_args, **_kwargs: original.copy()
-    pipeline_module.render_text_into_group = render
+    pipeline_module._preflight_raqm_layout_plans = layout
+    pipeline_module.render_page_atomic = render_page
     pipeline_module.validate_translation = (
         lambda *_args, **_kwargs: TranslationValidation(valid=True)
     )

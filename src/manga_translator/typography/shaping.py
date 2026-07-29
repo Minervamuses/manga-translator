@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal, Protocol
 
 from PIL import Image, ImageDraw, ImageFont
@@ -55,6 +56,7 @@ class PillowRaqmEngine:
         require_raqm()
 
     @staticmethod
+    @lru_cache(maxsize=64)
     def _font(run: FontRun, size: int) -> ImageFont.FreeTypeFont:
         return ImageFont.truetype(str(run.font.path), size, layout_engine=ImageFont.Layout.RAQM)
 

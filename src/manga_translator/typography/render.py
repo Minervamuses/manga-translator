@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 import cv2
@@ -13,6 +13,7 @@ from ..config import InpaintingConfig
 from ..inpainter import inpaint_roi
 from .layout import AcceptedLayout
 from .safe_region import SafeRegionArtifacts
+from .solver import layout_plan_hash
 
 RGB = tuple[int, int, int]
 RGBA = tuple[int, int, int, int]
@@ -115,6 +116,31 @@ def render_layout_layer(layout: AcceptedLayout, style: RenderStyle) -> np.ndarra
     return _over_rgba(layer, _solid_layer(alpha, style.fill))
 
 
+def fit_render_style(
+    layout: AcceptedLayout,
+    safe_region: SafeRegionArtifacts,
+    requested: RenderStyle,
+) -> RenderStyle:
+    """Drop unsafe decoration while retaining the extracted fill color."""
+
+    candidates = (
+        requested,
+        replace(requested, shadow=None, shadow_offset=(0, 0)),
+        replace(
+            requested,
+            stroke=None,
+            stroke_width=0,
+            shadow=None,
+            shadow_offset=(0, 0),
+        ),
+    )
+    for candidate in candidates:
+        layer = render_layout_layer(layout, candidate)
+        if safe_region.accepts_alpha(layer[:, :, 3]):
+            return candidate
+    raise ValueError("accepted layout fill escaped its safe region")
+
+
 def _composite_bgr(background: np.ndarray, layer: np.ndarray) -> np.ndarray:
     alpha = layer[:, :, 3:4].astype(np.uint16)
     foreground = layer[:, :, :3][:, :, ::-1].astype(np.uint16)
@@ -148,6 +174,14 @@ def atomic_inpaint_render(
         return AtomicRenderOutcome(False, request.roi_bbox, 0, 0, "empty_inpaint_mask")
     if not np.any(request.layout.alpha):
         return AtomicRenderOutcome(False, request.roi_bbox, 0, 0, "empty_layout_alpha")
+    if not request.layout.shaped_runs:
+        return AtomicRenderOutcome(False, request.roi_bbox, 0, 0, "missing_shaped_runs")
+    if request.layout.plan_hash != layout_plan_hash(
+        request.layout.candidate,
+        request.layout.alpha,
+        request.layout.shaped_runs,
+    ):
+        return AtomicRenderOutcome(False, request.roi_bbox, 0, 0, "invalid_layout_plan_hash")
     if not artifacts.accepts_alpha(request.layout.alpha):
         return AtomicRenderOutcome(False, request.roi_bbox, 0, 0, "pre_render_containment")
 

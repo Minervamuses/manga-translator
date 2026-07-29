@@ -263,7 +263,23 @@ def build_safe_region(
         spread = 255.0
     color_score = max(0.0, 1.0 - spread / 40.0)
     edge_score = max(0.0, 1.0 - edge_density * 5.0)
-    confidence = float(np.clip(0.35 * support + 0.35 * color_score + 0.30 * edge_score, 0, 1))
+    geometry_score = 0.0
+    polygon_pixels = int(np.count_nonzero(polygon_seed))
+    text_pixels = int(np.count_nonzero(text))
+    if polygon_pixels and text_pixels:
+        overlap = float(np.count_nonzero((polygon_seed > 0) & (text > 0)) / text_pixels)
+        compactness = min(1.0, text_pixels * 6.0 / polygon_pixels)
+        geometry_score = overlap * compactness
+    confidence = float(
+        np.clip(
+            0.35 * support
+            + 0.35 * color_score
+            + 0.30 * edge_score
+            + 0.15 * geometry_score,
+            0,
+            1,
+        )
+    )
 
     strategy: Literal["connected_background", "original_text_vicinity"]
     if confidence < low_confidence_threshold:

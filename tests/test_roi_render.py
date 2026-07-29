@@ -18,9 +18,12 @@ from manga_translator.typography.render import (
     AtomicRoiRequest,
     RenderStyle,
     build_atomic_roi_bbox,
+    fit_render_style,
     render_layout_layer,
 )
 from manga_translator.typography.safe_region import SafeRegionArtifacts
+from manga_translator.typography.shaping import ShapedFontRun
+from manga_translator.typography.solver import layout_plan_hash
 
 
 def _request(x: int = 80, y: int = 70, width: int = 90, height: int = 100) -> AtomicRoiRequest:
@@ -49,7 +52,28 @@ def _request(x: int = 80, y: int = 70, width: int = 90, height: int = 100) -> At
         (45.0, 50.0),
         12.0,
     )
-    accepted = AcceptedLayout(candidate, alpha, 1.0, 0.0, "test-plan")
+    runs = (
+        ShapedFontRun(
+            text="銝剜?",
+            font_sha256="a" * 64,
+            font_path="fixture.ttf",
+            glyph_coverage=(20013, 25991),
+            direction="ttb",
+            language="zh-Hant",
+            features=("vert", "vrt2"),
+            bbox=(33.0, 25.0, 57.0, 75.0),
+            advance=50.0,
+            anchor=(45.0, 50.0),
+        ),
+    )
+    accepted = AcceptedLayout(
+        candidate,
+        alpha,
+        1.0,
+        0.0,
+        layout_plan_hash(candidate, alpha, runs),
+        runs,
+    )
     return AtomicRoiRequest(
         (x, y, width, height),
         inpaint_mask,
@@ -141,6 +165,21 @@ def test_empty_layout_or_render_alpha_never_commits_inpaint() -> None:
     assert np.array_equal(postflight.image, original)
 
 
+def test_unshaped_or_tampered_layout_never_commits_inpaint() -> None:
+    original = np.full((220, 260, 3), 245, dtype=np.uint8)
+    request = _request(60, 50)
+
+    unshaped = replace(request, layout=replace(request.layout, shaped_runs=()))
+    missing = render_page_atomic(original, (unshaped,))
+    assert missing.outcomes[0].reason == "missing_shaped_runs"
+    assert np.array_equal(missing.image, original)
+
+    tampered = replace(request, layout=replace(request.layout, plan_hash="tampered"))
+    invalid = render_page_atomic(original, (tampered,))
+    assert invalid.outcomes[0].reason == "invalid_layout_plan_hash"
+    assert np.array_equal(invalid.image, original)
+
+
 def test_empty_inpaint_mask_does_not_add_unpaired_translation() -> None:
     original = np.full((220, 260, 3), 245, dtype=np.uint8)
     request = _request(60, 50)
@@ -184,3 +223,15 @@ def test_styled_layer_contains_fill_stroke_shadow_and_rotation_safe_roi_margin()
     assert bbox[0] < 95 and bbox[1] < 115
     assert bbox[0] + bbox[2] > 145
     assert bbox[1] + bbox[3] > 175
+
+
+def test_unsafe_style_decoration_is_dropped_before_atomic_render() -> None:
+    request = _request()
+    unsafe = replace(request.style, shadow_offset=(35, 35), stroke_width=12)
+
+    fitted = fit_render_style(request.layout, request.safe_region, unsafe)
+    layer = render_layout_layer(request.layout, fitted)
+
+    assert fitted != unsafe
+    assert fitted.shadow is None
+    assert request.safe_region.accepts_alpha(layer[:, :, 3])

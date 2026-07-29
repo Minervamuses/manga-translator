@@ -67,7 +67,6 @@ from .image_io import (
     write_image,
     write_image_or_raise,
 )
-from .inpainter import inpaint_regions
 from .manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from .ocr import (
     OCRInitializationError,
@@ -98,6 +97,7 @@ from .stages.base import (
     StageOutputs,
 )
 from .stages.detect import detection_geometry_output
+from .stages.render import render_page_atomic
 from .stages.runner import StageFailureContext, StageOutcome, StageRunner
 from .stages.state import (
     MASK_MEDIA_TYPE,
@@ -119,13 +119,24 @@ from .typesetter import (
     TextLayoutPlan,
     layout_plan_block_bbox,
     plan_text_layout,
-    render_text_into_group,
 )
+from .typography.fonts import FontResolver, FontRole
+from .typography.layout import (
+    AcceptedLayout,
+    FontChoice,
+    LayoutDirection,
+    LayoutOverflow,
+    LayoutRequest,
+)
+from .typography.render import AtomicRoiRequest, RenderStyle, fit_render_style
 from .typography.safe_region import (
     SAFE_REGION_MEDIA_TYPE,
     build_safe_region,
+    decode_safe_region_artifacts,
     encode_safe_region_artifacts,
 )
+from .typography.serialization import decode_layout_bundle, encode_layout_bundle
+from .typography.solver import PillowLayoutRasterizer, solve_layout
 
 console = Console()
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -1150,6 +1161,154 @@ def _preflight_layout_plans(
     return plans
 
 
+def _reject_layout(group: TextGroup, reason: str) -> None:
+    group.translation_valid = False
+    group.status = "layout_rejected"
+    group.skip_reason = f"LayoutOverflow:{reason}"
+    group.layout_info = {
+        "engine": "raqm",
+        "accepted": False,
+        "reason": reason,
+    }
+
+
+def _safe_region_entry(
+    group: TextGroup, safe_regions: dict[str, object]
+) -> dict[str, object] | None:
+    direct = safe_regions.get(group.id)
+    if isinstance(direct, dict):
+        return direct
+    member_ids = tuple(sorted(group.region_ids))
+    matches = [
+        value
+        for value in safe_regions.values()
+        if isinstance(value, dict)
+        and isinstance(value.get("region_ids"), list)
+        and tuple(sorted(str(item) for item in value["region_ids"])) == member_ids
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _preflight_raqm_layout_plans(
+    original: np.ndarray,
+    groups: list[TextGroup],
+    regions_by_id: dict[str, TextRegion],
+    config: AppConfig,
+    safe_regions: dict[str, object],
+    store: JobStore,
+) -> dict[str, AcceptedLayout]:
+    """Solve shaped layouts against persisted safe masks before any inpaint."""
+
+    plans: dict[str, AcceptedLayout] = {}
+    occupied = np.zeros(original.shape[:2], dtype=np.uint8)
+    ordered = sorted(
+        (
+            group
+            for group in groups
+            if group.translation_valid and bool(group.translation.strip())
+        ),
+        key=lambda group: _render_group_score(group, regions_by_id),
+        reverse=True,
+    )
+    if not ordered:
+        return plans
+    resolver = FontResolver.from_paths(
+        config.paths.font,
+        config.paths.font_fallback,
+    )
+    rasterizer = PillowLayoutRasterizer(
+        resolver,
+        stroke_width=max(0, int(config.typesetting.outline_width)),
+    )
+    for group in ordered:
+        entry = _safe_region_entry(group, safe_regions)
+        if not isinstance(entry, dict):
+            _reject_layout(group, "missing_safe_region")
+            continue
+        roi_value = entry.get("roi_bbox")
+        artifact_value = entry.get("artifact")
+        if (
+            not isinstance(roi_value, list)
+            or len(roi_value) != 4
+            or not isinstance(artifact_value, dict)
+        ):
+            _reject_layout(group, "invalid_safe_region_reference")
+            continue
+        roi_bbox = tuple(int(value) for value in roi_value)
+        left, top, width, height = roi_bbox
+        reference = ArtifactRef.model_validate(artifact_value)
+        safe = decode_safe_region_artifacts(
+            store.artifacts.read_bytes(reference.sha256)
+        )
+        if safe.confidence < 0.48 or not np.any(safe.render_mask):
+            _reject_layout(group, "safe_region_confidence")
+            continue
+        member_regions = [
+            regions_by_id[region_id]
+            for region_id in group.region_ids
+            if region_id in regions_by_id
+        ]
+        source_font_size = max(
+            [float(region.font_size_hint) for region in member_regions if region.font_size_hint > 0]
+            or [float(min(group.w, group.h) * 0.42)]
+        )
+        source_angle = (
+            sum(region.angle_degrees for region in member_regions) / len(member_regions)
+            if member_regions
+            else 0.0
+        )
+        primary_direction = (
+            LayoutDirection.VERTICAL if group.vertical else LayoutDirection.HORIZONTAL
+        )
+        alternate_direction = (
+            LayoutDirection.HORIZONTAL
+            if primary_direction is LayoutDirection.VERTICAL
+            else LayoutDirection.VERTICAL
+        )
+        request = LayoutRequest(
+            text=group.translation,
+            safe_region=safe,
+            fonts=(FontChoice(FontRole.NEUTRAL_SANS),),
+            source_font_size=source_font_size,
+            source_center=(
+                group.x + group.w / 2.0 - left,
+                group.y + group.h / 2.0 - top,
+            ),
+            source_angle_degrees=source_angle,
+            hard_font_floor=config.typesetting.font_size_min,
+            max_lines=max(1, min(8, len(group.translation))),
+            directions=(primary_direction, alternate_direction),
+            neighbor_mask=occupied[top : top + height, left : left + width],
+            minimum_containment=0.995,
+        )
+        result = solve_layout(request, rasterizer)
+        if isinstance(result, LayoutOverflow):
+            _reject_layout(group, result.reason)
+            group.layout_info["overflow"] = {
+                "available_size": list(result.available_size),
+                "grapheme_count": result.grapheme_count,
+                "rejected": [list(item) for item in result.rejected],
+            }
+            continue
+        plans[group.id] = result
+        occupied_roi = occupied[top : top + height, left : left + width]
+        occupied_roi[result.alpha > 0] = 255
+        group.layout_bbox = roi_bbox
+        group.rendered_font_size = result.candidate.font_size
+        group.rendered_direction = result.candidate.direction.value
+        group.layout_mode = "raqm"
+        group.layout_info = {
+            "engine": "raqm",
+            "accepted": True,
+            "plan_hash": result.plan_hash,
+            "containment": result.containment,
+            "roi_bbox": list(roi_bbox),
+            "break_indices": list(result.candidate.break_indices),
+            "shaped_run_count": len(result.shaped_runs),
+        }
+    return plans
+
+
 def _record_mapping_layout_plans(groups: list[TextGroup]) -> None:
     for group in groups:
         if group.layout_info and group.mapping_chain:
@@ -1878,6 +2037,7 @@ def _build_pipeline_stage_runners(
             safe_region_index[group.id] = {
                 "artifact": artifact_ref.model_dump(mode="json"),
                 "confidence": artifacts.confidence,
+                "region_ids": sorted(group.region_ids),
                 "roi_bbox": list(roi_bbox),
                 "strategy": artifacts.strategy,
             }
@@ -2101,9 +2261,16 @@ def _build_pipeline_stage_runners(
         groups = _resolve_render_collisions(groups, regions_by_id, config.postprocess)
         groups = _refresh_group_order(groups, regions_by_id, config.postprocess)
         with profile_span("layout", group_count=len(groups)):
-            plans = _preflight_layout_plans(original, groups, regions_by_id, config)
+            plans = _preflight_raqm_layout_plans(
+                original,
+                groups,
+                regions_by_id,
+                config,
+                safe_regions,
+                store,
+            )
         _record_mapping_layout_plans(groups)
-        plan_bundle = _layout_plan_bundle(plans)
+        plan_bundle = encode_layout_bundle(plans)
         plan_reference = ArtifactRef(
             sha256=hashlib.sha256(plan_bundle).hexdigest(),
             media_type=LAYOUT_PLANS_MEDIA_TYPE,
@@ -2150,21 +2317,21 @@ def _build_pipeline_stage_runners(
         original = _decode_source_image(store, reference)
         detection = state.detection
         groups = list(detection.groups)
-        regions_by_id = {region.id: region for region in detection.regions_post}
         layout_reference_payload = state.extras.get("layout_plan_artifact")
         if not isinstance(layout_reference_payload, dict):
             raise TypeError("render stage is missing its layout plan artifact")
         layout_reference = ArtifactRef.model_validate(layout_reference_payload)
         if layout_reference not in inputs.upstream[StageName.LAYOUT]:
             raise ValueError("layout plan is not a declared layout-stage artifact")
-        plans = _decode_layout_plan_bundle(
+        plans = decode_layout_bundle(
             store.artifacts.read_bytes(layout_reference.sha256)
         )
-        detection.groups = groups
-        with profile_span("inpaint"):
-            inpainted = inpaint_regions(original, detection, config.inpainting)
-        rendered = inpainted.copy()
-        rendered_group_ids: list[str] = []
+        safe_regions = state.extras.get("safe_regions")
+        if not isinstance(safe_regions, dict):
+            raise TypeError("render stage is missing durable safe-region artifacts")
+        styles = _style_fingerprints_from_extras(state.extras)
+        requests: list[AtomicRoiRequest] = []
+        request_groups: list[TextGroup] = []
         for group in groups:
             if not (
                 group.translation_valid
@@ -2172,19 +2339,99 @@ def _build_pipeline_stage_runners(
                 and group.id in plans
             ):
                 continue
-            with profile_span("render", group_id=group.id):
-                rendered = render_text_into_group(
-                    image=rendered,
-                    group=group,
-                    regions_by_id=regions_by_id,
-                    text=group.translation,
-                    font_path=config.paths.font,
-                    cfg=config.typesetting,
-                    fallback_font_path=config.paths.font_fallback,
-                    layout_plan=plans[group.id],
-                    layout_reference_image=original,
+            entry = _safe_region_entry(group, safe_regions)
+            if not isinstance(entry, dict):
+                _reject_layout(group, "missing_safe_region_at_render")
+                continue
+            roi_value = entry.get("roi_bbox")
+            artifact_value = entry.get("artifact")
+            if (
+                not isinstance(roi_value, list)
+                or len(roi_value) != 4
+                or not isinstance(artifact_value, dict)
+            ):
+                _reject_layout(group, "invalid_safe_region_at_render")
+                continue
+            roi_bbox = tuple(int(value) for value in roi_value)
+            reference = ArtifactRef.model_validate(artifact_value)
+            safe = decode_safe_region_artifacts(
+                store.artifacts.read_bytes(reference.sha256)
+            )
+            inpaint_mask = np.zeros((roi_bbox[3], roi_bbox[2]), dtype=np.uint8)
+            _paste_group_mask(inpaint_mask, group, roi_bbox)
+            if not np.any(inpaint_mask):
+                _reject_layout(group, "empty_inpaint_mask")
+                continue
+            style = RenderStyle(fill=(0, 0, 0, 255))
+            extracted = next(
+                (
+                    styles[region_id]
+                    for region_id in group.region_ids
+                    if region_id in styles
+                ),
+                None,
+            )
+            if extracted is not None:
+                values = extracted.renderer_values(
+                    min_confidence=0.65,
+                    default_fill=(0, 0, 0),
+                    default_stroke=None,
+                    stroke_min_confidence=0.30,
+                    minimum_stroke_contrast=96.0,
                 )
-            rendered_group_ids.append(group.id)
+                fill = tuple(int(value) for value in values["fill_rgb"])
+                stroke_value = values["stroke_rgb"]
+                stroke = (
+                    (*tuple(int(value) for value in stroke_value), 255)
+                    if stroke_value is not None
+                    else None
+                )
+                shadow_value = values["shadow"]
+                shadow = (
+                    (*tuple(int(value) for value in shadow_value.color.value), 128)
+                    if shadow_value is not None and shadow_value.color.value is not None
+                    else None
+                )
+                shadow_offset = (
+                    tuple(round(value) for value in shadow_value.offset.value)
+                    if shadow_value is not None and shadow_value.offset.value is not None
+                    else (0, 0)
+                )
+                style = RenderStyle(
+                    fill=(*fill, 255),
+                    stroke=stroke,
+                    stroke_width=min(
+                        max(0, round(float(values["stroke_width"]))),
+                        max(2, int(config.typesetting.outline_width)),
+                    ),
+                    shadow=shadow,
+                    shadow_offset=shadow_offset,
+                )
+            style = fit_render_style(plans[group.id], safe, style)
+            requests.append(
+                AtomicRoiRequest(
+                    roi_bbox=roi_bbox,
+                    inpaint_mask=inpaint_mask,
+                    safe_region=safe,
+                    layout=plans[group.id],
+                    style=style,
+                )
+            )
+            request_groups.append(group)
+        with profile_span("inpaint", roi_count=len(requests)):
+            render_result = render_page_atomic(
+                original,
+                tuple(requests),
+                config.inpainting,
+            )
+        rendered = render_result.image
+        inpainted = rendered
+        rendered_group_ids: list[str] = []
+        for group, outcome in zip(request_groups, render_result.outcomes, strict=True):
+            if outcome.committed:
+                rendered_group_ids.append(group.id)
+            else:
+                _reject_layout(group, outcome.reason)
         inpainted_raw = _png_payload(inpainted)
         rendered_raw = _png_payload(rendered)
         rendered_sha256 = hashlib.sha256(rendered_raw).hexdigest()

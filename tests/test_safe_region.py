@@ -86,6 +86,29 @@ def test_text_over_art_has_low_confidence_and_never_expands_aggressively() -> No
     assert not np.any((artifacts.safe_mask > 0) & (vicinity == 0))
 
 
+def test_aligned_line_geometry_can_promote_caption_confidence() -> None:
+    image = np.full((120, 160, 3), 128, dtype=np.uint8)
+    for offset in range(-120, 180, 8):
+        cv2.line(
+            image,
+            (max(0, offset), max(0, -offset)),
+            (min(159, offset + 119), min(119, 119)),
+            (5, 5, 5),
+            2,
+        )
+    text = np.zeros((120, 160), dtype=np.uint8)
+    text[53:67, 73:87] = 255
+    polygon = (((65.0, 45.0), (95.0, 45.0), (95.0, 75.0), (65.0, 75.0)),)
+
+    without_geometry = build_safe_region(image, text)
+    with_geometry = build_safe_region(image, text, line_polygons=polygon)
+
+    assert without_geometry.confidence < 0.48
+    assert with_geometry.confidence > without_geometry.confidence
+    assert with_geometry.confidence >= 0.48
+    assert with_geometry.strategy == "connected_background"
+
+
 def test_alpha_containment_rejects_pixels_outside_eroded_render_mask() -> None:
     image, text, _expected = _shape_fixture("ellipse")
     artifacts = build_safe_region(image, text)

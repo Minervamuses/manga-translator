@@ -150,6 +150,37 @@ class FontResolver:
             raise ValueError("neutral_sans must provide vertical metrics and vert/vrt2")
         self._page_roles: dict[str, Counter[FontRole]] = {}
 
+    @classmethod
+    def from_paths(
+        cls, primary: str | Path, fallback: str | Path | None = None
+    ) -> FontResolver:
+        """Build the production role map from configured, fingerprinted fonts."""
+
+        paths = [Path(primary).expanduser().resolve()]
+        if fallback is not None:
+            resolved_fallback = Path(fallback).expanduser().resolve()
+            if resolved_fallback not in paths:
+                paths.append(resolved_fallback)
+        catalog = FontCatalog.from_paths(paths)
+        vertical = [
+            record
+            for record in catalog.records
+            if record.has_vertical_metrics and record.has_vertical_features
+        ]
+        if not vertical:
+            raise ValueError("configured fonts provide no vertical RAQM font")
+        neutral = tuple(vertical + [record for record in catalog.records if record not in vertical])
+        instance = cls.__new__(cls)
+        instance.catalog = catalog
+        instance.roles = {
+            FontRole.NEUTRAL_SANS: neutral,
+            FontRole.FORMAL_SERIF: neutral,
+            FontRole.HANDWRITTEN: tuple(catalog.records),
+            FontRole.ROUNDED: neutral,
+        }
+        instance._page_roles = {}
+        return instance
+
     def resolve_role(
         self,
         *,

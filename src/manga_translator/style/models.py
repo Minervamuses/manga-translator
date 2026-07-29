@@ -45,27 +45,44 @@ class ExtractedStyle(StyleModel):
     shadow: ShadowEstimate
 
     def renderer_values(
-        self, *, min_confidence: float, default_fill: RGB, default_stroke: RGB | None
+        self,
+        *,
+        min_confidence: float,
+        default_fill: RGB,
+        default_stroke: RGB | None,
+        stroke_min_confidence: float | None = None,
+        minimum_stroke_contrast: float = 0.0,
     ) -> dict[str, object]:
         """Expose only estimates that clear the renderer confidence policy."""
 
+        fill = (
+            self.fill.value
+            if self.fill.status == "known" and self.fill.confidence >= min_confidence
+            else default_fill
+        )
+        stroke_threshold = (
+            min_confidence
+            if stroke_min_confidence is None
+            else stroke_min_confidence
+        )
+        stroke_contrast = (
+            max(abs(int(channel) - int(fill[index])) for index, channel in enumerate(self.stroke.value))
+            if self.stroke.value is not None
+            else 0.0
+        )
+        use_stroke = (
+            self.stroke.status == "known"
+            and self.stroke.value is not None
+            and self.stroke.confidence >= stroke_threshold
+            and self.stroke_width.status == "known"
+            and self.stroke_width.value is not None
+            and self.stroke_width.confidence >= stroke_threshold
+            and stroke_contrast >= minimum_stroke_contrast
+        )
         return {
-            "fill_rgb": (
-                self.fill.value
-                if self.fill.status == "known" and self.fill.confidence >= min_confidence
-                else default_fill
-            ),
-            "stroke_rgb": (
-                self.stroke.value
-                if self.stroke.status == "known" and self.stroke.confidence >= min_confidence
-                else default_stroke
-            ),
-            "stroke_width": (
-                self.stroke_width.value
-                if self.stroke_width.status == "known"
-                and self.stroke_width.confidence >= min_confidence
-                else 0.0
-            ),
+            "fill_rgb": fill,
+            "stroke_rgb": self.stroke.value if use_stroke else default_stroke,
+            "stroke_width": self.stroke_width.value if use_stroke else 0.0,
             "shadow": (
                 self.shadow
                 if self.shadow.status == "known" and self.shadow.confidence >= min_confidence

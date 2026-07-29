@@ -344,7 +344,9 @@ def test_group_ocr_exception_is_blocked_and_preserves_source(tmp_path, monkeypat
         "ocr_group_detailed",
         lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("region OCR exploded")),
     )
-    monkeypatch.setattr(pipeline_module, "_preflight_layout_plans", lambda *_args: {})
+    monkeypatch.setattr(
+        pipeline_module, "_preflight_raqm_layout_plans", lambda *_args: {}
+    )
 
     result = pipeline_module.run_pipeline(config)
 

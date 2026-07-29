@@ -27,14 +27,27 @@ from manga_translator.domain.models import ArtifactRef
 from manga_translator.domain.serialization import canonical_document_bytes, parse_document
 from manga_translator.manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from manga_translator.ocr import OCRCandidate, OCRResult
+from manga_translator.stages.render import (
+    RenderProfile,
+    RenderStageResult,
+)
 from manga_translator.stages.state import decode_pipeline_state
 from manga_translator.storage import ArtifactStore, JobStore
 from manga_translator.translator import TranslationValidation
-from manga_translator.typesetter import TextLayoutPlan
+from manga_translator.typography.fonts import FontRole
+from manga_translator.typography.layout import (
+    AcceptedLayout,
+    FontChoice,
+    LayoutCandidate,
+    LayoutDirection,
+)
+from manga_translator.typography.render import AtomicRenderOutcome
 from manga_translator.typography.safe_region import (
     SAFE_REGION_MEDIA_TYPE,
     decode_safe_region_artifacts,
 )
+from manga_translator.typography.shaping import ShapedFontRun
+from manga_translator.typography.solver import layout_plan_hash
 
 
 def _config(tmp_path: Path) -> AppConfig:
@@ -145,19 +158,41 @@ def _multi_region_detection() -> DetectionResult:
     )
 
 
-def _plan(group: TextGroup) -> TextLayoutPlan:
-    x, y, width, height = group.bbox
-    return TextLayoutPlan(
-        bbox=group.bbox,
-        direction="vertical",
+def _accepted_plan(group: TextGroup, roi_bbox: tuple[int, int, int, int]) -> AcceptedLayout:
+    _left, _top, width, height = roi_bbox
+    alpha = np.zeros((height, width), dtype=np.uint8)
+    alpha[height // 2, width // 2] = 255
+    candidate = LayoutCandidate(
+        font=FontChoice(FontRole.NEUTRAL_SANS),
         font_size=12,
+        direction=LayoutDirection.VERTICAL,
         chunks=(group.translation,),
-        primary_step=12.25,
-        secondary_step=12.5,
-        center_x=x + width / 2,
-        center_y=y + height / 2,
-        block_width=10.5,
-        block_height=16.75,
+        break_indices=(),
+        line_gap_em=1.0,
+        tracking_em=0.0,
+        anchor=(width / 2.0, height / 2.0),
+        rotation_degrees=0.0,
+    )
+    run = ShapedFontRun(
+        text=group.translation,
+        font_sha256="a" * 64,
+        font_path="fixture-font.ttf",
+        glyph_coverage=tuple(ord(character) for character in group.translation),
+        direction="ttb",
+        language="zh-Hant",
+        features=("vert", "vrt2"),
+        bbox=(0.0, 0.0, 1.0, 1.0),
+        advance=1.0,
+        anchor=(width / 2.0, height / 2.0),
+    )
+    shaped_runs = (run,)
+    return AcceptedLayout(
+        candidate,
+        alpha,
+        1.0,
+        0.0,
+        layout_plan_hash(candidate, alpha, shaped_runs),
+        shaped_runs,
     )
 
 
@@ -228,32 +263,44 @@ def _install_component_fakes(
             ],
         )
 
-    def layout(_original, groups, _regions, _config):
+    def layout(_original, groups, _regions, _config, safe_regions, _store):
         calls["layout"] += 1
         return {
-            group.id: _plan(group)
+            group.id: _accepted_plan(
+                group,
+                tuple(
+                    int(value)
+                    for value in pipeline_module._safe_region_entry(
+                        group, safe_regions
+                    )["roi_bbox"]
+                ),
+            )
             for group in groups
             if group.translation_valid and group.translation
         }
 
-    def inpaint(original, _detection, _config):
+    def render_page(original, requests, _config):
         calls["inpaint"] += 1
-        return original.copy()
-
-    def render(*, image, group, **_kwargs):
-        calls["render"] += 1
-        result = image.copy()
-        result[group.y, group.x] = (0, 0, 0)
-        return result
+        calls["render"] += len(requests)
+        image = original.copy()
+        outcomes = []
+        for request in requests:
+            x, y, _width, _height = request.roi_bbox
+            image[y, x] = (0, 0, 0)
+            outcomes.append(AtomicRenderOutcome(True, request.roi_bbox, 1, 0))
+        return RenderStageResult(
+            image,
+            tuple(outcomes),
+            RenderProfile(1, int(original.nbytes), 0, len(requests), 0),
+        )
 
     monkeypatch.setattr(pipeline_module, "detect_text_regions", detect)
     monkeypatch.setattr(pipeline_module, "initialize_ocr_model", initialize)
     monkeypatch.setattr(pipeline_module, "ocr_group_detailed", ocr)
     monkeypatch.setattr(pipeline_module, "assess_ocr_result", assess)
     monkeypatch.setattr(pipeline_module, "_request_translations", request)
-    monkeypatch.setattr(pipeline_module, "_preflight_layout_plans", layout)
-    monkeypatch.setattr(pipeline_module, "inpaint_regions", inpaint)
-    monkeypatch.setattr(pipeline_module, "render_text_into_group", render)
+    monkeypatch.setattr(pipeline_module, "_preflight_raqm_layout_plans", layout)
+    monkeypatch.setattr(pipeline_module, "render_page_atomic", render_page)
     monkeypatch.setattr(
         pipeline_module,
         "validate_translation",

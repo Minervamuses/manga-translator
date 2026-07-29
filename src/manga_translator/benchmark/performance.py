@@ -16,6 +16,7 @@ import tempfile
 import time
 import tomllib
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1048,6 +1049,27 @@ def _real_sample_completion_errors(result: Any, profile: dict[str, Any]) -> list
     return errors
 
 
+def _retry_real_sample(
+    sample_id: str,
+    operation: Callable[[int], dict[str, Any]],
+    *,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    failures: list[dict[str, Any]] = []
+    for attempt in range(1, max_attempts + 1):
+        try:
+            sample = operation(attempt)
+        except RuntimeError as error:
+            failures.append({"attempt": attempt, "error": str(error)})
+            continue
+        sample["attempt_count"] = attempt
+        sample["failed_attempts"] = failures
+        return sample
+    raise RuntimeError(
+        f"real pipeline sample exhausted retries: {sample_id}: {failures}"
+    )
+
+
 def _run_real_pipeline(
     root: Path,
     pages: list[dict[str, Any]],
@@ -1065,25 +1087,27 @@ def _run_real_pipeline(
     glossary = load_glossary(config.paths.glossary)
     samples: dict[str, list[dict[str, Any]]] = {"cold": [], "warmup": [], "measured": []}
 
-    def execute(
+    def execute_once(
         source: Path,
         *,
         page_id: str,
         sample_kind: str,
         iteration: int,
         state_dir: Path,
+        attempt: int,
     ) -> dict[str, Any]:
         sample_id = f"{page_id[:12]}-{sample_kind}-{iteration}"
+        execution_id = f"{sample_id}-attempt-{attempt}"
         ocr_module.clear_ocr_result_cache()
-        profiler = RunProfiler(f"{run_id}-{sample_id}", environment_kind="real")
+        profiler = RunProfiler(f"{run_id}-{execution_id}", environment_kind="real")
         started = time.perf_counter_ns()
         with activate_profiler(profiler):
             result = process_single_page(
                 source,
                 config,
                 glossary,
-                state_dir=state_dir / sample_id,
-                job_id=sample_id,
+                state_dir=state_dir / execution_id,
+                job_id=execution_id,
                 resume=False,
             )
         wall_ms = (time.perf_counter_ns() - started) / 1_000_000
@@ -1093,11 +1117,12 @@ def _run_real_pipeline(
         if completion_errors:
             raise RuntimeError(
                 "real pipeline sample failed: "
-                f"{sample_id}: {result.status}: {completion_errors}: {issue_codes}"
+                f"{execution_id}: {result.status}: {completion_errors}: {issue_codes}"
             )
         spans = [span for span in profile["spans"] if span["stage"] != "page_wall"]
         return {
             "sample_id": sample_id,
+            "execution_id": execution_id,
             "page_id": page_id,
             "kind": sample_kind,
             "iteration": iteration,
@@ -1110,6 +1135,27 @@ def _run_real_pipeline(
             },
             "profiler": profile,
         }
+
+    def execute(
+        source: Path,
+        *,
+        page_id: str,
+        sample_kind: str,
+        iteration: int,
+        state_dir: Path,
+    ) -> dict[str, Any]:
+        sample_id = f"{page_id[:12]}-{sample_kind}-{iteration}"
+        return _retry_real_sample(
+            sample_id,
+            lambda attempt: execute_once(
+                source,
+                page_id=page_id,
+                sample_kind=sample_kind,
+                iteration=iteration,
+                state_dir=state_dir,
+                attempt=attempt,
+            ),
+        )
 
     with tempfile.TemporaryDirectory(prefix="manga-performance-") as temporary:
         temporary_root = Path(temporary)

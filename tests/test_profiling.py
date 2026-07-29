@@ -314,6 +314,32 @@ def test_real_sample_rejects_missing_output_and_required_stage() -> None:
     ]
 
 
+def test_real_sample_retry_records_failed_attempts() -> None:
+    attempts: list[int] = []
+
+    def operation(attempt: int) -> dict[str, object]:
+        attempts.append(attempt)
+        if attempt == 1:
+            raise RuntimeError("provider response rejected")
+        return {"sample_id": "sample"}
+
+    sample = performance_module._retry_real_sample("sample", operation)
+
+    assert attempts == [1, 2]
+    assert sample["attempt_count"] == 2
+    assert sample["failed_attempts"] == [
+        {"attempt": 1, "error": "provider response rejected"}
+    ]
+
+
+def test_real_sample_retry_fails_closed_after_limit() -> None:
+    def operation(attempt: int) -> dict[str, object]:
+        raise RuntimeError(f"failure-{attempt}")
+
+    with pytest.raises(RuntimeError, match="exhausted retries: sample"):
+        performance_module._retry_real_sample("sample", operation, max_attempts=2)
+
+
 def test_performance_baseline_separates_mock_from_blocked_real_run(
     tmp_path,
     monkeypatch,

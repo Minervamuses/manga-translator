@@ -46,7 +46,13 @@ def _corpus_hash(examples: list[CalibrationExample]) -> str:
         for item in sorted(examples, key=lambda example: example.example_id)
     ]
     return hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
     ).hexdigest()
 
 
@@ -117,7 +123,34 @@ def train_calibration_artifact(
     }
     if any(not rows for rows in splits.values()):
         raise ValueError("calibration requires non-empty train/dev/test splits")
+    example_ids = [item.example_id for item in examples]
+    if any(not example_id for example_id in example_ids) or len(set(example_ids)) != len(
+        example_ids
+    ):
+        raise ValueError("calibration example_id values must be non-empty and unique")
+    title_splits: dict[str, set[str]] = {}
+    for item in examples:
+        if not item.title:
+            raise ValueError("calibration title must not be empty")
+        title_splits.setdefault(item.title, set()).add(item.split)
+    leaked_titles = sorted(title for title, assigned in title_splits.items() if len(assigned) > 1)
+    if leaked_titles:
+        raise ValueError(f"calibration titles leak across splits: {', '.join(leaked_titles)}")
     train, dev, test = splits["train"], splits["dev"], splits["test"]
+    if len({item.correct for item in train}) < 2:
+        raise ValueError("calibration train split requires correct and incorrect examples")
+    if len({item.is_no_text for item in train}) < 2:
+        raise ValueError("calibration train split requires text and no-text examples")
+    for split_name, rows in (("dev", dev), ("test", test)):
+        if len({item.is_no_text for item in rows}) < 2:
+            raise ValueError(f"calibration {split_name} split requires text and no-text examples")
+        for profile in AcceptanceProfile:
+            profile_rows = [item for item in rows if profile_for_text(item.text) is profile]
+            if not profile_rows or len({item.correct for item in profile_rows}) < 2:
+                raise ValueError(
+                    f"calibration {split_name} split requires positive and negative "
+                    f"{profile.value} examples"
+                )
     train_raw = np.asarray([linear_score(item.features) for item in train])
     train_labels = np.asarray([item.correct for item in train], dtype=bool)
     isotonic = IsotonicRegression(out_of_bounds="clip").fit(train_raw, train_labels)
@@ -134,13 +167,9 @@ def train_calibration_artifact(
     profile_thresholds: dict[str, float] = {}
     for profile in AcceptanceProfile:
         selected = np.asarray([profile_for_text(item.text) is profile for item in dev])
-        profile_thresholds[profile.value] = (
-            _select_threshold(
-                np.asarray([item.correct for item in dev], dtype=bool)[selected],
-                dev_calibrated[selected],
-            )
-            if np.any(selected)
-            else 0.5
+        profile_thresholds[profile.value] = _select_threshold(
+            np.asarray([item.correct for item in dev], dtype=bool)[selected],
+            dev_calibrated[selected],
         )
 
     test_raw = np.asarray([linear_score(item.features) for item in test])
@@ -186,5 +215,6 @@ def train_calibration_artifact(
 def write_calibration_artifact(path: Path, artifact: CalibrationArtifact) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(artifact.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(artifact.to_dict(), allow_nan=False, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
     )

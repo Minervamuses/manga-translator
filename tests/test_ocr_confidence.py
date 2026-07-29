@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,8 @@ from manga_translator.ocr_confidence import (
     decide_ocr_confidence,
     profile_for_text,
 )
+
+MODEL_REVISION = "a" * 40
 
 
 def _features(signal: float) -> OCRConfidenceFeatures:
@@ -63,6 +66,7 @@ def test_untrained_score_is_explicitly_heuristic_and_profiles_are_separate() -> 
     assert dialogue.confidence_kind == "heuristic"
     assert dialogue.no_text_probability is None
     assert profile_for_text("一般對話內容") is AcceptanceProfile.DIALOGUE
+    assert profile_for_text("え") is AcceptanceProfile.SHORT_CJK
     assert short.profile is AcceptanceProfile.SHORT_CJK
     assert sfx.profile is AcceptanceProfile.LATIN_SFX
     assert short.threshold < dialogue.threshold
@@ -71,7 +75,7 @@ def test_untrained_score_is_explicitly_heuristic_and_profiles_are_separate() -> 
 
 def test_eval_training_improves_heldout_brier_and_uses_dev_for_thresholds(tmp_path: Path) -> None:
     artifact = train_calibration_artifact(
-        _synthetic_examples(), model_revision="abc1234", preprocess_version="v1"
+        _synthetic_examples(), model_revision=MODEL_REVISION, preprocess_version="v1"
     )
     metrics = artifact.heldout_metrics
 
@@ -85,7 +89,7 @@ def test_eval_training_improves_heldout_brier_and_uses_dev_for_thresholds(tmp_pa
     write_calibration_artifact(path, artifact)
     loaded = CalibrationArtifact.from_json(
         path,
-        model_revision="abc1234",
+        model_revision=MODEL_REVISION,
         preprocess_version="v1",
         corpus_sha256=artifact.corpus_sha256,
     )
@@ -94,7 +98,7 @@ def test_eval_training_improves_heldout_brier_and_uses_dev_for_thresholds(tmp_pa
 
 def test_no_text_gate_rejects_hallucination_without_hurting_strong_short_or_sfx() -> None:
     artifact = train_calibration_artifact(
-        _synthetic_examples(), model_revision="abc1234", preprocess_version="v1"
+        _synthetic_examples(), model_revision=MODEL_REVISION, preprocess_version="v1"
     )
 
     hallucination = decide_ocr_confidence("看似文字", _features(0.05), artifact)
@@ -111,12 +115,12 @@ def test_no_text_gate_rejects_hallucination_without_hurting_strong_short_or_sfx(
 @pytest.mark.parametrize("field", ["model_revision", "preprocess_version", "corpus_sha256"])
 def test_calibration_fingerprint_mismatch_is_rejected(tmp_path: Path, field: str) -> None:
     artifact = train_calibration_artifact(
-        _synthetic_examples(), model_revision="abc1234", preprocess_version="v1"
+        _synthetic_examples(), model_revision=MODEL_REVISION, preprocess_version="v1"
     )
     path = tmp_path / "calibration.json"
     write_calibration_artifact(path, artifact)
     expected = {
-        "model_revision": "abc1234",
+        "model_revision": MODEL_REVISION,
         "preprocess_version": "v1",
         "corpus_sha256": artifact.corpus_sha256,
     }
@@ -124,6 +128,43 @@ def test_calibration_fingerprint_mismatch_is_rejected(tmp_path: Path, field: str
 
     with pytest.raises(ValueError, match=field):
         CalibrationArtifact.from_json(path, **expected)
+
+
+def test_empty_text_is_never_accepted() -> None:
+    features = _features(0.99)
+    artifact = train_calibration_artifact(
+        _synthetic_examples(), model_revision=MODEL_REVISION, preprocess_version="v1"
+    )
+
+    assert not decide_ocr_confidence("", features).accepted
+    assert not decide_ocr_confidence("  ", features, artifact).accepted
+
+
+def test_feature_and_artifact_validation_fail_closed() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        replace(_features(0.5), token_entropy=float("nan"))
+    with pytest.raises(ValueError, match="between zero and one"):
+        replace(_features(0.5), detector_confidence=1.1)
+
+    artifact = train_calibration_artifact(
+        _synthetic_examples(), model_revision=MODEL_REVISION, preprocess_version="v1"
+    )
+    with pytest.raises(ValueError, match="strictly increasing"):
+        replace(artifact, isotonic_x=tuple(reversed(artifact.isotonic_x)))
+    with pytest.raises(ValueError, match="every profile"):
+        replace(artifact, profile_thresholds={AcceptanceProfile.DIALOGUE.value: 0.5})
+
+
+def test_training_rejects_title_leakage_across_splits() -> None:
+    examples = _synthetic_examples()
+    train_title = next(item.title for item in examples if item.split == "train")
+    dev_index = next(index for index, item in enumerate(examples) if item.split == "dev")
+    examples[dev_index] = replace(examples[dev_index], title=train_title)
+
+    with pytest.raises(ValueError, match="leak across splits"):
+        train_calibration_artifact(
+            examples, model_revision=MODEL_REVISION, preprocess_version="v1"
+        )
 
 
 def test_repository_calibration_manifest_does_not_fake_missing_corpus() -> None:

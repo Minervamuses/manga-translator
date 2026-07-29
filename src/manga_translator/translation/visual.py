@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,6 +19,7 @@ from ..contracts.mapping import request_map_from_ids, source_sha256
 from .provider import ProviderPolicy, build_openrouter_payload
 from .schema import validate_structured_response
 from .units import TranslationUnit
+from .validate import TranslationInput, normalize_display_text, validate_translation_batch
 
 
 class VisualTrigger(StrEnum):
@@ -32,7 +34,12 @@ class VisualModelProfile:
     benchmark_profile: str
 
     def __post_init__(self) -> None:
-        if not self.model or not self.benchmark_profile:
+        if (
+            not isinstance(self.model, str)
+            or not self.model.strip()
+            or not isinstance(self.benchmark_profile, str)
+            or not self.benchmark_profile.strip()
+        ):
             raise ValueError("visual model must come from a named benchmark profile")
 
 
@@ -50,6 +57,27 @@ class VisualProviderResponse:
     model: str
     usage: dict[str, Any]
     cost: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.content, str):
+            raise TypeError("visual provider content must be a string")
+        if not isinstance(self.provider, str) or not self.provider.strip():
+            raise ValueError("visual provider identity is required")
+        if not isinstance(self.model, str) or not self.model.strip():
+            raise ValueError("visual provider model identity is required")
+        if not isinstance(self.usage, dict):
+            raise TypeError("visual provider usage must be an object")
+        try:
+            json.dumps(self.usage, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError("visual provider usage must be finite JSON") from error
+        if self.cost is not None and (
+            isinstance(self.cost, bool)
+            or not isinstance(self.cost, (int, float))
+            or not math.isfinite(self.cost)
+            or self.cost < 0
+        ):
+            raise ValueError("visual provider cost must be finite and non-negative")
 
 
 VisualProvider = Callable[[VisualProviderRequest], Awaitable[VisualProviderResponse]]
@@ -82,6 +110,10 @@ class VisualEscalationResult:
 def _encode_overlay(
     image: np.ndarray, units: Sequence[TranslationUnit], max_side: int
 ) -> tuple[bytes, tuple[int, int]]:
+    if not isinstance(image, np.ndarray):
+        raise TypeError("visual context image must be a NumPy array")
+    if image.dtype != np.uint8 or image.size == 0:
+        raise ValueError("visual context image must be a non-empty uint8 array")
     if image.ndim == 2:
         canvas = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
     elif image.ndim == 3 and image.shape[2] in {3, 4}:
@@ -89,6 +121,8 @@ def _encode_overlay(
     else:
         raise ValueError("visual context image must be grayscale, BGR, or BGRA")
     height, width = canvas.shape[:2]
+    if height < 1 or width < 1:
+        raise ValueError("visual context image dimensions must be positive")
     scale = min(1.0, max_side / max(width, height))
     if scale < 1.0:
         canvas = cv2.resize(
@@ -99,10 +133,16 @@ def _encode_overlay(
     overlay_height, overlay_width = canvas.shape[:2]
     for unit in units:
         box = unit.normalized_bbox
-        left = round(box.x * overlay_width)
-        top = round(box.y * overlay_height)
-        right = round((box.x + box.width) * overlay_width)
-        bottom = round((box.y + box.height) * overlay_height)
+        left = min(overlay_width - 1, max(0, round(box.x * overlay_width)))
+        top = min(overlay_height - 1, max(0, round(box.y * overlay_height)))
+        right = min(
+            overlay_width - 1,
+            max(left, round((box.x + box.width) * overlay_width)),
+        )
+        bottom = min(
+            overlay_height - 1,
+            max(top, round((box.y + box.height) * overlay_height)),
+        )
         cv2.rectangle(canvas, (left, top), (right, bottom), (0, 0, 255), 2)
         cv2.putText(
             canvas,
@@ -132,9 +172,14 @@ def _manifest(
         "sent_image": False,
         "unit_ids": tuple(unit_id for unit_id in originals if triggers.get(unit_id)),
         "triggers": {
-            unit_id: tuple(trigger.value for trigger in unit_triggers)
+            unit_id: tuple(
+                trigger.value if isinstance(trigger, VisualTrigger) else repr(trigger)
+                for trigger in unit_triggers
+            )
             for unit_id, unit_triggers in triggers.items()
             if unit_triggers
+            and isinstance(unit_triggers, Sequence)
+            and not isinstance(unit_triggers, (str, bytes))
         },
         "image_sha256": None,
         "image_dimensions": None,
@@ -162,13 +207,81 @@ async def escalate_visual_context(
     provider: VisualProvider,
     endpoint_supports_zdr: bool,
     data_collection: Literal["deny", "allow"] = "deny",
+    approved_entities: Mapping[str, str] | None = None,
 ) -> VisualEscalationResult:
     """Update only explicitly uncertain units; every failure returns original translations."""
 
     originals = dict(original_translations)
     policy = ProviderPolicy(data_collection=data_collection, zdr=config.require_zdr)
-    uncertain = tuple(unit for unit in units if triggers.get(unit.request_item_id))
-    if not config.enabled or not uncertain:
+    if not config.enabled:
+        return VisualEscalationResult(
+            originals,
+            _manifest(
+                status="not_requested",
+                policy=policy,
+                originals=originals,
+                triggers=triggers,
+            ),
+        )
+    try:
+        if model_profile is not None and not isinstance(model_profile, VisualModelProfile):
+            raise TypeError("model_profile must be a VisualModelProfile")
+        if not callable(provider):
+            raise TypeError("visual provider must be callable")
+        if not isinstance(endpoint_supports_zdr, bool):
+            raise TypeError("endpoint_supports_zdr must be a boolean")
+        material = tuple(units)
+        if any(not isinstance(unit, TranslationUnit) for unit in material):
+            raise TypeError("visual units must contain TranslationUnit values")
+        all_ids = [unit.request_item_id for unit in material]
+        if len(set(all_ids)) != len(all_ids):
+            raise ValueError("visual unit IDs must be unique")
+        unknown_triggers = set(triggers) - set(all_ids)
+        if unknown_triggers:
+            raise ValueError(f"visual triggers contain unknown unit IDs: {sorted(unknown_triggers)}")
+        normalized_triggers: dict[str, tuple[VisualTrigger, ...]] = {}
+        for unit_id, unit_triggers in triggers.items():
+            if isinstance(unit_triggers, (str, bytes)) or not isinstance(
+                unit_triggers, Sequence
+            ):
+                raise TypeError("visual triggers must be sequences")
+            normalized = tuple(unit_triggers)
+            if any(not isinstance(trigger, VisualTrigger) for trigger in normalized):
+                raise ValueError("visual triggers must use supported trigger values")
+            if len(set(normalized)) != len(normalized):
+                raise ValueError("visual triggers must not contain duplicates")
+            normalized_triggers[unit_id] = normalized
+        uncertain = tuple(
+            unit for unit in material if normalized_triggers.get(unit.request_item_id)
+        )
+        if any(unit.request_item_id not in originals for unit in uncertain):
+            raise ValueError("every uncertain unit requires a valid original translation")
+        if any(
+            not isinstance(unit_id, str)
+            or not unit_id
+            or not isinstance(translation, str)
+            or not normalize_display_text(translation)
+            for unit_id, translation in originals.items()
+        ):
+            raise ValueError("original translations must map IDs to non-empty strings")
+    except Exception as error:  # noqa: BLE001 - local validation must remain no-erase
+        return VisualEscalationResult(
+            originals,
+            _manifest(
+                status="failed",
+                policy=policy,
+                originals=originals,
+                triggers=triggers,
+                model=(model_profile.model if isinstance(model_profile, VisualModelProfile) else None),
+                benchmark_profile=(
+                    model_profile.benchmark_profile
+                    if isinstance(model_profile, VisualModelProfile)
+                    else None
+                ),
+                issue=str(error),
+            ),
+        )
+    if not uncertain:
         return VisualEscalationResult(
             originals,
             _manifest(
@@ -204,42 +317,71 @@ async def escalate_visual_context(
         )
     effective_zdr = config.require_zdr and endpoint_supports_zdr
     policy = ProviderPolicy(data_collection=data_collection, zdr=effective_zdr)
-    image_png, dimensions = _encode_overlay(image, uncertain, config.max_image_side)
-    image_hash = hashlib.sha256(image_png).hexdigest()
-    ids = [unit.request_item_id for unit in uncertain]
-    hashes = [source_sha256(unit.ocr_nfc) for unit in uncertain]
-    request_map = request_map_from_ids(ids, hashes, request_id="visual")
-    prompt = json.dumps(
-        {
-            "task": "resolve only the listed uncertain manga translation units",
-            "units": [
-                {
-                    "id": unit.request_item_id,
-                    "source": unit.ocr_nfc,
-                    "triggers": [item.value for item in triggers[unit.request_item_id]],
-                }
-                for unit in uncertain
-            ],
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    payload = build_openrouter_payload(
-        model=model_profile.model, prompt=prompt, policy=policy, temperature=0.0
-    )
-    payload["messages"][0]["content"] = [
-        {"type": "text", "text": prompt},
-        {
-            "type": "image_url",
-            "image_url": {
-                "url": "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")
-            },
-        },
-    ]
+    image_png: bytes | None = None
+    dimensions: tuple[int, int] | None = None
+    image_hash: str | None = None
+    sent_image = False
     response: VisualProviderResponse | None = None
+    ids: list[str] = []
     try:
+        image_png, dimensions = _encode_overlay(image, uncertain, config.max_image_side)
+        image_hash = hashlib.sha256(image_png).hexdigest()
+        ids = [unit.request_item_id for unit in uncertain]
+        hashes = [source_sha256(unit.ocr_nfc) for unit in uncertain]
+        request_map = request_map_from_ids(ids, hashes, request_id="visual")
+        prompt = json.dumps(
+            {
+                "task": "resolve only the listed uncertain manga translation units",
+                "units": [
+                    {
+                        "id": unit.request_item_id,
+                        "source": unit.ocr_nfc,
+                        "triggers": [
+                            item.value for item in normalized_triggers[unit.request_item_id]
+                        ],
+                    }
+                    for unit in uncertain
+                ],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        payload = build_openrouter_payload(
+            model=model_profile.model, prompt=prompt, policy=policy, temperature=0.0
+        )
+        payload["messages"][0]["content"] = [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,"
+                    + base64.b64encode(image_png).decode("ascii")
+                },
+            },
+        ]
+        sent_image = True
         response = await provider(VisualProviderRequest(payload, image_png, tuple(ids)))
+        if not isinstance(response, VisualProviderResponse):
+            raise TypeError("visual provider returned an invalid response")
+        if response.model != model_profile.model:
+            raise ValueError("visual provider model does not match benchmark profile")
         batch = validate_structured_response(response.content, request_map)
+        response_by_id = {item.item_id: item.translation for item in batch.responses}
+        semantic = validate_translation_batch(
+            tuple(
+                TranslationInput(
+                    unit.request_item_id,
+                    unit.ocr_nfc,
+                    response_by_id[unit.request_item_id],
+                )
+                for unit in uncertain
+            ),
+            expected_ids=tuple(ids),
+            approved_entities=approved_entities,
+        )
+        if not semantic.valid:
+            codes = sorted({issue.code for issue in semantic.issues})
+            raise ValueError(f"visual translation failed semantic validation: {codes}")
     except Exception as error:  # noqa: BLE001 - escalation failure must preserve valid text
         return VisualEscalationResult(
             originals,
@@ -248,20 +390,23 @@ async def escalate_visual_context(
                 policy=policy,
                 originals=originals,
                 triggers=triggers,
-                sent_image=True,
+                sent_image=sent_image,
                 image_sha256=image_hash,
                 image_dimensions=dimensions,
                 provider=response.provider if response is not None else None,
                 model=response.model if response is not None else model_profile.model,
                 benchmark_profile=model_profile.benchmark_profile,
                 cost=response.cost if response is not None else None,
-                usage=response.usage if response is not None else {},
+                usage=dict(response.usage) if response is not None else {},
                 issue=str(error),
             ),
         )
     updated = dict(originals)
+    accepted_by_id = {item.item_id: item.translation for item in batch.responses}
     for unit in uncertain:
-        updated[unit.request_item_id] = batch.responses[ids.index(unit.request_item_id)].translation
+        updated[unit.request_item_id] = normalize_display_text(
+            accepted_by_id[unit.request_item_id]
+        )
     return VisualEscalationResult(
         updated,
         _manifest(
@@ -276,6 +421,6 @@ async def escalate_visual_context(
             model=response.model,
             benchmark_profile=model_profile.benchmark_profile,
             cost=response.cost,
-            usage=response.usage,
+            usage=dict(response.usage),
         ),
     )

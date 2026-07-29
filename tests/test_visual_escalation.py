@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from uuid import UUID
 
 import cv2
 import numpy as np
+import pytest
 
 from manga_translator.config import VisualContextConfig
 from manga_translator.translation.units import NormalizedBoundingBox, TranslationUnit
@@ -145,6 +147,98 @@ def test_visual_response_failure_never_overwrites_valid_text_or_erases_original(
     assert result.translations == originals
     assert result.manifest.status == "failed"
     assert result.manifest.sent_image
+
+
+def test_semantically_invalid_visual_response_preserves_first_valid_translation() -> None:
+    async def provider(_request):
+        return VisualProviderResponse(
+            content='{"translations":[{"id":"u0001","translation":"どうしたの"}]}',
+            provider="fixture",
+            model="bench/model",
+            usage={},
+        )
+
+    originals = {"u0001": "第一次有效譯文"}
+    unit = _unit(1, "u0001", uncertain=True).model_copy(
+        update={"ocr_raw": "どうしたの", "ocr_nfc": "どうしたの"}
+    )
+    result = _run(
+        escalate_visual_context(
+            image=np.full((100, 100), 255, dtype=np.uint8),
+            units=(unit,),
+            original_translations=originals,
+            triggers={"u0001": (VisualTrigger.OCR_CANDIDATE_AMBIGUITY,)},
+            config=VisualContextConfig(enabled=True),
+            model_profile=VisualModelProfile("bench/model", "profile"),
+            provider=provider,
+            endpoint_supports_zdr=True,
+        )
+    )
+
+    assert result.translations == originals
+    assert result.manifest.status == "failed"
+    assert "semantic validation" in (result.manifest.issue or "")
+
+
+def test_local_image_failure_is_audited_without_claiming_an_upload() -> None:
+    calls = 0
+
+    async def provider(_request):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("invalid local image must not be uploaded")
+
+    originals = {"u0001": "第一次有效譯文"}
+    result = _run(
+        escalate_visual_context(
+            image=np.zeros((0, 0), dtype=np.uint8),
+            units=(_unit(1, "u0001", uncertain=True),),
+            original_translations=originals,
+            triggers={"u0001": (VisualTrigger.ORDER_UNCERTAIN,)},
+            config=VisualContextConfig(enabled=True),
+            model_profile=VisualModelProfile("bench/model", "profile"),
+            provider=provider,
+            endpoint_supports_zdr=True,
+        )
+    )
+
+    assert calls == 0
+    assert result.translations == originals
+    assert result.manifest.status == "failed"
+    assert not result.manifest.sent_image
+    assert result.manifest.image_sha256 is None
+
+
+def test_visual_provider_identity_and_accounting_fail_closed() -> None:
+    with pytest.raises(ValueError, match="finite JSON"):
+        VisualProviderResponse("{}", "provider", "model", {"tokens": math.nan})
+    with pytest.raises(ValueError, match="non-negative"):
+        VisualProviderResponse("{}", "provider", "model", {}, cost=-0.01)
+
+    async def wrong_model(_request):
+        return VisualProviderResponse(
+            content='{"translations":[{"id":"u0001","translation":"修正版"}]}',
+            provider="fixture",
+            model="other/model",
+            usage={},
+        )
+
+    originals = {"u0001": "原譯"}
+    result = _run(
+        escalate_visual_context(
+            image=np.full((100, 100), 255, dtype=np.uint8),
+            units=(_unit(1, "u0001", uncertain=True),),
+            original_translations=originals,
+            triggers={"u0001": (VisualTrigger.ORDER_UNCERTAIN,)},
+            config=VisualContextConfig(enabled=True),
+            model_profile=VisualModelProfile("bench/model", "profile"),
+            provider=wrong_model,
+            endpoint_supports_zdr=True,
+        )
+    )
+    assert result.translations == originals
+    assert result.manifest.status == "failed"
+    assert result.manifest.model == "other/model"
 
 
 def test_zdr_requirement_blocks_unsupported_endpoint_unless_explicitly_relaxed() -> None:

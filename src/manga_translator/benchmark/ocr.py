@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import random
 import statistics
 import unicodedata
@@ -16,6 +17,8 @@ import numpy as np
 NORMALIZATION_REVISION = "nfkc-strip-whitespace-v1"
 CER_DENOMINATOR = "sum_normalized_ground_truth_codepoints_for_text_crops"
 TEXT_CATEGORIES = frozenset({"dialogue", "furigana", "short_cjk", "latin_sfx", "text_over_art"})
+SPLITS = ("train", "dev", "test")
+DIRECTIONS = frozenset({"horizontal", "vertical", "rotated", "none"})
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,33 @@ class OCRCorpusItem:
     direction: str
     verified_by: str | None
 
+    def __post_init__(self) -> None:
+        for name, value in {
+            "crop_id": self.crop_id,
+            "title": self.title,
+            "path": self.path,
+        }.items():
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"OCR corpus {name} must not be empty")
+        if self.split not in SPLITS:
+            raise ValueError(f"invalid OCR corpus split: {self.split}")
+        if not isinstance(self.is_text, bool):
+            raise TypeError("OCR corpus is_text must be boolean")
+        if not isinstance(self.verified_by, str) or not self.verified_by.strip():
+            raise ValueError("every OCR corpus crop must be human verified")
+        if self.direction not in DIRECTIONS:
+            raise ValueError(f"invalid OCR corpus direction: {self.direction}")
+        normalized_truth = normalize_benchmark_text(self.truth)
+        if self.is_text:
+            if self.category not in TEXT_CATEGORIES:
+                raise ValueError(f"invalid OCR text category: {self.category}")
+            if not normalized_truth:
+                raise ValueError("OCR text crop truth must not be empty")
+            if self.direction == "none":
+                raise ValueError("OCR text crop direction must describe the text orientation")
+        elif self.category != "no_text_art" or normalized_truth:
+            raise ValueError("OCR no-text crop must use no_text_art with empty truth")
+
 
 @dataclass(frozen=True)
 class OCRPrediction:
@@ -38,6 +68,20 @@ class OCRPrediction:
     accepted: bool
     latency_ms: float
     peak_vram_mb: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.crop_id, str) or not self.crop_id.strip():
+            raise ValueError("OCR prediction crop_id must not be empty")
+        if not isinstance(self.text, str):
+            raise TypeError("OCR prediction text must be a string")
+        if not isinstance(self.accepted, bool):
+            raise TypeError("OCR prediction accepted must be boolean")
+        for name, value in {
+            "latency_ms": self.latency_ms,
+            "peak_vram_mb": self.peak_vram_mb,
+        }.items():
+            if isinstance(value, bool) or not math.isfinite(float(value)) or value < 0:
+                raise ValueError(f"OCR prediction {name} must be finite and non-negative")
 
 
 def normalize_benchmark_text(text: str) -> str:
@@ -61,37 +105,74 @@ def _edit_distance(reference: str, hypothesis: str) -> int:
 
 
 def validate_corpus_manifest(manifest: dict[str, Any]) -> tuple[OCRCorpusItem, ...]:
+    if manifest.get("schema_version") != "ocr_v1.manifest":
+        raise ValueError("OCR corpus schema version mismatch")
     if manifest.get("normalization_revision") != NORMALIZATION_REVISION:
         raise ValueError("OCR corpus normalization revision mismatch")
     if manifest.get("cer_denominator") != CER_DENOMINATOR:
         raise ValueError("OCR corpus CER denominator mismatch")
-    items = tuple(OCRCorpusItem(**item) for item in manifest.get("items", []))
+    raw_items = manifest.get("items")
+    if not isinstance(raw_items, list):
+        raise TypeError("OCR corpus items must be an array")
+    items = tuple(OCRCorpusItem(**item) for item in raw_items)
+    crop_ids = tuple(item.crop_id for item in items)
+    if len(set(crop_ids)) != len(crop_ids):
+        raise ValueError("OCR corpus crop_id values must be unique")
     text = [item for item in items if item.is_text]
     no_text = [item for item in items if not item.is_text]
-    if len(text) < 300 or len(no_text) < 300:
+    titles = {item.title for item in items}
+    minimums = manifest.get("minimums")
+    if not isinstance(minimums, dict) or minimums.get("split_unit") != "title":
+        raise ValueError("OCR corpus minimums must declare title-level splitting")
+    required_text = int(minimums.get("verified_text_crops", 0))
+    required_no_text = int(minimums.get("verified_no_text_crops", 0))
+    required_titles = int(minimums.get("titles", 0))
+    if required_text < 300 or required_no_text < 300 or required_titles < 3:
+        raise ValueError("OCR corpus minimums cannot weaken the benchmark contract")
+    if len(text) < required_text or len(no_text) < required_no_text:
         raise ValueError("OCR corpus requires at least 300 text and 300 no-text crops")
-    if any(not item.verified_by for item in items):
-        raise ValueError("every OCR corpus crop must be human verified")
+    if len(titles) < required_titles:
+        raise ValueError("OCR corpus requires at least three titles")
+    counts = manifest.get("counts")
+    expected_counts = {
+        "verified_text_crops": len(text),
+        "verified_no_text_crops": len(no_text),
+        "titles": len(titles),
+    }
+    if counts != expected_counts:
+        raise ValueError("OCR corpus declared counts do not match items")
     titles_by_split: dict[str, set[str]] = defaultdict(set)
     for item in items:
-        if item.split not in {"train", "dev", "test"}:
-            raise ValueError(f"invalid OCR corpus split: {item.split}")
         titles_by_split[item.split].add(item.title)
-    if len(set().union(*titles_by_split.values())) < 3:
-        raise ValueError("OCR corpus requires at least three titles")
-    for left in ("train", "dev", "test"):
-        for right in ("train", "dev", "test"):
+    for split in SPLITS:
+        split_items = [item for item in items if item.split == split]
+        if not titles_by_split[split] or not any(item.is_text for item in split_items) or not any(
+            not item.is_text for item in split_items
+        ):
+            raise ValueError(f"OCR corpus {split} split requires a title, text, and no-text crops")
+        missing_categories = TEXT_CATEGORIES - {
+            item.category for item in split_items if item.is_text
+        }
+        if missing_categories:
+            raise ValueError(
+                f"OCR corpus {split} split missing text categories: {sorted(missing_categories)}"
+            )
+    for left in SPLITS:
+        for right in SPLITS:
             if left < right and titles_by_split[left] & titles_by_split[right]:
                 raise ValueError("OCR corpus title leakage across splits")
-    required_categories = TEXT_CATEGORIES - {item.category for item in text}
-    if required_categories:
-        raise ValueError(f"OCR corpus missing text categories: {sorted(required_categories)}")
     return items
 
 
 def corpus_sha256(manifest: dict[str, Any]) -> str:
     return hashlib.sha256(
-        json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            manifest,
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
     ).hexdigest()
 
 
@@ -104,10 +185,24 @@ def _percentile(values: list[float], percentile: float) -> float:
 def evaluate_ocr_predictions(
     items: tuple[OCRCorpusItem, ...],
     predictions: tuple[OCRPrediction, ...],
+    *,
+    split: str = "test",
 ) -> dict[str, Any]:
-    by_id = {prediction.crop_id: prediction for prediction in predictions}
-    mapping_complete = len(by_id) == len(items) and set(by_id) == {item.crop_id for item in items}
-    text_items = [item for item in items if item.is_text]
+    if split not in SPLITS:
+        raise ValueError(f"invalid OCR evaluation split: {split}")
+    evaluated_items = tuple(item for item in items if item.split == split)
+    if not evaluated_items:
+        raise ValueError(f"OCR evaluation split has no items: {split}")
+    prediction_ids = tuple(prediction.crop_id for prediction in predictions)
+    duplicate_ids = sorted(
+        crop_id for crop_id in set(prediction_ids) if prediction_ids.count(crop_id) > 1
+    )
+    by_id: dict[str, OCRPrediction] = {}
+    for prediction in predictions:
+        by_id.setdefault(prediction.crop_id, prediction)
+    expected_ids = {item.crop_id for item in evaluated_items}
+    mapping_complete = not duplicate_ids and set(by_id) == expected_ids
+    text_items = [item for item in evaluated_items if item.is_text]
     total_edits = total_reference = 0
     exact = accepted = accepted_edits = accepted_reference = 0
     short_total = short_retained = sfx_total = sfx_retained = 0
@@ -132,17 +227,20 @@ def evaluate_ocr_predictions(
         if item.category == "latin_sfx":
             sfx_total += 1
             sfx_retained += int(prediction.accepted and output == truth)
-    no_text_items = [item for item in items if not item.is_text]
+    no_text_items = [item for item in evaluated_items if not item.is_text]
     no_text_fp = sum(
         bool(by_id.get(item.crop_id))
         and by_id[item.crop_id].accepted
         and bool(normalize_benchmark_text(by_id[item.crop_id].text))
         for item in no_text_items
     )
-    latencies = [prediction.latency_ms for prediction in predictions]
+    evaluated_predictions = [by_id[crop_id] for crop_id in expected_ids if crop_id in by_id]
+    latencies = [prediction.latency_ms for prediction in evaluated_predictions]
     total_seconds = sum(latencies) / 1000.0
     return {
         "mapping_100_percent": mapping_complete,
+        "evaluation_split": split,
+        "duplicate_prediction_ids": duplicate_ids,
         "normalized_cer": total_edits / max(1, total_reference),
         "exact_match": exact / max(1, len(text_items)),
         "short_cjk_retention": short_retained / max(1, short_total),
@@ -157,8 +255,10 @@ def evaluate_ocr_predictions(
         },
         "p50_latency_ms": statistics.median(latencies) if latencies else 0.0,
         "p95_latency_ms": _percentile(latencies, 0.95),
-        "images_per_second": len(predictions) / max(1e-9, total_seconds),
-        "peak_vram_mb": max((prediction.peak_vram_mb for prediction in predictions), default=0.0),
+        "images_per_second": len(evaluated_predictions) / max(1e-9, total_seconds),
+        "peak_vram_mb": max(
+            (prediction.peak_vram_mb for prediction in evaluated_predictions), default=0.0
+        ),
     }
 
 
@@ -168,9 +268,14 @@ def _paired_cer_delta_interval(
     candidate: dict[str, OCRPrediction],
     category: str,
     *,
+    split: str = "test",
     samples: int = 1000,
 ) -> tuple[float, float]:
-    relevant = [item for item in items if item.is_text and item.category == category]
+    relevant = [
+        item
+        for item in items
+        if item.split == split and item.is_text and item.category == category
+    ]
     if not relevant:
         return (0.0, 0.0)
     deltas = []
@@ -200,16 +305,22 @@ def evaluate_ocr_switch_gate(
     candidate = evaluate_ocr_predictions(items, candidate_predictions)
     baseline_by_id = {item.crop_id: item for item in baseline_predictions}
     candidate_by_id = {item.crop_id: item for item in candidate_predictions}
-    intervals = {
-        category: _paired_cer_delta_interval(
-            items, baseline_by_id, candidate_by_id, category
-        )
-        for category in sorted(TEXT_CATEGORIES)
-    }
+    mappings_complete = baseline["mapping_100_percent"] and candidate["mapping_100_percent"]
+    intervals = (
+        {
+            category: _paired_cer_delta_interval(
+                items, baseline_by_id, candidate_by_id, category
+            )
+            for category in sorted(TEXT_CATEGORIES)
+        }
+        if mappings_complete
+        else {}
+    )
     significant_regression = {
         category: bounds[0] > 0 for category, bounds in intervals.items()
     }
     checks = {
+        "baseline_mapping_100_percent": baseline["mapping_100_percent"],
         "mapping_100_percent": candidate["mapping_100_percent"],
         "no_significant_category_cer_regression": not any(significant_regression.values()),
         "no_text_fp_not_worse": candidate["no_text_false_positive"]
@@ -218,7 +329,8 @@ def evaluate_ocr_switch_gate(
         >= baseline["short_cjk_retention"],
         "latin_sfx_retention_not_worse": candidate["latin_sfx_retention"]
         >= baseline["latin_sfx_retention"],
-        "target_gpu_batching_gain": target_gpu
+        "target_gpu_batching_gain": mappings_complete
+        and target_gpu
         and candidate["images_per_second"] > baseline["images_per_second"] * 1.05,
     }
     return {
@@ -228,5 +340,6 @@ def evaluate_ocr_switch_gate(
         "candidate": candidate,
         "paired_cer_delta_95ci": intervals,
         "significant_regression": significant_regression,
+        "blockers": [name for name, passed in checks.items() if not passed],
         "orchestrator_switch": "allowed" if all(checks.values()) else "not_performed",
     }

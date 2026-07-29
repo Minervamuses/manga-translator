@@ -50,8 +50,20 @@ def _manifest(*, count: int = 100) -> dict:
                 }
             )
     return {
+        "schema_version": "ocr_v1.manifest",
         "normalization_revision": NORMALIZATION_REVISION,
         "cer_denominator": CER_DENOMINATOR,
+        "minimums": {
+            "verified_text_crops": 300,
+            "verified_no_text_crops": 300,
+            "titles": 3,
+            "split_unit": "title",
+        },
+        "counts": {
+            "verified_text_crops": count * 3,
+            "verified_no_text_crops": count * 3,
+            "titles": 3,
+        },
         "items": items,
     }
 
@@ -68,6 +80,10 @@ def _predictions(items, *, latency: float, error: bool = False):
     return tuple(predictions)
 
 
+def _test_items(items):
+    return tuple(item for item in items if item.split == "test")
+
+
 def test_corpus_contract_requires_600_verified_crops_and_title_held_out_split() -> None:
     items = validate_corpus_manifest(_manifest())
     assert len(items) == 600
@@ -81,12 +97,18 @@ def test_corpus_contract_requires_600_verified_crops_and_title_held_out_split() 
     with pytest.raises(ValueError, match="title leakage"):
         validate_corpus_manifest(leaked)
 
+    duplicated = _manifest()
+    duplicated["items"][1]["crop_id"] = duplicated["items"][0]["crop_id"]
+    with pytest.raises(ValueError, match="crop_id values must be unique"):
+        validate_corpus_manifest(duplicated)
+
 
 def test_metrics_fix_cer_denominator_and_cover_short_sfx_no_text_and_throughput() -> None:
     items = validate_corpus_manifest(_manifest())
-    metrics = evaluate_ocr_predictions(items, _predictions(items, latency=2.0))
+    metrics = evaluate_ocr_predictions(items, _predictions(_test_items(items), latency=2.0))
 
     assert metrics["mapping_100_percent"]
+    assert metrics["evaluation_split"] == "test"
     assert metrics["normalized_cer"] == 0
     assert metrics["exact_match"] == 1
     assert metrics["short_cjk_retention"] == 1
@@ -102,13 +124,20 @@ def test_metrics_fix_cer_denominator_and_cover_short_sfx_no_text_and_throughput(
 
 def test_switch_gate_requires_quality_and_real_target_gpu_gain() -> None:
     items = validate_corpus_manifest(_manifest())
-    baseline = _predictions(items, latency=4.0)
-    faster = _predictions(items, latency=2.0)
+    heldout = _test_items(items)
+    baseline = _predictions(heldout, latency=4.0)
+    faster = _predictions(heldout, latency=2.0)
 
     passed = evaluate_ocr_switch_gate(items, baseline, faster, target_gpu=True)
     unavailable_gpu = evaluate_ocr_switch_gate(items, baseline, faster, target_gpu=False)
     regressed = evaluate_ocr_switch_gate(
-        items, baseline, _predictions(items, latency=2.0, error=True), target_gpu=True
+        items, baseline, _predictions(heldout, latency=2.0, error=True), target_gpu=True
+    )
+    incomplete = evaluate_ocr_switch_gate(
+        items, baseline[:-1], faster, target_gpu=True
+    )
+    duplicated = evaluate_ocr_switch_gate(
+        items, baseline, (*faster, faster[0]), target_gpu=True
     )
 
     assert passed["status"] == "passed"
@@ -117,6 +146,11 @@ def test_switch_gate_requires_quality_and_real_target_gpu_gain() -> None:
     assert unavailable_gpu["orchestrator_switch"] == "not_performed"
     assert regressed["status"] == "blocked"
     assert regressed["checks"]["no_significant_category_cer_regression"] is False
+    assert incomplete["status"] == "blocked"
+    assert incomplete["checks"]["baseline_mapping_100_percent"] is False
+    assert incomplete["paired_cer_delta_95ci"] == {}
+    assert duplicated["status"] == "blocked"
+    assert duplicated["candidate"]["duplicate_prediction_ids"] == [faster[0].crop_id]
 
 
 def test_repository_ocr_v1_manifest_truthfully_blocks_switch() -> None:

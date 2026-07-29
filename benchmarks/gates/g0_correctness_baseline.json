@@ -1,0 +1,58 @@
+{
+  "schema_version": "g0_correctness_baseline.v1",
+  "gate": "G0",
+  "name": "correctness and real baseline gate",
+  "date": "2026-07-29",
+  "branch": "repair_p0_p4_completion",
+  "implementation_head": "cf60abe9df5bcbee5e3d705aa7400d814e805347",
+  "status": "passed",
+  "reviewers": [
+    {
+      "id": "garyc",
+      "verified_at": "2026-07-29",
+      "regions": 38
+    }
+  ],
+  "artifacts": {
+    "detector_parity": {
+      "path": "benchmarks/detector_fp16_parity.json",
+      "sha256": "0cb42075fc71ba9f9dd8dfbb7e6208d08e034e680b3897f036b3c71fa7e59b15",
+      "run_id": "detector-parity-20260729T103332Z-65da100a",
+      "source_commit": "03515ae5a88bbb0549eb8109fbd640edc1e701e2",
+      "corpus_sha256": "32c1893956a955ad628865849bdad725ee949ddf741c4a7ab59c60c2f90c7621",
+      "model_sha256": "1f90fa60aeeb1eb82e2ac1167a66bf139a8a61b8780acd351ead55268540cccb",
+      "config_sha256": "664c9b2d6d574ef66882e5799336ffe3a0d33ec8c4e49d4322b323e70ee9b215"
+    },
+    "performance": {
+      "path": "benchmarks/performance/v032_baseline/runs/v032_baseline-20260729T093439Z-30609ac4.json",
+      "sha256": "10babd89d69672864a036f6123e38cd7783f55f6271d890005f7d9dcd511e8ca",
+      "run_id": "v032_baseline-20260729T093439Z-30609ac4",
+      "source_commit": "03515ae5a88bbb0549eb8109fbd640edc1e701e2",
+      "source_fingerprint_sha256": "e54dfd53854f476a12aa0423a17de9ba39db2d6bc95fa66bb66182c3db56e0fb",
+      "corpus_sha256": "cf16c10e2c915e695eca200bf121e46cf0e2cb27081f02ee8679451f6e6a99b5",
+      "config_sha256": "09244171e5bdafd6f60ff1bc2bb77de9e941cc52a47adb9d6b89616e4427db84"
+    },
+    "performance_manifest": {
+      "path": "benchmarks/performance/v032_baseline/manifest.json",
+      "sha256": "b831d7cb008ba7b70c50ba025a17a69c61c0ece68ac58da59a2c29ea04766aac"
+    }
+  },
+  "checks": {
+    "verified_regions": "38/38",
+    "detector_parity": "passed",
+    "real_performance_samples": "5 cold + 10 warmup + 25 measured",
+    "mock_in_real_measurements": false,
+    "blockers": 0
+  },
+  "verification": {
+    "environment_manager": "conda:manga",
+    "python_package_manager": "poetry",
+    "targeted_commands": 4,
+    "regression_suite": "474 passed, 2 deselected",
+    "common_suite": "474 passed, 2 deselected",
+    "ruff": "passed",
+    "poetry_lock": "passed",
+    "pip_check": "passed"
+  },
+  "blockers": []
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -11,13 +12,29 @@ from typing import Any, Literal
 from ..storage.job_store import JobStore
 
 MemoryStatus = Literal["suggestion", "approved"]
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 def _canonical_hash(value: Any) -> str:
     encoded = json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode()
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _require_sha256(value: str, field: str) -> str:
+    if not isinstance(value, str) or _SHA256_PATTERN.fullmatch(value) is None:
+        raise ValueError(f"{field} must be a lowercase SHA-256 digest")
+    return value
+
+
+def _source_nfc(value: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError("translation memory source must be a string")
+    normalized = unicodedata.normalize("NFC", value)
+    if not normalized.strip():
+        raise ValueError("translation memory source must not be empty")
+    return normalized
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +56,7 @@ class MemoryMatch:
 
     @property
     def reusable(self) -> bool:
-        return self.status == "approved" and self.reviewer_id is not None
+        return self.status == "approved" and bool((self.reviewer_id or "").strip())
 
 
 def build_memory_key(
@@ -49,11 +66,8 @@ def build_memory_key(
     order: Any,
     entity_revision_hash: str,
 ) -> MemoryKey:
-    source_nfc = unicodedata.normalize("NFC", source)
-    if not source_nfc.strip():
-        raise ValueError("translation memory source must not be empty")
-    if len(entity_revision_hash) != 64:
-        raise ValueError("entity_revision_hash must be SHA-256")
+    source_nfc = _source_nfc(source)
+    entity_revision_hash = _require_sha256(entity_revision_hash, "entity_revision_hash")
     context_hash = _canonical_hash(context)
     order_hash = _canonical_hash(order)
     value = _canonical_hash(
@@ -67,8 +81,33 @@ def build_memory_key(
     return MemoryKey(value, source_nfc, context_hash, order_hash, entity_revision_hash)
 
 
+def _validate_memory_key(key: MemoryKey) -> None:
+    if not isinstance(key, MemoryKey):
+        raise TypeError("key must be a MemoryKey")
+    source_nfc = _source_nfc(key.source_nfc)
+    if source_nfc != key.source_nfc:
+        raise ValueError("memory key source_nfc is not NFC-normalized")
+    context_hash = _require_sha256(key.context_hash, "context_hash")
+    order_hash = _require_sha256(key.order_hash, "order_hash")
+    entity_hash = _require_sha256(key.entity_revision_hash, "entity_revision_hash")
+    expected = _canonical_hash(
+        {
+            "source_nfc": source_nfc,
+            "context_hash": context_hash,
+            "order_hash": order_hash,
+            "entity_revision_hash": entity_hash,
+        }
+    )
+    if _require_sha256(key.value, "memory key") != expected:
+        raise ValueError("memory key does not match its components")
+
+
 class TranslationMemory:
     def __init__(self, store: JobStore, *, job_id: str, chapter_id: str) -> None:
+        if not isinstance(job_id, str) or not job_id.strip():
+            raise ValueError("job_id is required")
+        if not isinstance(chapter_id, str) or not chapter_id.strip():
+            raise ValueError("chapter_id is required")
         self.store = store
         self.job_id = job_id
         self.chapter_id = chapter_id
@@ -82,13 +121,25 @@ class TranslationMemory:
         reviewer_id: str | None = None,
         provenance: dict[str, Any] | None = None,
     ) -> MemoryMatch:
+        _validate_memory_key(key)
+        if status not in {"suggestion", "approved"}:
+            raise ValueError(f"unsupported translation memory status: {status}")
+        if not isinstance(target_zh_tw, str):
+            raise TypeError("translation memory target must be a string")
         target = unicodedata.normalize("NFC", target_zh_tw).strip()
         if not target:
             raise ValueError("translation memory target must not be empty")
-        if status == "approved" and not (reviewer_id or "").strip():
+        reviewer = reviewer_id.strip() if isinstance(reviewer_id, str) else None
+        if status == "approved" and not reviewer:
             raise ValueError("approved translation memory requires reviewer_id")
+        if provenance is not None and not isinstance(provenance, dict):
+            raise TypeError("translation memory provenance must be an object")
         payload = json.dumps(
-            provenance or {}, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            {} if provenance is None else provenance,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
         )
         with self.store.transaction() as connection:
             connection.execute(
@@ -122,7 +173,7 @@ class TranslationMemory:
                     key.entity_revision_hash,
                     target,
                     status,
-                    reviewer_id,
+                    reviewer,
                     payload,
                 ),
             )
@@ -131,6 +182,7 @@ class TranslationMemory:
         return match
 
     def lookup_key(self, key: MemoryKey) -> MemoryMatch | None:
+        _validate_memory_key(key)
         row = self.store.connection.execute(
             """
             SELECT target_zh_tw, status, reviewer_id, provenance_json
@@ -167,7 +219,7 @@ class TranslationMemory:
         )
 
     def suggestion_for_source(self, source: str) -> tuple[MemoryMatch, ...]:
-        source_nfc = unicodedata.normalize("NFC", source)
+        source_nfc = _source_nfc(source)
         rows = self.store.connection.execute(
             """
             SELECT memory_key, context_hash, order_hash, entity_revision_hash,

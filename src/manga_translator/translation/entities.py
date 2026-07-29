@@ -12,13 +12,37 @@ from typing import Any, Literal
 from ..storage.job_store import JobStore
 
 EntityStatus = Literal["candidate", "approved", "rejected", "merged"]
+_ACTIVE_ENTITY_STATUSES = frozenset({"candidate", "approved"})
 
 
 def normalize_entity_text(value: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError("entity text must be a string")
     normalized = unicodedata.normalize("NFC", value).strip()
     if not normalized:
         raise ValueError("entity text must not be empty")
     return normalized
+
+
+def _nonempty_label(value: str, field: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{field} must not be empty")
+    return normalized
+
+
+def _json_object(value: dict[str, Any], field: str) -> str:
+    if not isinstance(value, dict):
+        raise TypeError(f"{field} must be an object")
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,8 +62,8 @@ class Entity:
 
 class EntityLedger:
     def __init__(self, store: JobStore, *, job_id: str, chapter_id: str) -> None:
-        if not job_id or not chapter_id:
-            raise ValueError("job_id and chapter_id are required")
+        _nonempty_label(job_id, "job_id")
+        _nonempty_label(chapter_id, "chapter_id")
         self.store = store
         self.job_id = job_id
         self.chapter_id = chapter_id
@@ -106,15 +130,17 @@ class EntityLedger:
 
     def _find_by_alias(self, aliases: tuple[str, ...]) -> str | None:
         placeholders = ",".join("?" for _ in aliases)
-        row = self.store.connection.execute(
+        rows = self.store.connection.execute(
             f"""
             SELECT entity_id FROM entity_aliases
             WHERE job_id=? AND chapter_id=? AND normalized_alias IN ({placeholders})
-            ORDER BY entity_id LIMIT 1
+            GROUP BY entity_id ORDER BY entity_id
             """,
             (self.job_id, self.chapter_id, *aliases),
-        ).fetchone()
-        return str(row[0]) if row is not None else None
+        ).fetchall()
+        if len(rows) > 1:
+            raise ValueError("aliases refer to multiple entities; a reviewed merge is required")
+        return str(rows[0][0]) if rows else None
 
     def propose(
         self,
@@ -126,15 +152,15 @@ class EntityLedger:
         provenance: dict[str, Any] | None = None,
     ) -> Entity:
         canonical = normalize_entity_text(canonical_source)
+        normalized_kind = _nonempty_label(kind, "kind")
+        normalized_scope = _nonempty_label(scope, "scope")
         originals = tuple(dict.fromkeys((canonical, *(normalize_entity_text(x) for x in aliases))))
         normalized_aliases = tuple(normalize_entity_text(item) for item in originals)
         existing_id = self._find_by_alias(normalized_aliases)
         entity_id = existing_id or self._entity_id(canonical)
-        payload = json.dumps(
-            provenance or {"source": "model"},
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
+        payload = _json_object(
+            {"source": "model"} if provenance is None else provenance,
+            "provenance",
         )
         with self.store.transaction() as connection:
             if existing_id is None:
@@ -145,7 +171,15 @@ class EntityLedger:
                         kind, scope, status, provenance_json
                     ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'candidate', ?)
                     """,
-                    (self.job_id, self.chapter_id, entity_id, canonical, kind, scope, payload),
+                    (
+                        self.job_id,
+                        self.chapter_id,
+                        entity_id,
+                        canonical,
+                        normalized_kind,
+                        normalized_scope,
+                        payload,
+                    ),
                 )
             else:
                 connection.execute(
@@ -170,8 +204,7 @@ class EntityLedger:
 
     def approve(self, entity_id: str, approved_zh_tw: str, *, reviewer_id: str) -> Entity:
         target = normalize_entity_text(approved_zh_tw)
-        if not reviewer_id.strip():
-            raise ValueError("reviewer_id is required for approval")
+        reviewer = _nonempty_label(reviewer_id, "reviewer_id")
         with self.store.transaction() as connection:
             cursor = connection.execute(
                 """
@@ -180,7 +213,7 @@ class EntityLedger:
                     provenance_json=json_set(provenance_json, '$.approval_reviewer', ?)
                 WHERE job_id=? AND chapter_id=? AND entity_id=? AND status IN ('candidate','approved')
                 """,
-                (target, reviewer_id, self.job_id, self.chapter_id, entity_id),
+                (target, reviewer, self.job_id, self.chapter_id, entity_id),
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"entity is not approvable: {entity_id}")
@@ -189,8 +222,7 @@ class EntityLedger:
         return result
 
     def reject(self, entity_id: str, *, reviewer_id: str) -> Entity:
-        if not reviewer_id.strip():
-            raise ValueError("reviewer_id is required for rejection")
+        reviewer = _nonempty_label(reviewer_id, "reviewer_id")
         with self.store.transaction() as connection:
             cursor = connection.execute(
                 """
@@ -199,7 +231,7 @@ class EntityLedger:
                     provenance_json=json_set(provenance_json, '$.rejection_reviewer', ?)
                 WHERE job_id=? AND chapter_id=? AND entity_id=? AND status='candidate'
                 """,
-                (reviewer_id, self.job_id, self.chapter_id, entity_id),
+                (reviewer, self.job_id, self.chapter_id, entity_id),
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"entity is not rejectable: {entity_id}")
@@ -210,9 +242,40 @@ class EntityLedger:
     def merge(self, source_id: str, target_id: str, *, reviewer_id: str) -> Entity:
         if source_id == target_id:
             raise ValueError("cannot merge an entity into itself")
-        if not reviewer_id.strip() or self.get(source_id) is None or self.get(target_id) is None:
-            raise KeyError("merge requires a reviewer and two existing entities")
+        reviewer = _nonempty_label(reviewer_id, "reviewer_id")
         with self.store.transaction() as connection:
+            rows = connection.execute(
+                """
+                SELECT entity_id, status, approved_zh_tw
+                FROM chapter_entities
+                WHERE job_id=? AND chapter_id=? AND entity_id IN (?, ?)
+                """,
+                (self.job_id, self.chapter_id, source_id, target_id),
+            ).fetchall()
+            by_id = {str(row[0]): row for row in rows}
+            if source_id not in by_id or target_id not in by_id:
+                raise KeyError("merge requires two existing entities")
+            source_status = str(by_id[source_id][1])
+            target_status = str(by_id[target_id][1])
+            if (
+                source_status not in _ACTIVE_ENTITY_STATUSES
+                or target_status not in _ACTIVE_ENTITY_STATUSES
+            ):
+                raise ValueError("only active candidate or approved entities may be merged")
+            source_target = by_id[source_id][2]
+            target_target = by_id[target_id][2]
+            if source_target is not None and target_target is not None and source_target != target_target:
+                raise ValueError("approved entities with different translations cannot be merged")
+            if source_target is not None and target_target is None:
+                connection.execute(
+                    """
+                    UPDATE chapter_entities
+                    SET approved_zh_tw=?, status='approved', last_seen=CURRENT_TIMESTAMP,
+                        provenance_json=json_set(provenance_json, '$.merge_approval_reviewer', ?)
+                    WHERE job_id=? AND chapter_id=? AND entity_id=?
+                    """,
+                    (source_target, reviewer, self.job_id, self.chapter_id, target_id),
+                )
             aliases = list(
                 connection.execute(
                     """
@@ -238,15 +301,17 @@ class EntityLedger:
                     """,
                     (self.job_id, self.chapter_id, target_id, alias, normalized, source),
                 )
-            connection.execute(
+            cursor = connection.execute(
                 """
                 UPDATE chapter_entities SET status='merged', approved_zh_tw=NULL,
                     merged_into=?, last_seen=CURRENT_TIMESTAMP,
                     provenance_json=json_set(provenance_json, '$.merge_reviewer', ?)
                 WHERE job_id=? AND chapter_id=? AND entity_id=?
                 """,
-                (target_id, reviewer_id, self.job_id, self.chapter_id, source_id),
+                (target_id, reviewer, self.job_id, self.chapter_id, source_id),
             )
+            if cursor.rowcount != 1:
+                raise KeyError(f"entity is not mergeable: {source_id}")
         result = self.get(target_id)
         assert result is not None
         return result
@@ -259,13 +324,25 @@ class EntityLedger:
             entries = glossary
         if not isinstance(entries, dict):
             raise TypeError("glossary must be a JSON object or contain an entries object")
-        imported = []
+        normalized_entries: list[tuple[str, str]] = []
+        seen: dict[str, str] = {}
         for source, target in entries.items():
+            if not isinstance(source, str) or not isinstance(target, str):
+                raise TypeError("glossary entries must map strings to strings")
+            normalized_source = normalize_entity_text(source)
+            normalized_target = normalize_entity_text(target)
+            previous = seen.get(normalized_source)
+            if previous is not None and previous != normalized_target:
+                raise ValueError("normalized glossary source has conflicting translations")
+            seen[normalized_source] = normalized_target
+            normalized_entries.append((normalized_source, normalized_target))
+        imported = []
+        for source, target in normalized_entries:
             candidate = self.propose(
-                str(source), provenance={"source": "glossary_import", "trusted": True}
+                source, provenance={"source": "glossary_import", "trusted": True}
             )
             imported.append(
-                self.approve(candidate.entity_id, str(target), reviewer_id="glossary_import")
+                self.approve(candidate.entity_id, target, reviewer_id="glossary_import")
             )
         return tuple(imported)
 
@@ -328,6 +405,10 @@ class EntityLedger:
             for entity in self.list()
         ]
         encoded = json.dumps(
-            material, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
+            material,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()

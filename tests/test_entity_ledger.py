@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from manga_translator.cli import cli
@@ -13,7 +15,7 @@ from manga_translator.stages.runner import downstream_of
 from manga_translator.storage.artifact_store import ArtifactStore
 from manga_translator.storage.job_store import JobStore
 from manga_translator.translation.entities import EntityLedger
-from manga_translator.translation.memory import TranslationMemory, build_memory_key
+from manga_translator.translation.memory import MemoryKey, TranslationMemory, build_memory_key
 
 
 def _store(tmp_path: Path) -> JobStore:
@@ -81,6 +83,52 @@ def test_merge_preserves_aliases_without_duplicate_characters(tmp_path: Path) ->
         assert ledger.get(source.entity_id).status == "merged"  # type: ignore[union-attr]
 
 
+def test_alias_bridge_requires_a_reviewed_merge(tmp_path: Path) -> None:
+    with _store(tmp_path) as store:
+        ledger = EntityLedger(store, job_id="job", chapter_id="chapter-1")
+        first = ledger.propose("アリス")
+        second = ledger.propose("ありす")
+
+        with pytest.raises(ValueError, match="reviewed merge"):
+            ledger.propose("Alice", aliases=(first.canonical_source, second.canonical_source))
+
+        assert len(ledger.list()) == 2
+
+
+def test_merge_preserves_approval_and_rejects_conflicting_approvals(tmp_path: Path) -> None:
+    with _store(tmp_path) as store:
+        ledger = EntityLedger(store, job_id="job", chapter_id="chapter-1")
+        approved_source = ledger.propose("勇者")
+        candidate_target = ledger.propose("勇者さま")
+        ledger.approve(approved_source.entity_id, "勇者", reviewer_id=" reviewer ")
+
+        merged = ledger.merge(
+            approved_source.entity_id,
+            candidate_target.entity_id,
+            reviewer_id=" reviewer ",
+        )
+        assert merged.status == "approved"
+        assert merged.approved_zh_tw == "勇者"
+        assert merged.provenance["merge_approval_reviewer"] == "reviewer"
+
+        other = ledger.propose("ヒーロー")
+        ledger.approve(other.entity_id, "英雄", reviewer_id="reviewer")
+        with pytest.raises(ValueError, match="different translations"):
+            ledger.merge(other.entity_id, merged.entity_id, reviewer_id="reviewer")
+
+
+def test_entity_inputs_and_provenance_fail_closed(tmp_path: Path) -> None:
+    with _store(tmp_path) as store:
+        ledger = EntityLedger(store, job_id="job", chapter_id="chapter-1")
+        with pytest.raises(ValueError, match="kind"):
+            ledger.propose("人物", kind=" ")
+        with pytest.raises(ValueError, match="Out of range float values"):
+            ledger.propose("人物", provenance={"confidence": math.nan})
+        with pytest.raises(TypeError, match="strings to strings"):
+            ledger.import_glossary({"勇者": 1})  # type: ignore[dict-item]
+        assert ledger.list() == ()
+
+
 def test_translation_memory_requires_exact_context_order_and_entity_revision(
     tmp_path: Path,
 ) -> None:
@@ -120,6 +168,21 @@ def test_translation_memory_requires_exact_context_order_and_entity_revision(
         protected = memory.put(key, "模型錯譯", status="suggestion")
         assert protected.reusable
         assert protected.target_zh_tw == "咖啡店"
+
+
+def test_translation_memory_rejects_forged_keys_and_non_json_provenance(tmp_path: Path) -> None:
+    with _store(tmp_path) as store:
+        memory = TranslationMemory(store, job_id="job", chapter_id="chapter-1")
+        key = build_memory_key("原文", context={}, order=[], entity_revision_hash="a" * 64)
+        forged = MemoryKey("b" * 64, key.source_nfc, key.context_hash, key.order_hash, "a" * 64)
+
+        with pytest.raises(ValueError, match="does not match"):
+            memory.put(forged, "譯文")
+        with pytest.raises(ValueError, match="lowercase SHA-256"):
+            build_memory_key("原文", context={}, order=[], entity_revision_hash="Z" * 64)
+        with pytest.raises(ValueError, match="Out of range float values"):
+            memory.put(key, "譯文", provenance={"score": math.inf})
+        assert memory.lookup_key(key) is None
 
 
 def test_glossary_revision_only_changes_translate_fingerprint_and_downstream() -> None:

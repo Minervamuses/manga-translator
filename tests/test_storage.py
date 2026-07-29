@@ -156,6 +156,36 @@ def test_migration_ddl_and_version_bump_are_atomic(
         assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
+def test_migration_repairs_abandoned_entity_schema_three_lineage(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    migration_root = files("manga_translator.storage.migrations")
+    with sqlite3.connect(database) as connection:
+        for name in ("001_initial.sql", "002_initial.sql", "005_initial.sql"):
+            connection.executescript(migration_root.joinpath(name).read_text(encoding="utf-8"))
+        connection.execute("PRAGMA user_version=3")
+
+    with JobStore(database, ArtifactStore(tmp_path / "artifacts")) as recovered:
+        tables = {
+            str(row[0])
+            for row in recovered.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        stage_columns = {
+            str(row[1])
+            for row in recovered.connection.execute("PRAGMA table_info(stage_runs)")
+        }
+        assert {
+            "provider_response_claims",
+            "page_run_claims",
+            "chapter_entities",
+            "entity_aliases",
+            "translation_memory",
+        } <= tables
+        assert "run_token" in stage_columns
+        assert recovered.connection.execute("PRAGMA user_version").fetchone()[0] == 5
+
+
 def test_provider_response_claim_is_cross_connection_exclusive_and_recoverable(
     tmp_path: Path,
 ) -> None:

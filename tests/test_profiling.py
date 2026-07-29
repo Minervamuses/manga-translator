@@ -84,6 +84,18 @@ def test_nested_same_page_profile_context_records_one_page_wall() -> None:
     assert page_spans[-1].stage == "page_wall"
 
 
+def test_profiled_stage_runner_records_production_stage() -> None:
+    profiler = RunProfiler("stage-wrapper", environment_kind="mock")
+    runner = pipeline_module._profiled_stage_runner(
+        "translation", lambda _context, _inputs: "completed"
+    )
+
+    with activate_profiler(profiler):
+        assert runner(None, None) == "completed"
+
+    assert [span.stage for span in profiler.spans] == ["translation"]
+
+
 def test_process_single_page_reuses_precomputed_page_id(tmp_path, monkeypatch) -> None:
     source = tmp_path / "page.png"
     source.write_bytes(b"stable-page-bytes")

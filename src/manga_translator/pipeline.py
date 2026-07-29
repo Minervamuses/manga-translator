@@ -1687,6 +1687,14 @@ def _persist_provider_raw_artifacts(
     return persisted
 
 
+def _profiled_stage_runner(label: str, runner: StageFunction) -> StageFunction:
+    def measured(context: StageContext, inputs: StageInputs) -> StageOutputs:
+        with profile_span(label):
+            return runner(context, inputs)
+
+    return measured
+
+
 def _build_pipeline_stage_runners(
     *,
     image_path: Path,
@@ -2232,16 +2240,16 @@ def _build_pipeline_stage_runners(
         )
 
     return {
-        StageName.SOURCE: source_stage,
+        StageName.SOURCE: _profiled_stage_runner("decode", source_stage),
         StageName.DETECT: detect_stage,
         StageName.STYLE: style_stage,
         StageName.SAFE_REGION: safe_region_stage,
         StageName.OCR: ocr_stage,
         StageName.ORDER: order_stage,
-        StageName.TRANSLATE: translate_stage,
+        StageName.TRANSLATE: _profiled_stage_runner("translation", translate_stage),
         StageName.LAYOUT: layout_stage,
         StageName.INPAINT_RENDER: inpaint_render_stage,
-        StageName.ENCODE: encode_stage,
+        StageName.ENCODE: _profiled_stage_runner("encode", encode_stage),
     }
 
 

@@ -1,9 +1,9 @@
 {
   "gate": "G2",
   "name": "typography, style, and render safety gate",
-  "date": "2026-07-28",
-  "branch": "reapir_p2",
-  "implementation_head": "585ca93",
+  "date": "2026-07-29",
+  "branch": "repair_p2",
+  "implementation_head": "1f3fb36",
   "status": "blocked",
   "automated_assertions": {
     "mapping_100_percent": "implemented; awaiting RAQM visual corpus run",
@@ -12,13 +12,13 @@
     "accepted_collisions_zero": "tests/test_layout_solver.py::test_neighbor_collision_is_a_hard_rejection",
     "outside_roi_changes_zero": "tests/test_roi_render.py::test_roi_outside_pixels_are_byte_identical_after_success",
     "alpha_containment_at_least_0_995": "tests/test_layout_solver.py::test_solver_is_deterministic_and_accepts_only_contained_alpha",
-    "atomic_rollback": "tests/test_roi_render.py::test_atomic_render_exception_preserves_original_text_and_entire_page",
-    "visual_report_and_blind_sheet": "tests/golden/test_typography_golden.py"
+    "atomic_rollback": "tests/test_roi_render.py::test_atomic_render_exception_preserves_original_text_and_entire_page + test_empty_layout_or_render_alpha_never_commits_inpaint",
+    "visual_report_and_blind_sheet": "tests/golden/test_typography_golden.py including duplicate/unknown review rejection"
   },
   "test_result": {
-    "pytest": "214 passed, 1 skipped, 1 deselected",
+    "pytest": "351 passed, 1 skipped, 1 deselected",
     "ruff": "passed",
-    "compileall": "passed"
+    "poetry_check_lock": "passed"
   },
   "blockers": [
     "doctor cannot validate RAQM/HarfBuzz/FriBiDi in the current Pillow build",

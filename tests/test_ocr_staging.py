@@ -18,11 +18,19 @@ from manga_translator.stages.ocr import (
 from manga_translator.storage import ArtifactStore, JobStore
 
 
-def _result(text: str, score: float = -0.05, margin: float = 0.9) -> OCRBatchResult:
+def _result(
+    text: str,
+    score: float = -0.05,
+    margin: float = 0.9,
+    *,
+    truncated: bool = False,
+) -> OCRBatchResult:
     return OCRBatchResult(
         text=text,
         sequence=text,
-        metrics=GenerationTokenMetrics((3, 2), (score, score), score, 0.1, margin, False),
+        metrics=GenerationTokenMetrics(
+            (3, 2), (score, score), score, 0.1, margin, truncated
+        ),
         model_id="fake/model",
         model_revision="abc1234",
         generation_config={"max_length": 20},
@@ -136,6 +144,36 @@ def test_durable_view_cache_survives_runtime_and_stager_restart(tmp_path: Path) 
     assert all(view.cache_hit for view in staged[0].views)
 
 
+def test_stager_deduplicates_same_page_cache_misses(tmp_path: Path) -> None:
+    runtime = FakeRuntime()
+    with JobStore(tmp_path / "jobs.sqlite3", ArtifactStore(tmp_path / "artifacts")) as store:
+        stager = PageOCRStager(
+            runtime, DurableOCRViewCache(store), preprocess_version="v1", batch_size=4
+        )
+        staged = stager.run_page(
+            (RegionOCRViews("first", _image(7)), RegionOCRViews("second", _image(7)))
+        )
+
+    assert runtime.calls == [[7]]
+    assert [item.selected.text for item in staged] == ["7", "7"]
+
+
+def test_cache_replaces_the_single_reference_for_a_key(tmp_path: Path) -> None:
+    with JobStore(tmp_path / "jobs.sqlite3", ArtifactStore(tmp_path / "artifacts")) as store:
+        cache = DurableOCRViewCache(store)
+        cache.put("key", _result("first"))
+        cache.put("key", _result("second"))
+        references = store.connection.execute(
+            """
+            SELECT COUNT(*) FROM artifact_references
+            WHERE owner_type='ocr_view_cache' AND owner_id='key'
+            """
+        ).fetchone()[0]
+
+        assert references == 1
+        assert cache.get("key").text == "second"
+
+
 def test_same_model_views_do_not_inflate_provisional_score_as_independent_votes(
     tmp_path: Path,
 ) -> None:
@@ -159,6 +197,7 @@ def test_view_cache_key_covers_mask_revision_preprocess_view_and_generation() ->
     image = _image(1)
     base = {
         "mask": np.zeros((8, 8), dtype=np.uint8),
+        "model_id": "fake/model",
         "model_revision": "abc1234",
         "preprocess_version": "v1",
         "view_type": "raw",
@@ -167,12 +206,43 @@ def test_view_cache_key_covers_mask_revision_preprocess_view_and_generation() ->
     original = ocr_view_cache_key(image, **base)
     variants = [
         {**base, "mask": np.ones((8, 8), dtype=np.uint8)},
+        {**base, "model_id": "other/model"},
         {**base, "model_revision": "def5678"},
         {**base, "preprocess_version": "v2"},
         {**base, "view_type": "mask"},
         {**base, "generation_config": {"max_length": 21}},
     ]
     assert all(ocr_view_cache_key(image, **variant) != original for variant in variants)
+
+
+def test_disagreement_and_truncation_trigger_additional_views(tmp_path: Path) -> None:
+    outputs = {
+        10: _result("甲", score=-0.2, margin=0.8),
+        11: _result("乙", score=-0.2, margin=0.8),
+        12: _result("最終"),
+        20: _result("未完", truncated=True),
+        21: _result("完整"),
+    }
+    runtime = FakeRuntime(outputs)
+    with JobStore(tmp_path / "jobs.sqlite3", ArtifactStore(tmp_path / "artifacts")) as store:
+        stager = PageOCRStager(
+            runtime, DurableOCRViewCache(store), preprocess_version="v1", batch_size=4
+        )
+        staged = stager.run_page(
+            (
+                RegionOCRViews(
+                    "disagrees",
+                    _image(10),
+                    mask_isolated=_image(11),
+                    constituents=(_image(12),),
+                ),
+                RegionOCRViews("truncated", _image(20), contrast=_image(21)),
+            )
+        )
+
+    assert runtime.calls == [[10, 20, 11], [21], [12]]
+    assert staged[0].selected.text == "最終"
+    assert [view.view_type for view in staged[1].views] == ["raw", "contrast"]
 
 
 def test_default_preprocess_avoids_redundant_lanczos_upscale(monkeypatch) -> None:

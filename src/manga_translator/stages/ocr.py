@@ -60,6 +60,7 @@ def ocr_view_cache_key(
     image: np.ndarray,
     *,
     mask: np.ndarray | None,
+    model_id: str,
     model_revision: str,
     preprocess_version: str,
     view_type: str,
@@ -71,13 +72,16 @@ def ocr_view_cache_key(
         "shape": contiguous.shape,
         "dtype": str(contiguous.dtype),
         "mask_sha256": hashlib.sha256(mask_bytes).hexdigest(),
+        "model_id": model_id,
         "model_revision": model_revision,
         "preprocess_version": preprocess_version,
         "view_type": view_type,
         "generation_config": generation_config,
     }
     digest = hashlib.sha256(
-        json.dumps(metadata, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            metadata, allow_nan=False, sort_keys=True, separators=(",", ":")
+        ).encode()
     )
     digest.update(memoryview(contiguous))
     return digest.hexdigest()
@@ -108,14 +112,26 @@ class DurableOCRViewCache:
 
     def put(self, key: str, result: OCRBatchResult) -> None:
         payload = json.dumps(
-            asdict(result), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            asdict(result),
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         ).encode()
-        self.store.store_artifact(
+        artifact = self.store.store_artifact(
             payload,
             media_type="application/vnd.manga-translator.ocr-view+json",
             owner_type="ocr_view_cache",
             owner_id=key,
         )
+        with self.store.transaction() as connection:
+            connection.execute(
+                """
+                DELETE FROM artifact_references
+                WHERE owner_type='ocr_view_cache' AND owner_id=? AND sha256<>?
+                """,
+                (key, artifact.sha256),
+            )
 
 
 def _model_score(result: OCRBatchResult) -> float:
@@ -125,7 +141,10 @@ def _model_score(result: OCRBatchResult) -> float:
     likelihood = math.exp(max(-20.0, min(0.0, metrics.length_normalized_transition_logprob)))
     margin = metrics.mean_margin or 0.0
     entropy_penalty = min(1.0, (metrics.mean_entropy or 0.0) / 8.0)
-    return float(max(0.0, min(1.0, 0.72 * likelihood + 0.28 * margin - 0.12 * entropy_penalty)))
+    score = max(0.0, min(1.0, 0.72 * likelihood + 0.28 * margin - 0.12 * entropy_penalty))
+    if metrics.truncated:
+        score *= 0.5
+    return float(score)
 
 
 def _text_disagreement(results: list[ViewOCRResult]) -> float:
@@ -147,6 +166,12 @@ class PageOCRStager:
         batch_size: int,
         provisional_threshold: float = 0.62,
     ) -> None:
+        if not preprocess_version.strip():
+            raise ValueError("preprocess_version must not be empty")
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        if not 0.0 <= provisional_threshold <= 1.0:
+            raise ValueError("provisional_threshold must be between zero and one")
         self.runtime = runtime
         self.cache = cache
         self.preprocess_version = preprocess_version
@@ -158,11 +183,12 @@ class PageOCRStager:
         requests: list[tuple[str, str, np.ndarray, np.ndarray | None]],
     ) -> list[ViewOCRResult]:
         resolved: list[ViewOCRResult | None] = [None] * len(requests)
-        misses: list[tuple[int, str, str, np.ndarray, str]] = []
+        misses: dict[str, tuple[np.ndarray, list[tuple[int, str, str]]]] = {}
         for index, (region_id, view_type, image, mask) in enumerate(requests):
             key = ocr_view_cache_key(
                 image,
                 mask=mask,
+                model_id=self.runtime.model_id,
                 model_revision=self.runtime.revision,
                 preprocess_version=self.preprocess_version,
                 view_type=view_type,
@@ -172,16 +198,20 @@ class PageOCRStager:
             if cached is not None:
                 resolved[index] = ViewOCRResult(region_id, view_type, cached, key, True)
             else:
-                misses.append((index, region_id, view_type, image, key))
+                if key not in misses:
+                    misses[key] = (image, [])
+                misses[key][1].append((index, region_id, view_type))
         if misses:
             generated = self.runtime.recognize_batch(
-                [_to_pil(item[3]) for item in misses], batch_size=self.batch_size
+                [_to_pil(image) for image, _destinations in misses.values()],
+                batch_size=self.batch_size,
             )
             if len(generated) != len(misses):
                 raise RuntimeError("staged OCR output count does not match requested views")
-            for (index, region_id, view_type, _image, key), result in zip(misses, generated):
+            for (key, (_image, destinations)), result in zip(misses.items(), generated):
                 self.cache.put(key, result)
-                resolved[index] = ViewOCRResult(region_id, view_type, result, key, False)
+                for index, region_id, view_type in destinations:
+                    resolved[index] = ViewOCRResult(region_id, view_type, result, key, False)
         if any(item is None for item in resolved):
             raise RuntimeError("staged OCR left unresolved view positions")
         return [item for item in resolved if item is not None]
@@ -194,6 +224,11 @@ class PageOCRStager:
         return grouped
 
     def run_page(self, regions: tuple[RegionOCRViews, ...]) -> tuple[StagedRegionOCR, ...]:
+        region_ids = tuple(region.region_id for region in regions)
+        if any(not region_id for region_id in region_ids):
+            raise ValueError("region_id must not be empty")
+        if len(set(region_ids)) != len(region_ids):
+            raise ValueError("region_id must be unique within a page")
         initial_requests = [
             (region.region_id, "raw", region.raw, region.mask) for region in regions
         ]
@@ -229,7 +264,13 @@ class PageOCRStager:
         for region in regions:
             candidates = grouped[region.region_id]
             score = max((_model_score(item.result) for item in candidates), default=0.0)
-            if region.region_id in uncertain and score < self.provisional_threshold:
+            disagreement = _text_disagreement(candidates)
+            still_uncertain = (
+                score < self.provisional_threshold
+                or disagreement > 0.0
+                or region.geometry_complex
+            )
+            if region.region_id in uncertain and still_uncertain:
                 fallback_requests.extend(
                     (region.region_id, f"constituent:{index}", image, None)
                     for index, image in enumerate(region.constituents)

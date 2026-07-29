@@ -1,7 +1,7 @@
 {
   "schema_version": "performance_manifest.v2",
   "profile": "v032_baseline",
-  "latest_run_id": "v032_baseline-20260729T082329Z-6c4354fa",
+  "latest_run_id": "v032_baseline-20260729T093439Z-30609ac4",
   "runs": [
     {
       "run_id": "v032_baseline-20260728T064929Z-e9b477fa",
@@ -35,6 +35,7 @@
         "corpus_changed",
         "source_changed",
         "dependency_environment_changed",
+        "hardware_changed",
         "artifacts_changed",
         "protocol_changed"
       ],
@@ -54,6 +55,7 @@
         "corpus_changed",
         "source_changed",
         "dependency_environment_changed",
+        "hardware_changed",
         "artifacts_changed",
         "protocol_changed"
       ],
@@ -72,6 +74,7 @@
       "stale_reasons": [
         "corpus_changed",
         "source_changed",
+        "hardware_changed",
         "artifacts_changed"
       ],
       "superseded_by": "v032_baseline-20260729T081432Z-5e070373"
@@ -88,7 +91,8 @@
       "compatibility": "historical_stale",
       "stale_reasons": [
         "corpus_changed",
-        "source_changed"
+        "source_changed",
+        "hardware_changed"
       ],
       "superseded_by": "v032_baseline-20260729T082329Z-6c4354fa"
     },
@@ -100,6 +104,22 @@
       "authoritative": false,
       "performance_claim_allowed": false,
       "real_status": "blocked",
+      "dependency_policy_compliant": true,
+      "compatibility": "historical_stale",
+      "stale_reasons": [
+        "source_changed",
+        "hardware_changed"
+      ],
+      "superseded_by": "v032_baseline-20260729T093439Z-30609ac4"
+    },
+    {
+      "run_id": "v032_baseline-20260729T093439Z-30609ac4",
+      "path": "benchmarks/performance/v032_baseline/runs/v032_baseline-20260729T093439Z-30609ac4.json",
+      "sha256": "10babd89d69672864a036f6123e38cd7783f55f6271d890005f7d9dcd511e8ca",
+      "measurement_kind": "full_pipeline",
+      "authoritative": true,
+      "performance_claim_allowed": true,
+      "real_status": "passed",
       "dependency_policy_compliant": true,
       "compatibility": "current"
     }

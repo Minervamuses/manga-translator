@@ -1,14 +1,14 @@
 {
   "schema_version": "detector_fp16_parity.v2",
   "status": "passed",
-  "run_id": "detector-parity-20260729T081524Z-2cf2c005",
-  "created_at": "2026-07-29T08:15:24.076257+00:00",
+  "run_id": "detector-parity-20260729T103332Z-65da100a",
+  "created_at": "2026-07-29T10:33:32.232241+00:00",
   "profile": "regression_v032",
   "required_pages": 5,
   "mock": false,
   "source": {
-    "commit": "f46dcda223e81b4b09c3ca40a4032784c07f07f6",
-    "tree": "cb9460e19e0039882900dc7833b0a6cd0e6d04eb"
+    "commit": "03515ae5a88bbb0549eb8109fbd640edc1e701e2",
+    "tree": "5a2e77526e432974d98370c4a7c1e1f15f8def33"
   },
   "corpus_sha256": "32c1893956a955ad628865849bdad725ee949ddf741c4a7ab59c60c2f90c7621",
   "model": {

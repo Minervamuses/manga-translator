@@ -44,6 +44,9 @@
     "verified_groups": 0,
     "required_groups": 30,
     "critical_regressions": [],
+    "duplicate_region_keys": [],
+    "unknown_region_keys": [],
+    "invalid_region_keys": [],
     "comparisons": {
       "readability": {
         "legacy_p50": 0.0,

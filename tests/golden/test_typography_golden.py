@@ -12,6 +12,7 @@ from manga_translator.benchmark.visual import (
     bootstrap_visual_v1,
     build_blind_review_sheet,
     build_visual_report,
+    resolve_blind_reviews,
     write_group_bundle,
 )
 
@@ -107,6 +108,33 @@ def test_blind_sheet_is_deterministic_and_hides_variant_identity() -> None:
     assert len(sheet["rows"]) == 30
     assert "new_variant" not in json.dumps(sheet)
     assert {row["new_variant"] for row in key["rows"]} == {"a", "b"}
+
+    for row in sheet["rows"]:
+        row["reviewer"] = "reviewer"
+        row["critical_regression"] = False
+        for criterion in REVIEW_CRITERIA:
+            row["criteria"][criterion] = {"a": 3, "b": 4}
+    resolved = resolve_blind_reviews(sheet, key)
+    by_blind_id = {row["blind_id"]: row for row in key["rows"]}
+    sorted_sheet = sorted(sheet["rows"], key=lambda row: row["blind_id"])
+    for sheet_row, review in zip(sorted_sheet, resolved):
+        new_variant = by_blind_id[sheet_row["blind_id"]]["new_variant"]
+        expected_new = 3.0 if new_variant == "a" else 4.0
+        assert review["ratings"]["new"]["readability"] == expected_new
+
+
+def test_manual_gate_rejects_duplicate_or_unknown_review_regions() -> None:
+    records = [_metrics(index) for index in range(30)]
+    reviews = _reviews(30)
+    duplicate = build_visual_report(records, reviews=[reviews[0]] * 30)
+    unknown_rows = _reviews(30)
+    unknown_rows[-1] = {**unknown_rows[-1], "region_key": "not-in-corpus"}
+    unknown = build_visual_report(records, reviews=unknown_rows)
+
+    assert duplicate["status"] == "blocked"
+    assert duplicate["manual_review"]["duplicate_region_keys"] == ["group-00"]
+    assert unknown["status"] == "blocked"
+    assert unknown["manual_review"]["unknown_region_keys"] == ["not-in-corpus"]
 
 
 def test_repository_visual_manifest_truthfully_records_current_blockers(tmp_path: Path) -> None:

@@ -85,9 +85,50 @@ def _distribution(records: list[VisualMetrics], field: str) -> dict[str, Any]:
     }
 
 
-def _manual_review_summary(reviews: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    rows = list(reviews)
-    verified = [row for row in rows if row.get("verified_by") and row.get("ratings")]
+def _manual_review_summary(
+    reviews: Iterable[Mapping[str, Any]],
+    *,
+    eligible_region_keys: frozenset[str],
+) -> dict[str, Any]:
+    seen: set[str] = set()
+    duplicate_keys: list[str] = []
+    unknown_keys: list[str] = []
+    invalid_keys: list[str] = []
+    verified: list[Mapping[str, Any]] = []
+    for row in reviews:
+        region_key = str(row.get("region_key", ""))
+        if not region_key:
+            invalid_keys.append(region_key)
+            continue
+        if region_key in seen:
+            duplicate_keys.append(region_key)
+            continue
+        seen.add(region_key)
+        if region_key not in eligible_region_keys:
+            unknown_keys.append(region_key)
+            continue
+        ratings = row.get("ratings")
+        if not row.get("verified_by") or not isinstance(ratings, Mapping):
+            continue
+        valid = isinstance(row.get("critical_regression"), bool)
+        for variant in ("legacy", "new"):
+            values = ratings.get(variant)
+            if not isinstance(values, Mapping):
+                valid = False
+                break
+            for criterion in REVIEW_CRITERIA:
+                rating = values.get(criterion)
+                if (
+                    isinstance(rating, bool)
+                    or not isinstance(rating, (int, float))
+                    or not 1 <= float(rating) <= 5
+                ):
+                    valid = False
+                    break
+        if valid:
+            verified.append(row)
+        else:
+            invalid_keys.append(region_key)
     critical = [row.get("region_key") for row in verified if row.get("critical_regression")]
     comparisons: dict[str, dict[str, float]] = {}
     for criterion in REVIEW_CRITERIA:
@@ -97,7 +138,12 @@ def _manual_review_summary(reviews: Iterable[Mapping[str, Any]]) -> dict[str, An
             "legacy_p50": statistics.median(legacy) if legacy else 0.0,
             "new_p50": statistics.median(new) if new else 0.0,
         }
-    complete = len(verified) >= 30
+    complete = (
+        len(verified) >= 30
+        and not duplicate_keys
+        and not unknown_keys
+        and not invalid_keys
+    )
     no_regression = all(
         comparisons[name]["new_p50"] >= comparisons[name]["legacy_p50"]
         for name in ("readability", "overall_preference")
@@ -107,8 +153,86 @@ def _manual_review_summary(reviews: Iterable[Mapping[str, Any]]) -> dict[str, An
         "verified_groups": len(verified),
         "required_groups": 30,
         "critical_regressions": critical,
+        "duplicate_region_keys": sorted(set(duplicate_keys)),
+        "unknown_region_keys": sorted(set(unknown_keys)),
+        "invalid_region_keys": sorted(set(invalid_keys)),
         "comparisons": comparisons,
     }
+
+
+def resolve_blind_reviews(
+    sheet: Mapping[str, Any],
+    key: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Resolve completed A/B ratings without exposing variant identity in the sheet."""
+
+    if sheet.get("schema_version") != "blind_review.v1":
+        raise ValueError("unsupported blind-review sheet schema")
+    if key.get("schema_version") != "blind_review_key.v1":
+        raise ValueError("unsupported blind-review key schema")
+    sheet_rows = sheet.get("rows")
+    key_rows = key.get("rows")
+    if not isinstance(sheet_rows, list) or not isinstance(key_rows, list):
+        raise TypeError("blind-review rows must be lists")
+
+    def unique_rows(rows: list[Any], label: str) -> dict[str, Mapping[str, Any]]:
+        result: dict[str, Mapping[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, Mapping) or not isinstance(row.get("blind_id"), str):
+                raise TypeError(f"{label} rows must contain string blind_id values")
+            blind_id = row["blind_id"]
+            if blind_id in result:
+                raise ValueError(f"duplicate blind_id in {label}: {blind_id}")
+            result[blind_id] = row
+        return result
+
+    sheets = unique_rows(sheet_rows, "sheet")
+    keys = unique_rows(key_rows, "key")
+    if set(sheets) != set(keys):
+        raise ValueError("blind-review sheet and key ID sets differ")
+
+    resolved: list[dict[str, Any]] = []
+    for blind_id in sorted(sheets):
+        row = sheets[blind_id]
+        new_variant = keys[blind_id].get("new_variant")
+        if new_variant not in {"a", "b"}:
+            raise ValueError(f"invalid new_variant for blind review {blind_id}")
+        legacy_variant = "b" if new_variant == "a" else "a"
+        reviewer = row.get("reviewer")
+        criteria = row.get("criteria")
+        critical = row.get("critical_regression")
+        output: dict[str, Any] = {
+            "region_key": row.get("region_key"),
+            "verified_by": None,
+            "critical_regression": critical,
+        }
+        if reviewer is None and critical is None:
+            resolved.append(output)
+            continue
+        if not isinstance(reviewer, str) or not reviewer.strip():
+            raise ValueError(f"blind review {blind_id} has an invalid reviewer")
+        if not isinstance(critical, bool) or not isinstance(criteria, Mapping):
+            raise TypeError(f"blind review {blind_id} is incomplete")
+        ratings = {"legacy": {}, "new": {}}
+        for criterion in REVIEW_CRITERIA:
+            values = criteria.get(criterion)
+            if not isinstance(values, Mapping):
+                raise TypeError(f"blind review {blind_id} is missing {criterion}")
+            for output_name, variant in (("legacy", legacy_variant), ("new", new_variant)):
+                rating = values.get(variant)
+                if (
+                    isinstance(rating, bool)
+                    or not isinstance(rating, (int, float))
+                    or not 1 <= float(rating) <= 5
+                ):
+                    raise ValueError(
+                        f"blind review {blind_id} has an invalid {criterion}/{variant} rating"
+                    )
+                ratings[output_name][criterion] = float(rating)
+        output["verified_by"] = reviewer.strip()
+        output["ratings"] = ratings
+        resolved.append(output)
+    return resolved
 
 
 def build_visual_report(
@@ -119,9 +243,13 @@ def build_visual_report(
 ) -> dict[str, Any]:
     rows = list(records)
     pages = {record.page_id for record in rows}
+    region_keys = [record.region_key for record in rows]
+    unique_region_keys = len(region_keys) == len(set(region_keys))
     hard = {
         "five_page_corpus": len(pages) >= required_pages,
-        "mapping_100_percent": bool(rows) and all(record.mapping_complete for record in rows),
+        "mapping_100_percent": bool(rows)
+        and unique_region_keys
+        and all(record.mapping_complete for record in rows),
         "missing_glyphs_zero": bool(rows) and all(record.missing_glyphs == 0 for record in rows),
         "clreq_hard_violations_zero": bool(rows)
         and all(record.clreq_hard_violations == 0 for record in rows),
@@ -132,7 +260,10 @@ def build_visual_report(
         "alpha_containment_at_least_0_995": bool(rows)
         and all(record.alpha_containment >= 0.995 for record in rows),
     }
-    manual = _manual_review_summary(reviews)
+    manual = _manual_review_summary(
+        reviews,
+        eligible_region_keys=frozenset(region_keys),
+    )
     automated_status = "passed" if all(hard.values()) else "failed"
     return {
         "schema_version": "visual_report.v1",

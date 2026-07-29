@@ -22,6 +22,11 @@ PRIMARY = str((ROOT / "fonts/Iansui-Regular.ttf").resolve())
 FALLBACK = str((ROOT / "fonts/NotoSansCJKtc-Regular.otf").resolve())
 
 
+def test_raqm_is_default_and_legacy_requires_explicit_selection() -> None:
+    assert TypesettingConfig().engine == "raqm"
+    assert TypesettingConfig(engine="legacy").engine == "legacy"
+
+
 def test_missing_glyph_is_not_mistaken_for_font_notdef_box() -> None:
     assert _has_glyph(PRIMARY, 28, "中")
     assert not _has_glyph(PRIMARY, 28, "\u0378")

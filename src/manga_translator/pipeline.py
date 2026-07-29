@@ -68,6 +68,7 @@ from .image_io import (
     write_image,
     write_image_or_raise,
 )
+from .inpainter import inpaint_regions
 from .manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from .ocr import (
     OCRInitializationError,
@@ -120,6 +121,7 @@ from .typesetter import (
     TextLayoutPlan,
     layout_plan_block_bbox,
     plan_text_layout,
+    render_text_into_group,
 )
 from .typography.fonts import FontResolver, FontRole
 from .typography.layout import (
@@ -1644,6 +1646,11 @@ def _group_failure_issues(
     return issues
 
 
+def _first_blocking_group_issue(issues: list[ResultIssue]) -> ResultIssue | None:
+    non_blocking = {"layout_rejected", "layout_collision_rejected"}
+    return next((issue for issue in issues if issue.code not in non_blocking), None)
+
+
 def _read_stage_state(
     store: JobStore,
     inputs: StageInputs,
@@ -2299,17 +2306,28 @@ def _build_pipeline_stage_runners(
         groups = _merge_translation_duplicates(groups, config.postprocess)
         groups = _resolve_render_collisions(groups, regions_by_id, config.postprocess)
         groups = _refresh_group_order(groups, regions_by_id, config.postprocess)
+        layout_engine = config.typesetting.engine
         with profile_span("layout", group_count=len(groups)):
-            plans = _preflight_raqm_layout_plans(
-                original,
-                groups,
-                regions_by_id,
-                config,
-                safe_regions,
-                store,
-            )
+            if layout_engine == "raqm":
+                plans = _preflight_raqm_layout_plans(
+                    original,
+                    groups,
+                    regions_by_id,
+                    config,
+                    safe_regions,
+                    store,
+                )
+                plan_bundle = encode_layout_bundle(plans)
+            else:
+                legacy_plans = _preflight_layout_plans(
+                    original,
+                    groups,
+                    regions_by_id,
+                    config,
+                )
+                plans = legacy_plans
+                plan_bundle = _layout_plan_bundle(legacy_plans)
         _record_mapping_layout_plans(groups)
-        plan_bundle = encode_layout_bundle(plans)
         plan_reference = ArtifactRef(
             sha256=hashlib.sha256(plan_bundle).hexdigest(),
             media_type=LAYOUT_PLANS_MEDIA_TYPE,
@@ -2330,6 +2348,7 @@ def _build_pipeline_stage_runners(
                 "style_fingerprints": style.extras.get("style_fingerprints", {}),
                 "safe_regions": safe_regions,
                 "layout_plan_artifact": plan_reference.model_dump(mode="json"),
+                "typesetting_engine": layout_engine,
                 "mapping_snapshots": _merge_mapping_snapshot_payloads(
                     state.extras.get("mapping_snapshots"), groups
                 ),
@@ -2362,95 +2381,134 @@ def _build_pipeline_stage_runners(
         layout_reference = ArtifactRef.model_validate(layout_reference_payload)
         if layout_reference not in inputs.upstream[StageName.LAYOUT]:
             raise ValueError("layout plan is not a declared layout-stage artifact")
-        plans = decode_layout_bundle(
-            store.artifacts.read_bytes(layout_reference.sha256)
-        )
-        safe_regions = state.extras.get("safe_regions")
-        if not isinstance(safe_regions, dict):
-            raise TypeError("render stage is missing durable safe-region artifacts")
-        styles = _style_fingerprints_from_extras(state.extras)
-        requests: list[AtomicRoiRequest] = []
-        request_groups: list[TextGroup] = []
-        for group in groups:
-            if not (
-                group.translation_valid
-                and group.translation.strip()
-                and group.id in plans
-            ):
-                continue
-            entry = _safe_region_entry(group, safe_regions)
-            if not isinstance(entry, dict):
-                _reject_layout(group, "missing_safe_region_at_render")
-                continue
-            roi_value = entry.get("roi_bbox")
-            artifact_value = entry.get("artifact")
-            if (
-                not isinstance(roi_value, list)
-                or len(roi_value) != 4
-                or not isinstance(artifact_value, dict)
-            ):
-                _reject_layout(group, "invalid_safe_region_at_render")
-                continue
-            roi_bbox = tuple(int(value) for value in roi_value)
-            reference = ArtifactRef.model_validate(artifact_value)
-            safe = decode_safe_region_artifacts(
-                store.artifacts.read_bytes(reference.sha256)
-            )
-            inpaint_mask = np.zeros((roi_bbox[3], roi_bbox[2]), dtype=np.uint8)
-            _paste_group_mask(inpaint_mask, group, roi_bbox)
-            if not np.any(inpaint_mask):
-                _reject_layout(group, "empty_inpaint_mask")
-                continue
-            style = RenderStyle(fill=(0, 0, 0, 255))
-            extracted = next(
-                (
-                    styles[region_id]
-                    for region_id in group.region_ids
-                    if region_id in styles
-                ),
-                None,
-            )
-            if extracted is not None:
-                style = conservative_render_style(
-                    extracted,
-                    maximum_stroke_width=max(2, int(config.typesetting.outline_width)),
-                )
-            background = extracted.background if extracted is not None else None
-            background_rgb = (
-                background.value
-                if background is not None
-                and background.status == "known"
-                and background.value is not None
-                and background.confidence >= 0.65
-                else None
-            )
-            style = fit_render_style(plans[group.id], safe, style)
-            requests.append(
-                AtomicRoiRequest(
-                    roi_bbox=roi_bbox,
-                    inpaint_mask=inpaint_mask,
-                    safe_region=safe,
-                    layout=plans[group.id],
-                    style=style,
-                    source_text_bbox=text_block_bbox(inpaint_mask),
-                    background_rgb=background_rgb,
-                )
-            )
-            request_groups.append(group)
-        with profile_span("inpaint", roi_count=len(requests)):
-            render_result = render_page_atomic(
-                original,
-                tuple(requests),
-                config.inpainting,
-            )
-        rendered = render_result.image
-        inpainted = rendered
         rendered_group_ids: list[str] = []
-        for group, outcome in zip(request_groups, render_result.outcomes, strict=True):
-            if outcome.committed:
+        layout_engine = state.extras.get("typesetting_engine")
+        if layout_engine == "legacy":
+            legacy_plans = _decode_layout_plan_bundle(
+                store.artifacts.read_bytes(layout_reference.sha256)
+            )
+            regions_by_id = {region.id: region for region in detection.regions_post}
+            with profile_span("inpaint"):
+                inpainted = inpaint_regions(original, detection, config.inpainting)
+            rendered = inpainted.copy()
+            for group in groups:
+                if not (
+                    group.translation_valid
+                    and group.translation.strip()
+                    and group.id in legacy_plans
+                ):
+                    continue
+                with profile_span("render", group_id=group.id):
+                    rendered = render_text_into_group(
+                        image=rendered,
+                        group=group,
+                        regions_by_id=regions_by_id,
+                        text=group.translation,
+                        font_path=config.paths.font,
+                        cfg=config.typesetting,
+                        fallback_font_path=config.paths.font_fallback,
+                        layout_plan=legacy_plans[group.id],
+                        layout_reference_image=original,
+                    )
                 rendered_group_ids.append(group.id)
-            else:
-                _reject_layout(group, outcome.reason)
+        elif layout_engine == "raqm":
+            plans = decode_layout_bundle(
+                store.artifacts.read_bytes(layout_reference.sha256)
+            )
+            safe_regions = state.extras.get("safe_regions")
+            if not isinstance(safe_regions, dict):
+                raise TypeError("render stage is missing durable safe-region artifacts")
+            styles = _style_fingerprints_from_extras(state.extras)
+            requests: list[AtomicRoiRequest] = []
+            request_groups: list[TextGroup] = []
+            for group in groups:
+                if not (
+                    group.translation_valid
+                    and group.translation.strip()
+                    and group.id in plans
+                ):
+                    continue
+                entry = _safe_region_entry(group, safe_regions)
+                if not isinstance(entry, dict):
+                    _reject_layout(group, "missing_safe_region_at_render")
+                    continue
+                roi_value = entry.get("roi_bbox")
+                artifact_value = entry.get("artifact")
+                if (
+                    not isinstance(roi_value, list)
+                    or len(roi_value) != 4
+                    or not isinstance(artifact_value, dict)
+                ):
+                    _reject_layout(group, "invalid_safe_region_at_render")
+                    continue
+                roi_bbox = tuple(int(value) for value in roi_value)
+                safe_reference = ArtifactRef.model_validate(artifact_value)
+                safe = decode_safe_region_artifacts(
+                    store.artifacts.read_bytes(safe_reference.sha256)
+                )
+                inpaint_mask = np.zeros((roi_bbox[3], roi_bbox[2]), dtype=np.uint8)
+                _paste_group_mask(inpaint_mask, group, roi_bbox)
+                if not np.any(inpaint_mask):
+                    _reject_layout(group, "empty_inpaint_mask")
+                    continue
+                style = RenderStyle(fill=(0, 0, 0, 255))
+                extracted = next(
+                    (
+                        styles[region_id]
+                        for region_id in group.region_ids
+                        if region_id in styles
+                    ),
+                    None,
+                )
+                if extracted is not None:
+                    style = conservative_render_style(
+                        extracted,
+                        maximum_stroke_width=max(
+                            2,
+                            int(config.typesetting.outline_width),
+                        ),
+                    )
+                background = extracted.background if extracted is not None else None
+                background_rgb = (
+                    background.value
+                    if background is not None
+                    and background.status == "known"
+                    and background.value is not None
+                    and background.confidence >= 0.65
+                    else None
+                )
+                style = fit_render_style(plans[group.id], safe, style)
+                requests.append(
+                    AtomicRoiRequest(
+                        roi_bbox=roi_bbox,
+                        inpaint_mask=inpaint_mask,
+                        safe_region=safe,
+                        layout=plans[group.id],
+                        style=style,
+                        source_text_bbox=text_block_bbox(inpaint_mask),
+                        background_rgb=background_rgb,
+                    )
+                )
+                request_groups.append(group)
+            with profile_span("inpaint", roi_count=len(requests)):
+                render_result = render_page_atomic(
+                    original,
+                    tuple(requests),
+                    config.inpainting,
+                )
+            rendered = render_result.image
+            inpainted = rendered
+            for group, outcome in zip(
+                request_groups,
+                render_result.outcomes,
+                strict=True,
+            ):
+                if outcome.committed:
+                    rendered_group_ids.append(group.id)
+                else:
+                    _reject_layout(group, outcome.reason)
+        else:
+            raise ValueError(f"unsupported typesetting engine: {layout_engine!r}")
         inpainted_raw = _png_payload(inpainted)
         rendered_raw = _png_payload(rendered)
         rendered_sha256 = hashlib.sha256(rendered_raw).hexdigest()
@@ -2599,7 +2657,7 @@ def _page_result_from_stage_outcomes(
         groups,
         outcomes[StageName.SOURCE].outputs[0].sha256,
     )
-    blocking = group_issues[0] if group_issues else None
+    blocking = _first_blocking_group_issue(group_issues)
     page_id = outcomes[StageName.SOURCE].outputs[0].sha256
     set_page_profile_metrics(
         page_id,

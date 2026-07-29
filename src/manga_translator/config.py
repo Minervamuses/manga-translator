@@ -153,6 +153,7 @@ class OCRConfig(BaseModel):
 
 
 class TypesettingConfig(BaseModel):
+    engine: Literal["raqm", "legacy"] = "raqm"
     direction: Literal["vertical", "horizontal", "auto"] = "auto"
     font_size_min: int = Field(default=10, ge=4, le=300)
     # 80 px 會直接把 2K/4K 漫畫原本約 90–130 px 的字壓小。此值只是絕對

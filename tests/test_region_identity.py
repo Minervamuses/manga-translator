@@ -286,6 +286,31 @@ def test_merge_and_split_lineage_preserve_ancestors() -> None:
     assert len(split.revisions) == 5
 
 
+def test_exact_revision_takes_precedence_over_overlapping_lineage() -> None:
+    ids = _ids()
+    roots = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint=DETECTOR,
+        observations=[_observation(10.0), _observation(15.0)],
+        id_factory=_factory(ids),
+    )
+
+    repeated = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint=DETECTOR,
+        observations=[_observation(10.0)],
+        previous=_document(roots),
+        id_factory=_factory(ids),
+    )
+
+    assert repeated.current_identities[0].region_id == roots.current_identities[0].region_id
+    assert repeated.current_identities[0].lineage == roots.current_identities[0].lineage
+    assert repeated.current_identities[0].region_id not in (
+        repeated.current_identities[0].lineage.parents
+    )
+    _document(repeated)
+
+
 def test_request_local_ids_are_not_part_of_revision_identity() -> None:
     observation = _observation(10.0)
     first = revision_id_for(

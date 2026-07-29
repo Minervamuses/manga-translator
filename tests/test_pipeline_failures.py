@@ -407,6 +407,33 @@ def test_group_failures_have_typed_issues(status, issue_code, stage) -> None:
     }
 
 
+def test_layout_rejection_preserves_original_without_blocking_page() -> None:
+    layout_group = TextGroup(
+        id="g-layout",
+        region_ids=["r-layout"],
+        bbox=(0, 0, 10, 10),
+        vertical=True,
+        status="layout_rejected",
+        skip_reason="LayoutOverflow:shaping_failed",
+    )
+    ocr_group = TextGroup(
+        id="g-ocr",
+        region_ids=["r-ocr"],
+        bbox=(0, 0, 10, 10),
+        vertical=True,
+        status="ocr_failed",
+        skip_reason="OCR failed",
+    )
+
+    layout_issues = pipeline_module._group_failure_issues([layout_group], "page-id")
+    mixed_issues = pipeline_module._group_failure_issues(
+        [layout_group, ocr_group], "page-id"
+    )
+
+    assert pipeline_module._first_blocking_group_issue(layout_issues) is None
+    assert pipeline_module._first_blocking_group_issue(mixed_issues).code == "ocr_group_failed"
+
+
 @pytest.mark.parametrize("status", ["ocr_rejected", "render_collision_rejected", "ready"])
 def test_expected_group_filtering_does_not_create_failure_issue(status) -> None:
     group = TextGroup(

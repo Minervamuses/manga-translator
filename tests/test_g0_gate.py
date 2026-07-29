@@ -5,6 +5,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR_PATH = ROOT / "benchmarks" / "gates" / "validate_g0.py"
 SPEC = importlib.util.spec_from_file_location("validate_g0", VALIDATOR_PATH)
@@ -24,6 +26,7 @@ def _payloads():
     return gate, parity, performance
 
 
+@pytest.mark.skip(reason="plan.md cancels G0; checked-in evidence is historical only")
 def test_checked_in_g0_gate_locks_a_valid_historical_baseline() -> None:
     assert VALIDATOR.validate_g0(ROOT) == {"gate": "G0", "status": "passed", "errors": []}
 

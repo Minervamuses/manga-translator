@@ -121,6 +121,8 @@ ocr:
 
 # 排版設定
 typesetting:
+  # 預設使用已核准的 RAQM renderer；只有明確 rollback 時才設為 "legacy"。
+  engine: "raqm"
   # 文字方向: "vertical" | "horizontal" | "auto"
   # auto = 優先使用 detector 的 vertical 資訊
   direction: "auto"

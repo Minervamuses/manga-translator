@@ -34,6 +34,7 @@ from manga_translator.stages.render import (
 from manga_translator.stages.state import decode_pipeline_state
 from manga_translator.storage import ArtifactStore, JobStore
 from manga_translator.translator import TranslationValidation
+from manga_translator.typesetter import TextLayoutPlan
 from manga_translator.typography.fonts import FontRole
 from manga_translator.typography.layout import (
     AcceptedLayout,
@@ -356,6 +357,64 @@ def test_default_batch_and_single_page_entrypoints_persist_page_documents(
     ) as store:
         assert store.load_page_document(job_id="default", page_id=page_id) is not None
         assert store.load_page_document(job_id="single", page_id=page_id) is not None
+
+
+def test_explicit_legacy_typesetting_engine_uses_rollback_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = _config(tmp_path)
+    config.typesetting.engine = "legacy"
+    _source(config)
+    calls, _provider_payloads = _install_component_fakes(monkeypatch, config)
+
+    def legacy_layout(_original, groups, _regions, _config):
+        calls["legacy_layout"] += 1
+        return {
+            group.id: TextLayoutPlan(
+                bbox=group.bbox,
+                direction="vertical",
+                font_size=12,
+                chunks=(group.translation,),
+                primary_step=12.0,
+                secondary_step=12.0,
+                center_x=group.w / 2.0,
+                center_y=group.h / 2.0,
+                block_width=float(group.w),
+                block_height=float(group.h),
+            )
+            for group in groups
+            if group.translation_valid and group.translation
+        }
+
+    def legacy_inpaint(original, _detection, _config):
+        calls["legacy_inpaint"] += 1
+        return original.copy()
+
+    def legacy_render(*, image, **_kwargs):
+        calls["legacy_render"] += 1
+        rendered = image.copy()
+        rendered[0, 0] = (0, 0, 0)
+        return rendered
+
+    def unexpected_raqm(*_args, **_kwargs):
+        raise AssertionError("RAQM path must not run for an explicit legacy rollback")
+
+    monkeypatch.setattr(pipeline_module, "_preflight_layout_plans", legacy_layout)
+    monkeypatch.setattr(pipeline_module, "inpaint_regions", legacy_inpaint)
+    monkeypatch.setattr(pipeline_module, "render_text_into_group", legacy_render)
+    monkeypatch.setattr(
+        pipeline_module,
+        "_preflight_raqm_layout_plans",
+        unexpected_raqm,
+    )
+
+    batch = pipeline_module.run_pipeline(config)
+
+    assert batch.status == "succeeded"
+    assert calls["legacy_layout"] == 1
+    assert calls["legacy_inpaint"] == 1
+    assert calls["legacy_render"] == 1
 
 
 def test_region_mask_artifacts_require_canonical_png_and_bbox_dimensions(

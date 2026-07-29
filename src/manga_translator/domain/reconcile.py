@@ -324,11 +324,14 @@ def reconcile_regions(
     current_revisions: list[RegionRevision] = []
     issues: list[Issue] = []
     for index, (observation, revision_id) in enumerate(zip(observations, revision_ids)):
-        lineage_kind, lineage_indexes = _lineage_kind(
-            index,
-            overlap_rows,
-            threshold=config.lineage_overlap_threshold,
-        )
+        if revision_id in exact:
+            lineage_kind, lineage_indexes = None, ()
+        else:
+            lineage_kind, lineage_indexes = _lineage_kind(
+                index,
+                overlap_rows,
+                threshold=config.lineage_overlap_threshold,
+            )
         previous_index = proposed.get(index) if lineage_kind is None else None
         if previous_index is not None:
             region_id = previous_revisions[previous_index].region_id

@@ -1,6 +1,28 @@
 {
-  "schema_version": "detector_fp16_parity.v1",
+  "schema_version": "detector_fp16_parity.v2",
+  "status": "passed",
+  "run_id": "detector-parity-20260729T080618Z-3542ee4f",
+  "created_at": "2026-07-29T08:06:18.262363+00:00",
+  "profile": "regression_v032",
   "required_pages": 5,
+  "mock": false,
+  "source": {
+    "commit": "8678603dcc308e5086029e7da5b2e9d1c6ad11a5",
+    "tree": "8f3ef3858835a051f500d9fdaec8313c1801fa5c"
+  },
+  "corpus_sha256": "32c1893956a955ad628865849bdad725ee949ddf741c4a7ab59c60c2f90c7621",
+  "model": {
+    "path": "models/comictextdetector.pt",
+    "sha256": "1f90fa60aeeb1eb82e2ac1167a66bf139a8a61b8780acd351ead55268540cccb"
+  },
+  "config_sha256": "664c9b2d6d574ef66882e5799336ffe3a0d33ec8c4e49d4322b323e70ee9b215",
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Linux-6.6.87.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "torch": "2.7.1+cu128",
+    "cuda_runtime": "12.8",
+    "device": "NVIDIA GeForce RTX 5070 Ti Laptop GPU"
+  },
   "thresholds": {
     "box_count_ratio_min": 0.9,
     "box_mean_iou_min": 0.85,
@@ -8,5 +30,69 @@
     "mask_iou_min": 0.9,
     "small_text_recall_min": 0.9,
     "small_text_max_area_ratio": 0.0025
-  }
+  },
+  "checks": {
+    "box_count_ratio": true,
+    "box_mean_iou": true,
+    "matched_score_mae": true,
+    "mask_iou": true,
+    "small_text_recall": true
+  },
+  "metrics": {
+    "box_count_ratio": 1.0,
+    "box_mean_iou": 0.9927363914963405,
+    "matched_score_mae": 0.0,
+    "mask_iou": 0.99851581567212,
+    "small_text_recall": 1.0,
+    "fp32_box_count": 117,
+    "fp16_box_count": 117,
+    "small_text_count": 49
+  },
+  "pages": [
+    {
+      "source": "0188_ive_hwa002.jpg",
+      "source_sha256": "5e79409955a1deea373ce94ea37c214e80abe8839382683834dd414de6bf37e8",
+      "fp32_boxes": 40,
+      "fp16_boxes": 40,
+      "box_mean_iou": 0.9845450692708091,
+      "matched_score_mae": 0.0,
+      "mask_iou": 0.9932380893479291
+    },
+    {
+      "source": "0211_t_11takamatic006.jpg",
+      "source_sha256": "01b5cbea3c237e6fd5eafb35e9874ddadfda88aaa33cdfced8bd3b881de957fe",
+      "fp32_boxes": 16,
+      "fp16_boxes": 16,
+      "box_mean_iou": 0.9934607273141816,
+      "matched_score_mae": 0.0,
+      "mask_iou": 0.9998193097632958
+    },
+    {
+      "source": "__#Uf008_#Ueff9#Ue7cc (3).jpg",
+      "source_sha256": "d6a2c70d9472062b7f31b9443362b8e799d5ff471bd9db1b66a38998d744385f",
+      "fp32_boxes": 20,
+      "fp16_boxes": 20,
+      "box_mean_iou": 0.9984744381041109,
+      "matched_score_mae": 0.0,
+      "mask_iou": 1.0
+    },
+    {
+      "source": "__#Uf008_#Ueff9#Ue7cc (4).jpg",
+      "source_sha256": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+      "fp32_boxes": 17,
+      "fp16_boxes": 17,
+      "box_mean_iou": 0.9964327528040554,
+      "matched_score_mae": 0.0,
+      "mask_iou": 0.9995276874204877
+    },
+    {
+      "source": "__#Uf008_#Ueff9#Ue7cc (5).jpg",
+      "source_sha256": "0b9dc8fadf8e6ec62a35b75a187855deeb749564b7f5de7e96d8ac4141e31de5",
+      "fp32_boxes": 24,
+      "fp16_boxes": 24,
+      "box_mean_iou": 0.9985057432275598,
+      "matched_score_mae": 0.0,
+      "mask_iou": 0.9999939918288873
+    }
+  ]
 }

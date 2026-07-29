@@ -24,7 +24,7 @@ def _payloads():
     return gate, parity, performance
 
 
-def test_checked_in_g0_gate_is_current_and_passed() -> None:
+def test_checked_in_g0_gate_locks_a_valid_historical_baseline() -> None:
     assert VALIDATOR.validate_g0(ROOT) == {"gate": "G0", "status": "passed", "errors": []}
 
 

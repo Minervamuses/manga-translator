@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import subprocess
 import sys
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,6 @@ from manga_translator.benchmark.performance import (
     REQUIRED_STAGES,
     _load_corpus,
     _redacted_config_artifact,
-    _source_fingerprint,
 )
 from manga_translator.config import AppConfig
 
@@ -34,6 +35,70 @@ def _canonical_sha256(value: Any) -> str:
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode()
     return hashlib.sha256(raw).hexdigest()
+
+
+def _committed_source_fingerprint(
+    root: Path, commit: str, recorded: dict[str, Any]
+) -> str | None:
+    inputs = recorded.get("inputs")
+    if not isinstance(inputs, list) or not all(isinstance(item, str) for item in inputs):
+        return None
+    return _committed_source_fingerprint_cached(
+        str(root.resolve()), commit, tuple(inputs)
+    )
+
+
+@lru_cache(maxsize=8)
+def _committed_source_fingerprint_cached(
+    root_text: str, commit: str, inputs: tuple[str, ...]
+) -> str | None:
+    root = Path(root_text)
+    try:
+        listed = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", commit, "--", *inputs],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.splitlines()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    records: list[dict[str, Any]] = []
+    for relative in sorted(set(listed)):
+        path = Path(relative)
+        if "__pycache__" in path.parts or path.suffix.lower() in {
+            ".pyc",
+            ".pyo",
+            ".tmp",
+        }:
+            continue
+        try:
+            raw = subprocess.run(
+                ["git", "show", f"{commit}:{relative}"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                timeout=10,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        records.append(
+            {
+                "path": path.as_posix(),
+                "size_bytes": len(raw),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            }
+        )
+    digest = hashlib.sha256()
+    for record in records:
+        digest.update(str(record["path"]).encode())
+        digest.update(b"\0")
+        digest.update(str(record["size_bytes"]).encode())
+        digest.update(b"\0")
+        digest.update(str(record["sha256"]).encode())
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -278,9 +343,14 @@ def _performance_errors(
     ):
         errors.append("performance: worst-page metric missing")
 
-    current_source = _source_fingerprint(root)
     recorded_source = performance.get("source", {}).get("source_fingerprint", {})
-    if recorded_source.get("sha256") != current_source.get("sha256"):
+    source_commit = performance.get("source", {}).get("git_commit")
+    committed_source = (
+        _committed_source_fingerprint(root, source_commit, recorded_source)
+        if isinstance(source_commit, str) and isinstance(recorded_source, dict)
+        else None
+    )
+    if committed_source is None or recorded_source.get("sha256") != committed_source:
         errors.append("performance: stale source fingerprint")
     _pages, current_corpus, validation = _load_corpus(root)
     if performance.get("corpus", {}).get("sha256") != current_corpus:

@@ -95,21 +95,30 @@ def test_validate_allows_unverified_but_strict_mode_blocks(tmp_path: Path) -> No
     assert "36 regions await human verification" in strict.errors
 
 
-def test_checked_in_profile_is_valid_except_for_human_verification() -> None:
+def test_checked_in_profile_is_fully_user_verified() -> None:
     report = validate_profile(ROOT)
     strict = validate_profile(ROOT, require_verified=True)
+    pages = (ROOT / "benchmarks" / PROFILE_NAME / "pages").glob("*.json")
+    regions = [
+        region
+        for page in pages
+        for region in json.loads(page.read_text(encoding="utf-8"))["regions"]
+    ]
 
     assert report.ok
     assert report.pages == 5
     assert report.regions == 38
-    assert report.unverified == 36
+    assert report.unverified == 0
     assert report.errors == []
-    assert report.warnings == ["36 regions await human verification"]
-    assert strict.errors == ["36 regions await human verification"]
+    assert report.warnings == []
+    assert strict.ok
+    assert strict.errors == []
+    assert {region["verified_by"] for region in regions} == {"garyc"}
+    assert {region["verified_at"] for region in regions} == {"2026-07-29"}
 
 
-def test_cli_require_verified_returns_nonzero() -> None:
-    assert main(["--root", str(ROOT), "validate", PROFILE_NAME, "--require-verified"]) == 1
+def test_cli_require_verified_returns_zero() -> None:
+    assert main(["--root", str(ROOT), "validate", PROFILE_NAME, "--require-verified"]) == 0
 
 
 def test_checked_in_schema_is_applied_fail_closed(tmp_path: Path) -> None:

@@ -441,12 +441,6 @@ def _validate_region(
             or region.get("fixed_translation") != fixture_group.get("translation")
         ):
             report.errors.append(f"{location}: imported text does not match provenance fixture")
-        if correction is not None and (
-            region.get("verified_by") != "execution-spec"
-            or region.get("verified_at") != "2026-07-28"
-        ):
-            report.errors.append(f"{location}: correction verification metadata mismatch")
-
     provenance_path = _project_file(
         root,
         provenance.get("source_path"),

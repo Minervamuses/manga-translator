@@ -24,6 +24,7 @@ from urllib.parse import urlsplit, urlunsplit
 import torch
 import yaml
 
+from ..config import AppConfig
 from ..manga_ocr_runtime import DEFAULT_MODEL_ID
 from ..profiling import (
     RunProfiler,

@@ -1,0 +1,92 @@
+{
+  "source": "original_image",
+  "fill": {
+    "value": [
+      238,
+      239,
+      238
+    ],
+    "confidence": 0.8119363461506349,
+    "sample_count": 2365,
+    "status": "known"
+  },
+  "stroke": {
+    "value": [
+      0,
+      1,
+      0
+    ],
+    "confidence": 0.9591894571091382,
+    "sample_count": 6497,
+    "status": "known"
+  },
+  "stroke_width": {
+    "value": 2.0,
+    "confidence": 0.9591894571091382,
+    "sample_count": 6497,
+    "status": "known"
+  },
+  "background": {
+    "value": [
+      238,
+      240,
+      239
+    ],
+    "confidence": 0.9591894571091382,
+    "sample_count": 11004,
+    "status": "known"
+  },
+  "ink_density": {
+    "value": 0.05840484004903318,
+    "confidence": 1.0,
+    "sample_count": 151734,
+    "status": "known"
+  },
+  "normalized_stroke_width": {
+    "value": 0.049586776859504134,
+    "confidence": 1.0,
+    "sample_count": 2587,
+    "status": "known"
+  },
+  "width_height_ratio": {
+    "value": 0.38596491228070173,
+    "confidence": 1.0,
+    "sample_count": 1,
+    "status": "known"
+  },
+  "edge_roundness": {
+    "value": 0.01342762477028834,
+    "confidence": 1.0,
+    "sample_count": 20,
+    "status": "known"
+  },
+  "stroke_variation": {
+    "value": 0.34737125039100647,
+    "confidence": 1.0,
+    "sample_count": 2587,
+    "status": "known"
+  },
+  "source_angle": {
+    "value": 0.0,
+    "confidence": 1.0,
+    "sample_count": 1,
+    "status": "known"
+  },
+  "shadow": {
+    "color": {
+      "value": null,
+      "confidence": 0.0,
+      "sample_count": 0,
+      "status": "unknown"
+    },
+    "offset": {
+      "value": null,
+      "confidence": 0.0,
+      "sample_count": 0,
+      "status": "unknown"
+    },
+    "confidence": 0.0,
+    "sample_count": 0,
+    "status": "unknown"
+  }
+}

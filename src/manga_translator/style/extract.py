@@ -182,6 +182,7 @@ def extract_style_fingerprint(
             fill=unknown,
             stroke=unknown,
             stroke_width=unknown,
+            background=unknown,
             ink_density=_scalar(0.0, 1.0, width * height),
             normalized_stroke_width=unknown,
             width_height_ratio=_scalar(width / max(height, 1), 1.0, 1),
@@ -215,6 +216,11 @@ def extract_style_fingerprint(
         fill, stroke = clustered
         stroke_width = _scalar(boundary_limit, stroke.confidence, stroke.sample_count)
 
+    background_ring = (cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=7) > 0) & (
+        cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=2) == 0
+    )
+    background = _rgb_estimate(crop[background_ring], minimum_samples=12)
+
     skeleton_threshold = float(np.quantile(positive, 0.72))
     radii = positive[positive >= skeleton_threshold]
     glyph_width = float(2.0 * np.median(radii)) if len(radii) else None
@@ -230,6 +236,7 @@ def extract_style_fingerprint(
         fill=fill,
         stroke=stroke,
         stroke_width=stroke_width,
+        background=background,
         ink_density=_scalar(ink_count / (width * height), 1.0, width * height),
         normalized_stroke_width=_scalar(
             glyph_width / max(1, min(width, height)) if glyph_width is not None else None,

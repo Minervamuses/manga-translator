@@ -55,14 +55,112 @@ def _mask_bbox(mask: np.ndarray) -> tuple[int, int, int, int]:
     return cv2.boundingRect(points)
 
 
+def text_block_bbox(alpha: np.ndarray) -> tuple[int, int, int, int]:
+    """Return the rendered block extent, not the number of painted glyph pixels."""
+
+    return _mask_bbox(alpha)
+
+
+def estimate_source_line_count(
+    source_mask: np.ndarray,
+    direction: LayoutDirection,
+    source_font_size: float,
+) -> int:
+    """Estimate source columns/rows from its block extent and reliable font scale."""
+
+    _x, _y, width, height = _mask_bbox(source_mask)
+    secondary_extent = width if direction is LayoutDirection.VERTICAL else height
+    pitch = max(1.0, float(source_font_size) * 1.08)
+    return max(1, round(secondary_extent / pitch))
+
+
+def estimate_source_line_gap_em(
+    source_bbox: tuple[int, int, int, int],
+    direction: LayoutDirection,
+    source_font_size: float,
+    source_line_count: int,
+) -> float:
+    """Estimate the distance between source columns/rows in font-relative units."""
+
+    if source_line_count <= 1:
+        return 1.0
+    secondary_extent = source_bbox[2] if direction is LayoutDirection.VERTICAL else source_bbox[3]
+    gap = (secondary_extent - source_font_size) / max(1, source_line_count - 1)
+    return max(0.80, min(2.50, gap / max(1.0, source_font_size)))
+
+
+def source_line_gap_options(source_line_gap_em: float) -> tuple[float, ...]:
+    """Search a small deterministic neighborhood around the source spacing."""
+
+    return tuple(
+        dict.fromkeys(
+            round(max(0.75, min(2.75, source_line_gap_em * scale)), 3)
+            for scale in (0.90, 1.0, 1.10)
+        )
+    )
+
+
+def _candidate_directions(request: LayoutRequest) -> tuple[LayoutDirection, ...]:
+    if request.source_direction is None:
+        return tuple(dict.fromkeys(request.directions))
+    if not request.allow_alternate_direction:
+        return (request.source_direction,)
+    return tuple(dict.fromkeys((request.source_direction, *request.directions)))
+
+
+def _candidate_line_counts(request: LayoutRequest) -> range:
+    if request.source_line_count is None:
+        return range(1, request.max_lines + 1)
+    tolerance = max(0, request.line_count_tolerance)
+    lower = max(1, request.source_line_count - tolerance)
+    upper = min(request.max_lines, request.source_line_count + tolerance)
+    return range(lower, max(lower, upper) + 1)
+
+
+def _block_geometry(
+    bbox: tuple[int, int, int, int],
+    direction: LayoutDirection,
+) -> tuple[float, float, float, tuple[float, float]]:
+    x, y, width, height = bbox
+    primary = float(height if direction is LayoutDirection.VERTICAL else width)
+    secondary = float(width if direction is LayoutDirection.VERTICAL else height)
+    return primary, secondary, float(width * height), (x + width / 2.0, y + height / 2.0)
+
+
+def _geometry_ratios(
+    request: LayoutRequest,
+    candidate: LayoutCandidate,
+    alpha: np.ndarray,
+) -> tuple[float, float, float, float] | None:
+    if request.source_text_bbox is None:
+        return None
+    candidate_bbox = _mask_bbox(alpha)
+    if candidate_bbox[2] <= 0 or candidate_bbox[3] <= 0:
+        return (0.0, 0.0, 0.0, math.inf)
+    source_primary, source_secondary, source_area, source_center = _block_geometry(
+        request.source_text_bbox,
+        candidate.direction,
+    )
+    primary, secondary, area, center = _block_geometry(candidate_bbox, candidate.direction)
+    center_offset_ratio = math.dist(center, source_center) / max(
+        1.0,
+        math.hypot(request.source_text_bbox[2], request.source_text_bbox[3]),
+    )
+    return (
+        primary / max(1.0, source_primary),
+        secondary / max(1.0, source_secondary),
+        area / max(1.0, source_area),
+        center_offset_ratio,
+    )
+
+
 def _candidate_score(request: LayoutRequest, candidate: LayoutCandidate, alpha: np.ndarray) -> float:
-    visible = np.argwhere(alpha > 0)
-    if visible.size:
-        center = (float(np.mean(visible[:, 1])), float(np.mean(visible[:, 0])))
-    else:
-        center = candidate.anchor
-    mask_pixels = max(1, int(np.count_nonzero(request.safe_region.render_mask)))
-    fill_ratio = int(np.count_nonzero(alpha)) / mask_pixels
+    bbox = _mask_bbox(alpha)
+    center = (
+        (bbox[0] + bbox[2] / 2.0, bbox[1] + bbox[3] / 2.0)
+        if bbox[2] > 0 and bbox[3] > 0
+        else candidate.anchor
+    )
     lengths = [len(grapheme_clusters(chunk)) for chunk in candidate.chunks]
     imbalance = (max(lengths) - min(lengths)) if lengths else 0
     break_preferences = {
@@ -73,6 +171,27 @@ def _candidate_score(request: LayoutRequest, candidate: LayoutCandidate, alpha: 
         ).opportunities
     }
     semantic_reward = sum(break_preferences.get(index, 0) for index in candidate.break_indices)
+    geometry = _geometry_ratios(request, candidate, alpha)
+    geometry_cost = 0.0
+    if geometry is not None:
+        primary_ratio, secondary_ratio, area_ratio, center_offset_ratio = geometry
+        geometry_cost = (
+            0.8 * abs(math.log(max(primary_ratio, 1e-6)))
+            + 0.8 * abs(math.log(max(secondary_ratio, 1e-6)))
+            + 0.4 * abs(math.log(max(area_ratio, 1e-6)))
+            + 2.0 * center_offset_ratio
+        )
+    direction_cost = (
+        6.0
+        if request.source_direction is not None
+        and candidate.direction is not request.source_direction
+        else 0.0
+    )
+    line_count_cost = (
+        0.8 * abs(len(candidate.chunks) - request.source_line_count)
+        if request.source_line_count is not None
+        else 0.0
+    )
     return (
         4.0 * abs(math.log(candidate.font_size / max(request.source_font_size, 1.0)))
         + 0.8
@@ -80,10 +199,13 @@ def _candidate_score(request: LayoutRequest, candidate: LayoutCandidate, alpha: 
         / max(request.safe_region.render_mask.shape)
         + 0.55 * abs(candidate.rotation_degrees - request.source_angle_degrees) / 45.0
         + 0.35 * abs(candidate.font.weight - request.source_weight) / 500.0
-        + 0.30 * abs(candidate.line_gap_em - 1.0)
+        + 0.30
+        * abs(candidate.line_gap_em - (request.source_line_gap_em or 1.0))
         + 1.4 * candidate.tracking_em
         + 0.08 * imbalance
-        + 0.06 * abs(fill_ratio - 0.32)
+        + geometry_cost
+        + direction_cost
+        + line_count_cost
         - 0.0005 * semantic_reward
     )
 
@@ -138,9 +260,13 @@ def _rotations(request: LayoutRequest) -> tuple[float, ...]:
 
 
 def _candidate_specs(request: LayoutRequest) -> Iterable[tuple[float, LayoutCandidate]]:
-    maximum_size = max(request.hard_font_floor, round(request.source_font_size * 1.15))
-    sizes = range(maximum_size, request.hard_font_floor - 1, -1)
-    for line_count in range(1, request.max_lines + 1):
+    minimum_size = max(
+        request.hard_font_floor,
+        math.ceil(request.source_font_size * request.minimum_source_font_scale),
+    )
+    maximum_size = max(minimum_size, round(request.source_font_size * 1.15))
+    sizes = range(maximum_size, minimum_size - 1, -1)
+    for line_count in _candidate_line_counts(request):
         breaks = balanced_legal_breaks(
             request.text,
             line_count,
@@ -152,7 +278,7 @@ def _candidate_specs(request: LayoutRequest) -> Iterable[tuple[float, LayoutCand
         for font, size, direction, gap, tracking, anchor, rotation in product(
             request.fonts,
             sizes,
-            request.directions,
+            _candidate_directions(request),
             request.line_gap_options,
             request.tracking_options,
             _anchors(request),
@@ -172,8 +298,9 @@ def _candidate_specs(request: LayoutRequest) -> Iterable[tuple[float, LayoutCand
             rough = (
                 abs(size - request.source_font_size) / max(request.source_font_size, 1.0)
                 + 2.0 * tracking
-                + abs(gap - 1.0)
-                + 0.1 * abs(line_count - 2)
+                + abs(gap - (request.source_line_gap_em or 1.0))
+                + 0.1
+                * abs(line_count - (request.source_line_count or 2))
             )
             yield rough, candidate
 
@@ -200,7 +327,11 @@ def solve_layout(request: LayoutRequest, rasterizer: CandidateRasterizer) -> Lay
     ] = []
     specs = sorted(_candidate_specs(request), key=lambda item: (item[0], item[1].stable_key()))
     for _rough, candidate in specs[: request.beam_width]:
-        if candidate.font_size < request.hard_font_floor:
+        reliable_font_floor = max(
+            request.hard_font_floor,
+            math.ceil(request.source_font_size * request.minimum_source_font_scale),
+        )
+        if candidate.font_size < reliable_font_floor:
             rejected["font_below_hard_floor"] += 1
             continue
         if validate_breaks(request.text, candidate.break_indices):
@@ -228,6 +359,21 @@ def solve_layout(request: LayoutRequest, rasterizer: CandidateRasterizer) -> Lay
         ):
             rejected["neighbor_collision"] += 1
             continue
+        geometry = _geometry_ratios(request, candidate, raster.alpha)
+        if geometry is not None:
+            primary_ratio, secondary_ratio, area_ratio, center_offset_ratio = geometry
+            if primary_ratio < request.minimum_primary_axis_ratio:
+                rejected["text_block_primary_axis_too_small"] += 1
+                continue
+            if secondary_ratio < request.minimum_secondary_axis_ratio:
+                rejected["text_block_secondary_axis_too_small"] += 1
+                continue
+            if area_ratio < request.minimum_text_block_area_ratio:
+                rejected["text_block_area_too_small"] += 1
+                continue
+            if center_offset_ratio > request.maximum_center_offset_ratio:
+                rejected["text_block_off_center"] += 1
+                continue
         score = _candidate_score(request, candidate, raster.alpha)
         feasible.append(
             (

@@ -1,0 +1,8 @@
+{
+  "schema_version": "visual_detector_mask.v1",
+  "page_sha256": "f81020c46353a07e1800406bca39e20c17386d25765baf231fedee0740626a9d",
+  "model_sha256": "1f90fa60aeeb1eb82e2ac1167a66bf139a8a61b8780acd351ead55268540cccb",
+  "input_size": 1024,
+  "conf_thresh": 0.3,
+  "mask_thresh": 0.3
+}

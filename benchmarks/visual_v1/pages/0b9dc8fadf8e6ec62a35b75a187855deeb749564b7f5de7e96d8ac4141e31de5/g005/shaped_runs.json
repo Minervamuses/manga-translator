@@ -1,0 +1,82 @@
+[
+  {
+    "text": "而且這個時間",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E14",
+      "U+500B",
+      "U+6642",
+      "U+800C",
+      "U+9019",
+      "U+9593"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      16.0,
+      69.0,
+      478.0
+    ],
+    "advance": 483.84375,
+    "anchor": [
+      421.508,
+      153.078125
+    ]
+  },
+  {
+    "text": "沒有人會靠",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4EBA",
+      "U+6703",
+      "U+6709",
+      "U+6C92",
+      "U+9760"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      10.0,
+      70.0,
+      399.0
+    ],
+    "advance": 403.203125,
+    "anchor": [
+      267.5,
+      193.3984375
+    ]
+  },
+  {
+    "text": "近這個房間…",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+500B",
+      "U+623F",
+      "U+8FD1",
+      "U+9019",
+      "U+9593"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      11.0,
+      68.0,
+      470.0
+    ],
+    "advance": 483.84375,
+    "anchor": [
+      113.49200000000002,
+      153.078125
+    ]
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "text": "高町教導官!",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+0021",
+      "U+5B98",
+      "U+5C0E",
+      "U+6559",
+      "U+753A",
+      "U+9AD8"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      26.0,
+      177.0
+    ],
+    "advance": 181.40625,
+    "anchor": [
+      43.5,
+      26.796875
+    ]
+  }
+]

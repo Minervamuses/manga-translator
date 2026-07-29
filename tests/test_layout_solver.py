@@ -15,7 +15,14 @@ from manga_translator.typography.layout import (
 )
 from manga_translator.typography.safe_region import SafeRegionArtifacts
 from manga_translator.typography.shaping import ShapedFontRun
-from manga_translator.typography.solver import _candidate_specs, solve_layout
+from manga_translator.typography.solver import (
+    _candidate_score,
+    _candidate_specs,
+    estimate_source_line_count,
+    estimate_source_line_gap_em,
+    solve_layout,
+    source_line_gap_options,
+)
 
 
 class RectangleRasterizer:
@@ -141,6 +148,62 @@ def test_preferred_breaks_are_forwarded_to_candidate_scoring() -> None:
     candidates = [candidate for _rough, candidate in _candidate_specs(request)]
 
     assert any(candidate.break_indices == (3,) for candidate in candidates)
+
+
+def test_source_direction_and_line_count_are_bounded_by_source_evidence() -> None:
+    request = _request(
+        source_direction=LayoutDirection.VERTICAL,
+        allow_alternate_direction=False,
+        source_line_count=2,
+        line_count_tolerance=1,
+        max_lines=8,
+        directions=(LayoutDirection.VERTICAL, LayoutDirection.HORIZONTAL),
+    )
+    candidates = [candidate for _rough, candidate in _candidate_specs(request)]
+
+    assert {candidate.direction for candidate in candidates} == {LayoutDirection.VERTICAL}
+    assert {len(candidate.chunks) for candidate in candidates} <= {1, 2, 3}
+    assert {len(candidate.chunks) for candidate in candidates}
+
+
+def test_font_search_never_goes_below_ninety_percent_of_reliable_source() -> None:
+    request = _request(source_font_size=28.0, hard_font_floor=10)
+    candidates = [candidate for _rough, candidate in _candidate_specs(request)]
+
+    assert min(candidate.font_size for candidate in candidates) == 26
+
+
+def test_candidate_score_uses_text_block_bbox_not_glyph_pixel_density() -> None:
+    request = _request(source_text_bbox=(20, 30, 80, 120))
+    candidate = next(candidate for _rough, candidate in _candidate_specs(request))
+    solid = np.zeros((220, 180), dtype=np.uint8)
+    sparse = np.zeros_like(solid)
+    solid[30:150, 20:100] = 255
+    cv2.rectangle(sparse, (20, 30), (99, 149), 255, 1)
+
+    assert _candidate_score(request, candidate, solid) == _candidate_score(
+        request, candidate, sparse
+    )
+
+
+def test_source_line_count_uses_secondary_block_axis() -> None:
+    mask = np.zeros((220, 180), dtype=np.uint8)
+    mask[20:200, 30:120] = 255
+
+    assert estimate_source_line_count(mask, LayoutDirection.VERTICAL, 28.0) == 3
+    assert estimate_source_line_count(mask, LayoutDirection.HORIZONTAL, 28.0) == 6
+
+
+def test_line_gap_search_stays_centered_on_source_spacing() -> None:
+    estimated = estimate_source_line_gap_em(
+        (20, 30, 180, 300),
+        LayoutDirection.VERTICAL,
+        60.0,
+        2,
+    )
+
+    assert estimated == 2.0
+    assert source_line_gap_options(estimated) == (1.8, 2.0, 2.2)
 
 
 def test_missing_glyph_or_shaping_failure_is_a_hard_rejection() -> None:

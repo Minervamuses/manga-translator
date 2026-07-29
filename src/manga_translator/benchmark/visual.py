@@ -37,6 +37,7 @@ REVIEW_CRITERIA = (
     "color_stroke",
     "overall_preference",
 )
+REVIEW_DECISIONS = ("new_better", "tie", "legacy_better")
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,19 @@ class VisualMetrics:
     font_size_ratio: float
     center_offset_px: float
     whitespace_ratio: float
+    candidate_status: str = "accepted"
+    safety_rejection: str | None = None
+    orientation_match: bool = True
+    reading_order_valid: bool = True
+    font_floor_met: bool = True
+    text_block_bbox_valid: bool = True
+    contrast_valid: bool = True
+    no_erase_on_rejection: bool = True
+    primary_axis_ratio: float = 1.0
+    secondary_axis_ratio: float = 1.0
+    text_block_area_ratio: float = 1.0
+    center_offset_ratio: float = 0.0
+    contrast_ratio: float = 21.0
 
 
 def _percentile(values: list[float], percentile: float) -> float:
@@ -107,56 +121,52 @@ def _manual_review_summary(
         if region_key not in eligible_region_keys:
             unknown_keys.append(region_key)
             continue
-        ratings = row.get("ratings")
-        if not row.get("verified_by") or not isinstance(ratings, Mapping):
+        decision = row.get("decision")
+        reviewer = row.get("reviewer", row.get("verified_by"))
+        if decision is None and reviewer is None and row.get("critical_regression") is None:
             continue
-        valid = isinstance(row.get("critical_regression"), bool)
-        for variant in ("legacy", "new"):
-            values = ratings.get(variant)
-            if not isinstance(values, Mapping):
-                valid = False
-                break
-            for criterion in REVIEW_CRITERIA:
-                rating = values.get(criterion)
-                if (
-                    isinstance(rating, bool)
-                    or not isinstance(rating, (int, float))
-                    or not 1 <= float(rating) <= 5
-                ):
-                    valid = False
-                    break
+        valid = (
+            decision in REVIEW_DECISIONS
+            and isinstance(row.get("critical_regression"), bool)
+            and (row.get("notes") is None or isinstance(row.get("notes"), str))
+            and (
+                reviewer is None
+                or (isinstance(reviewer, str) and bool(reviewer.strip()))
+            )
+        )
         if valid:
             verified.append(row)
         else:
             invalid_keys.append(region_key)
-    critical = [row.get("region_key") for row in verified if row.get("critical_regression")]
-    comparisons: dict[str, dict[str, float]] = {}
-    for criterion in REVIEW_CRITERIA:
-        legacy = [float(row["ratings"]["legacy"][criterion]) for row in verified]
-        new = [float(row["ratings"]["new"][criterion]) for row in verified]
-        comparisons[criterion] = {
-            "legacy_p50": statistics.median(legacy) if legacy else 0.0,
-            "new_p50": statistics.median(new) if new else 0.0,
-        }
+    critical = [str(row.get("region_key")) for row in verified if row.get("critical_regression")]
+    decisions = {
+        decision: [
+            str(row.get("region_key"))
+            for row in verified
+            if row.get("decision") == decision
+        ]
+        for decision in REVIEW_DECISIONS
+    }
     complete = (
-        len(verified) >= 30
+        len(verified) == len(eligible_region_keys)
         and not duplicate_keys
         and not unknown_keys
         and not invalid_keys
     )
-    no_regression = all(
-        comparisons[name]["new_p50"] >= comparisons[name]["legacy_p50"]
-        for name in ("readability", "overall_preference")
-    )
     return {
-        "status": "passed" if complete and not critical and no_regression else "blocked",
+        "status": (
+            "passed"
+            if complete and not critical and not decisions["legacy_better"]
+            else "blocked"
+        ),
         "verified_groups": len(verified),
-        "required_groups": 30,
+        "required_groups": len(eligible_region_keys),
         "critical_regressions": critical,
         "duplicate_region_keys": sorted(set(duplicate_keys)),
         "unknown_region_keys": sorted(set(unknown_keys)),
         "invalid_region_keys": sorted(set(invalid_keys)),
-        "comparisons": comparisons,
+        "decisions": {key: len(value) for key, value in decisions.items()},
+        "legacy_better_groups": decisions["legacy_better"],
     }
 
 
@@ -259,6 +269,14 @@ def build_visual_report(
         and all(record.outside_roi_changed_pixels == 0 for record in rows),
         "alpha_containment_at_least_0_995": bool(rows)
         and all(record.alpha_containment >= 0.995 for record in rows),
+        "safe_candidate_or_preserved_original": bool(rows)
+        and all(record.candidate_status in {"accepted", "preserved_original"} for record in rows),
+        "orientation_match": bool(rows) and all(record.orientation_match for record in rows),
+        "reading_order_valid": bool(rows) and all(record.reading_order_valid for record in rows),
+        "font_floor_met": bool(rows) and all(record.font_floor_met for record in rows),
+        "text_block_bbox_valid": bool(rows) and all(record.text_block_bbox_valid for record in rows),
+        "contrast_valid": bool(rows) and all(record.contrast_valid for record in rows),
+        "no_erase_on_rejection": bool(rows) and all(record.no_erase_on_rejection for record in rows),
     }
     manual = _manual_review_summary(
         reviews,
@@ -279,6 +297,11 @@ def build_visual_report(
                 "font_size_ratio",
                 "center_offset_px",
                 "whitespace_ratio",
+                "primary_axis_ratio",
+                "secondary_axis_ratio",
+                "text_block_area_ratio",
+                "center_offset_ratio",
+                "contrast_ratio",
             )
         },
         "manual_review": manual,
@@ -340,22 +363,72 @@ def build_blind_review_sheet(groups: Iterable[Mapping[str, Any]]) -> tuple[dict,
         new_is_a = int(token[-1], 16) % 2 == 0
         legacy = str(group["legacy_preview"])
         new = str(group["new_preview"])
+        source_a = new if new_is_a else legacy
+        source_b = legacy if new_is_a else new
+        blind_dir = f"benchmarks/visual_v1/blind_previews/{token}"
         sheet_rows.append(
             {
                 "blind_id": token,
                 "page_id": group["page_id"],
                 "region_key": group["region_key"],
-                "preview_a": new if new_is_a else legacy,
-                "preview_b": legacy if new_is_a else new,
+                "preview_a": f"{blind_dir}/a.png",
+                "preview_b": f"{blind_dir}/b.png",
                 "criteria": {name: {"a": None, "b": None} for name in REVIEW_CRITERIA},
                 "critical_regression": None,
                 "reviewer": None,
             }
         )
-        key_rows.append({"blind_id": token, "new_variant": "a" if new_is_a else "b"})
+        key_rows.append(
+            {
+                "blind_id": token,
+                "new_variant": "a" if new_is_a else "b",
+                "source_a": source_a,
+                "source_b": source_b,
+            }
+        )
     return (
         {"schema_version": "blind_review.v1", "rows": sheet_rows},
         {"schema_version": "blind_review_key.v1", "rows": key_rows},
+    )
+
+
+def build_review_sheet(groups: Iterable[Mapping[str, Any]]) -> tuple[dict, dict]:
+    """Build the intentionally small T1 review form and its materialization map."""
+
+    rows: list[dict[str, Any]] = []
+    sources: list[dict[str, str]] = []
+    for group in sorted(groups, key=lambda row: (str(row["page_id"]), str(row["region_key"]))):
+        review_id = hashlib.sha256(
+            f"{group['page_id']}:{group['region_key']}".encode()
+        ).hexdigest()[:16]
+        preview_dir = f"benchmarks/visual_v1/review_previews/{review_id}"
+        rows.append(
+            {
+                "review_id": review_id,
+                "page_id": group["page_id"],
+                "region_key": group["region_key"],
+                "legacy_preview": f"{preview_dir}/legacy.png",
+                "new_preview": f"{preview_dir}/new.png",
+                "decision": None,
+                "critical_regression": None,
+                "notes": None,
+                "reviewer": None,
+            }
+        )
+        sources.append(
+            {
+                "review_id": review_id,
+                "source_legacy": str(group["legacy_preview"]),
+                "source_new": str(group["new_preview"]),
+            }
+        )
+    return (
+        {
+            "schema_version": "visual_review.v2",
+            "allowed_decisions": list(REVIEW_DECISIONS),
+            "rows": rows,
+        },
+        {"schema_version": "visual_review_sources.v2", "rows": sources},
     )
 
 
@@ -389,12 +462,9 @@ def bootstrap_visual_v1(root: Path) -> dict[str, Any]:
                     "new_preview": f"benchmarks/visual_v1/pages/{page_id}/final_preview.png",
                 }
             )
-    sheet, key = build_blind_review_sheet(blind_groups)
-    (output / "blind_review_sheet.json").write_text(
+    sheet, _sources = build_review_sheet(blind_groups)
+    (output / "review_sheet.json").write_text(
         json.dumps(sheet, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    (output / "blind_review_key.json").write_text(
-        json.dumps(key, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     report = build_visual_report((), required_pages=len(pages))
     (output / "report.json").write_text(
@@ -409,7 +479,7 @@ def bootstrap_visual_v1(root: Path) -> dict[str, Any]:
         "blockers": [
             "local_pillow_raqm_unavailable",
             "new_visual_artifacts_not_generated",
-            "manual_blind_review_0_of_30",
+            f"manual_review_0_of_{len(blind_groups)}",
         ],
         "engine_switch": "not_performed",
         "report": "report.json",

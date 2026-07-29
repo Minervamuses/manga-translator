@@ -1,0 +1,50 @@
+[
+  {
+    "text": "大家辛",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5927",
+      "U+5BB6",
+      "U+8F9B"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      5.0,
+      32.0,
+      111.0
+    ],
+    "advance": 114.234375,
+    "anchor": [
+      85.2,
+      62.8828125
+    ]
+  },
+  {
+    "text": "苦了!",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+0021",
+      "U+4E86",
+      "U+82E6"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      4.0,
+      31.0,
+      108.0
+    ],
+    "advance": 114.234375,
+    "anchor": [
+      47.8,
+      62.8828125
+    ]
+  }
+]

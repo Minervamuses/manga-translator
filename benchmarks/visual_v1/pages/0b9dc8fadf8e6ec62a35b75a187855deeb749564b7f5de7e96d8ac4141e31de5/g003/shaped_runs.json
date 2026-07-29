@@ -1,0 +1,55 @@
+[
+  {
+    "text": "保全系統已",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4FDD",
+      "U+5168",
+      "U+5DF2",
+      "U+7CFB",
+      "U+7D71"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      10.0,
+      73.0,
+      411.0
+    ],
+    "advance": 420.0,
+    "anchor": [
+      303.925,
+      162.0
+    ]
+  },
+  {
+    "text": "經全部解除了",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E86",
+      "U+5168",
+      "U+7D93",
+      "U+89E3",
+      "U+90E8",
+      "U+9664"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      10.0,
+      73.0,
+      498.0
+    ],
+    "advance": 504.0,
+    "anchor": [
+      145.075,
+      120.0
+    ]
+  }
+]

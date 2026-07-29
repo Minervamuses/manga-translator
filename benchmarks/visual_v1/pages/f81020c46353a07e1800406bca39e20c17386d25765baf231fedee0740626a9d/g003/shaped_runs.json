@@ -1,0 +1,77 @@
+[
+  {
+    "text": "…而且幕",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+4E14",
+      "U+5E55",
+      "U+800C"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      15.0,
+      76.0,
+      344.0
+    ],
+    "advance": 349.4375,
+    "anchor": [
+      419.77,
+      151.28125
+    ]
+  },
+  {
+    "text": "後黑手也",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E5F",
+      "U+5F8C",
+      "U+624B",
+      "U+9ED1"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      10.0,
+      74.0,
+      340.0
+    ],
+    "advance": 349.4375,
+    "anchor": [
+      266.5,
+      151.28125
+    ]
+  },
+  {
+    "text": "已經查明",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5DF2",
+      "U+660E",
+      "U+67E5",
+      "U+7D93"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      16.0,
+      75.0,
+      344.0
+    ],
+    "advance": 349.4375,
+    "anchor": [
+      113.22999999999999,
+      151.28125
+    ]
+  }
+]

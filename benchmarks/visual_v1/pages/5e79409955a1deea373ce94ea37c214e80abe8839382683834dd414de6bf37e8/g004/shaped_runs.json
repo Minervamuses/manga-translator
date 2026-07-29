@@ -1,0 +1,86 @@
+[
+  {
+    "text": "我是…第三街自",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+4E09",
+      "U+6211",
+      "U+662F",
+      "U+7B2C",
+      "U+81EA",
+      "U+8857"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      24.0,
+      186.0
+    ],
+    "advance": 188.125,
+    "anchor": [
+      99.05199999999999,
+      58.4375
+    ]
+  },
+  {
+    "text": "衛騎士團所屬的",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5718",
+      "U+58EB",
+      "U+5C6C",
+      "U+6240",
+      "U+7684",
+      "U+885B",
+      "U+9A0E"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      4.0,
+      24.0,
+      186.0
+    ],
+    "advance": 188.125,
+    "anchor": [
+      68.5,
+      58.4375
+    ]
+  },
+  {
+    "text": "塞西莉・坎貝爾",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+30FB",
+      "U+574E",
+      "U+585E",
+      "U+723E",
+      "U+8389",
+      "U+897F",
+      "U+8C9D"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      23.0,
+      186.0
+    ],
+    "advance": 188.125,
+    "anchor": [
+      37.948,
+      58.4375
+    ]
+  }
+]

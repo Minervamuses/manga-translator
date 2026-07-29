@@ -1,0 +1,28 @@
+[
+  {
+    "text": "…塞西莉?",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+003F",
+      "U+2026",
+      "U+585E",
+      "U+8389",
+      "U+897F"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      19.0,
+      108.0
+    ],
+    "advance": 112.03125,
+    "anchor": [
+      32.5,
+      43.984375
+    ]
+  }
+]

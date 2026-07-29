@@ -1,0 +1,57 @@
+[
+  {
+    "text": "我是作為設計",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4F5C",
+      "U+6211",
+      "U+662F",
+      "U+70BA",
+      "U+8A08",
+      "U+8A2D"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      9.0,
+      75.0,
+      512.0
+    ],
+    "advance": 517.40625,
+    "anchor": [
+      269.233,
+      270.296875
+    ]
+  },
+  {
+    "text": "師嬰兒出生的…",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+5152",
+      "U+51FA",
+      "U+5B30",
+      "U+5E2B",
+      "U+751F",
+      "U+7684"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      12.0,
+      72.0,
+      589.0
+    ],
+    "advance": 603.640625,
+    "anchor": [
+      110.76700000000001,
+      227.1796875
+    ]
+  }
+]

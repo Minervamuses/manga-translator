@@ -1,0 +1,59 @@
+[
+  {
+    "text": "「鶴禿剛藏」…他",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+300C",
+      "U+300D",
+      "U+4ED6",
+      "U+525B",
+      "U+79BF",
+      "U+85CF",
+      "U+9DB4"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      48.0,
+      71.0,
+      665.0
+    ],
+    "advance": 672.0,
+    "anchor": [
+      288.2375,
+      82.5
+    ]
+  },
+  {
+    "text": "是這所學校的校長",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5B78",
+      "U+6240",
+      "U+662F",
+      "U+6821",
+      "U+7684",
+      "U+9019",
+      "U+9577"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      13.0,
+      72.0,
+      664.0
+    ],
+    "advance": 672.0,
+    "anchor": [
+      132.7625,
+      82.5
+    ]
+  }
+]

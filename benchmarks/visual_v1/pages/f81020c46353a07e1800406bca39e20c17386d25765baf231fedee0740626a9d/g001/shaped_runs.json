@@ -1,0 +1,83 @@
+[
+  {
+    "text": "掌握了校內有",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E86",
+      "U+5167",
+      "U+638C",
+      "U+63E1",
+      "U+6709",
+      "U+6821"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      9.0,
+      69.0,
+      485.0
+    ],
+    "advance": 490.59375,
+    "anchor": [
+      510.55,
+      153.703125
+    ]
+  },
+  {
+    "text": "人暗中買賣違",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E2D",
+      "U+4EBA",
+      "U+6697",
+      "U+8CB7",
+      "U+8CE3",
+      "U+9055"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      12.0,
+      70.0,
+      483.0
+    ],
+    "advance": 490.59375,
+    "anchor": [
+      339.0,
+      153.703125
+    ]
+  },
+  {
+    "text": "法藥物的情報",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5831",
+      "U+60C5",
+      "U+6CD5",
+      "U+7269",
+      "U+7684",
+      "U+85E5"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      10.0,
+      70.0,
+      484.0
+    ],
+    "advance": 490.59375,
+    "anchor": [
+      167.45,
+      153.703125
+    ]
+  }
+]

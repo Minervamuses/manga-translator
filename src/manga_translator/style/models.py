@@ -36,6 +36,7 @@ class ExtractedStyle(StyleModel):
     fill: Estimate[RGB]
     stroke: Estimate[RGB]
     stroke_width: Estimate[float]
+    background: Estimate[RGB] | None = None
     ink_density: Estimate[float]
     normalized_stroke_width: Estimate[float]
     width_height_ratio: Estimate[float]

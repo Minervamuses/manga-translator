@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import re
 import shutil
 from difflib import SequenceMatcher
@@ -128,7 +129,12 @@ from .typography.layout import (
     LayoutOverflow,
     LayoutRequest,
 )
-from .typography.render import AtomicRoiRequest, RenderStyle, fit_render_style
+from .typography.render import (
+    AtomicRoiRequest,
+    RenderStyle,
+    conservative_render_style,
+    fit_render_style,
+)
 from .typography.safe_region import (
     SAFE_REGION_MEDIA_TYPE,
     build_safe_region,
@@ -136,7 +142,14 @@ from .typography.safe_region import (
     encode_safe_region_artifacts,
 )
 from .typography.serialization import decode_layout_bundle, encode_layout_bundle
-from .typography.solver import PillowLayoutRasterizer, solve_layout
+from .typography.solver import (
+    PillowLayoutRasterizer,
+    estimate_source_line_count,
+    estimate_source_line_gap_em,
+    solve_layout,
+    source_line_gap_options,
+    text_block_bbox,
+)
 
 console = Console()
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -1257,27 +1270,53 @@ def _preflight_raqm_layout_plans(
             if member_regions
             else 0.0
         )
+        configured_direction = config.typesetting.direction
         primary_direction = (
-            LayoutDirection.VERTICAL if group.vertical else LayoutDirection.HORIZONTAL
+            LayoutDirection.VERTICAL
+            if configured_direction == "vertical"
+            or (configured_direction == "auto" and group.vertical)
+            else LayoutDirection.HORIZONTAL
         )
-        alternate_direction = (
-            LayoutDirection.HORIZONTAL
-            if primary_direction is LayoutDirection.VERTICAL
-            else LayoutDirection.VERTICAL
+        source_mask = np.zeros_like(safe.render_mask)
+        _paste_group_mask(source_mask, group, roi_bbox)
+        source_bbox = text_block_bbox(source_mask)
+        if source_bbox[2] <= 0 or source_bbox[3] <= 0:
+            _reject_layout(group, "missing_source_text_block")
+            continue
+        source_line_count = estimate_source_line_count(
+            source_mask,
+            primary_direction,
+            source_font_size,
+        )
+        source_line_gap_em = estimate_source_line_gap_em(
+            source_bbox,
+            primary_direction,
+            source_font_size,
+            source_line_count,
+        )
+        source_center = (
+            source_bbox[0] + source_bbox[2] / 2.0,
+            source_bbox[1] + source_bbox[3] / 2.0,
         )
         request = LayoutRequest(
             text=group.translation,
             safe_region=safe,
             fonts=(FontChoice(FontRole.NEUTRAL_SANS),),
             source_font_size=source_font_size,
-            source_center=(
-                group.x + group.w / 2.0 - left,
-                group.y + group.h / 2.0 - top,
-            ),
+            source_center=source_center,
             source_angle_degrees=source_angle,
-            hard_font_floor=config.typesetting.font_size_min,
-            max_lines=max(1, min(8, len(group.translation))),
-            directions=(primary_direction, alternate_direction),
+            hard_font_floor=max(
+                config.typesetting.font_size_min,
+                math.ceil(source_font_size * 0.90),
+            ),
+            max_lines=source_line_count + 1,
+            source_direction=primary_direction,
+            allow_alternate_direction=False,
+            source_line_count=source_line_count,
+            source_line_gap_em=source_line_gap_em,
+            source_text_bbox=source_bbox,
+            directions=(primary_direction,),
+            line_gap_options=source_line_gap_options(source_line_gap_em),
             neighbor_mask=occupied[top : top + height, left : left + width],
             minimum_containment=0.995,
         )
@@ -2372,41 +2411,19 @@ def _build_pipeline_stage_runners(
                 None,
             )
             if extracted is not None:
-                values = extracted.renderer_values(
-                    min_confidence=0.65,
-                    default_fill=(0, 0, 0),
-                    default_stroke=None,
-                    stroke_min_confidence=0.30,
-                    minimum_stroke_contrast=96.0,
+                style = conservative_render_style(
+                    extracted,
+                    maximum_stroke_width=max(2, int(config.typesetting.outline_width)),
                 )
-                fill = tuple(int(value) for value in values["fill_rgb"])
-                stroke_value = values["stroke_rgb"]
-                stroke = (
-                    (*tuple(int(value) for value in stroke_value), 255)
-                    if stroke_value is not None
-                    else None
-                )
-                shadow_value = values["shadow"]
-                shadow = (
-                    (*tuple(int(value) for value in shadow_value.color.value), 128)
-                    if shadow_value is not None and shadow_value.color.value is not None
-                    else None
-                )
-                shadow_offset = (
-                    tuple(round(value) for value in shadow_value.offset.value)
-                    if shadow_value is not None and shadow_value.offset.value is not None
-                    else (0, 0)
-                )
-                style = RenderStyle(
-                    fill=(*fill, 255),
-                    stroke=stroke,
-                    stroke_width=min(
-                        max(0, round(float(values["stroke_width"]))),
-                        max(2, int(config.typesetting.outline_width)),
-                    ),
-                    shadow=shadow,
-                    shadow_offset=shadow_offset,
-                )
+            background = extracted.background if extracted is not None else None
+            background_rgb = (
+                background.value
+                if background is not None
+                and background.status == "known"
+                and background.value is not None
+                and background.confidence >= 0.65
+                else None
+            )
             style = fit_render_style(plans[group.id], safe, style)
             requests.append(
                 AtomicRoiRequest(
@@ -2415,6 +2432,8 @@ def _build_pipeline_stage_runners(
                     safe_region=safe,
                     layout=plans[group.id],
                     style=style,
+                    source_text_bbox=text_block_bbox(inpaint_mask),
+                    background_rgb=background_rgb,
                 )
             )
             request_groups.append(group)

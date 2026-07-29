@@ -1,0 +1,63 @@
+[
+  {
+    "text": "要是有顧客名單或交",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4EA4",
+      "U+540D",
+      "U+55AE",
+      "U+5BA2",
+      "U+6216",
+      "U+662F",
+      "U+6709",
+      "U+8981",
+      "U+9867"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      13.0,
+      75.0,
+      769.0
+    ],
+    "advance": 776.109375,
+    "anchor": [
+      294.2305,
+      235.4453125
+    ]
+  },
+  {
+    "text": "易對象的資訊就好了…",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+4E86",
+      "U+597D",
+      "U+5C0D",
+      "U+5C31",
+      "U+6613",
+      "U+7684",
+      "U+8A0A",
+      "U+8C61",
+      "U+8CC7"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      13.0,
+      75.0,
+      847.0
+    ],
+    "advance": 862.34375,
+    "anchor": [
+      140.7695,
+      192.328125
+    ]
+  }
+]

@@ -1,0 +1,55 @@
+[
+  {
+    "text": "我的名字是",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+540D",
+      "U+5B57",
+      "U+6211",
+      "U+662F",
+      "U+7684"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      12.0,
+      93.0,
+      539.0
+    ],
+    "advance": 548.828125,
+    "anchor": [
+      355.099,
+      213.5859375
+    ]
+  },
+  {
+    "text": "「霜月白」…",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+300C",
+      "U+300D",
+      "U+6708",
+      "U+767D",
+      "U+971C"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      63.0,
+      88.0,
+      640.0
+    ],
+    "advance": 658.59375,
+    "anchor": [
+      163.901,
+      158.703125
+    ]
+  }
+]

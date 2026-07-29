@@ -1,0 +1,78 @@
+[
+  {
+    "text": "那麼今天",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4ECA",
+      "U+5929",
+      "U+90A3",
+      "U+9EBC"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      4.0,
+      22.0,
+      98.0
+    ],
+    "advance": 98.5625,
+    "anchor": [
+      94.944,
+      54.21875
+    ]
+  },
+  {
+    "text": "的訓練就到",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5230",
+      "U+5C31",
+      "U+7684",
+      "U+7DF4",
+      "U+8A13"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      22.0,
+      121.0
+    ],
+    "advance": 123.203125,
+    "anchor": [
+      63.0,
+      41.8984375
+    ]
+  },
+  {
+    "text": "此結束!",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+0021",
+      "U+675F",
+      "U+6B64",
+      "U+7D50"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      4.0,
+      22.0,
+      95.0
+    ],
+    "advance": 98.5625,
+    "anchor": [
+      31.056,
+      54.21875
+    ]
+  }
+]

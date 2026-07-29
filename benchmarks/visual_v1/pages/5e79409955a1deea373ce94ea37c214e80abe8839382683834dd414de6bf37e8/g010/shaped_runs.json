@@ -1,0 +1,51 @@
+[
+  {
+    "text": "有名的",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+540D",
+      "U+6709",
+      "U+7684"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      2.0,
+      23.0,
+      81.0
+    ],
+    "advance": 84.0,
+    "anchor": [
+      66.375,
+      50.5
+    ]
+  },
+  {
+    "text": "塞西莉啊",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+554A",
+      "U+585E",
+      "U+8389",
+      "U+897F"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      2.0,
+      24.0,
+      109.0
+    ],
+    "advance": 112.0,
+    "anchor": [
+      32.625,
+      36.5
+    ]
+  }
+]

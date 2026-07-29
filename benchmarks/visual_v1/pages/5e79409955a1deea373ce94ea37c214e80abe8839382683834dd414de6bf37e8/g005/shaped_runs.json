@@ -1,0 +1,130 @@
+[
+  {
+    "text": "接到有人在",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4EBA",
+      "U+5230",
+      "U+5728",
+      "U+63A5",
+      "U+6709"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      24.0,
+      132.0
+    ],
+    "advance": 134.375,
+    "anchor": [
+      158.36,
+      62.3125
+    ]
+  },
+  {
+    "text": "酒館鬧事",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E8B",
+      "U+9152",
+      "U+9928",
+      "U+9B27"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      5.0,
+      24.0,
+      105.0
+    ],
+    "advance": 107.5,
+    "anchor": [
+      126.68,
+      75.75
+    ]
+  },
+  {
+    "text": "的通報,結",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+002C",
+      "U+5831",
+      "U+7684",
+      "U+7D50",
+      "U+901A"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      4.0,
+      23.0,
+      132.0
+    ],
+    "advance": 134.375,
+    "anchor": [
+      95.0,
+      62.3125
+    ]
+  },
+  {
+    "text": "果怎麼會",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+600E",
+      "U+6703",
+      "U+679C",
+      "U+9EBC"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      4.0,
+      24.0,
+      106.0
+    ],
+    "advance": 107.5,
+    "anchor": [
+      63.32,
+      75.75
+    ]
+  },
+  {
+    "text": "變成這樣?",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+003F",
+      "U+6210",
+      "U+6A23",
+      "U+8B8A",
+      "U+9019"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      24.0,
+      130.0
+    ],
+    "advance": 134.375,
+    "anchor": [
+      31.64,
+      62.3125
+    ]
+  }
+]

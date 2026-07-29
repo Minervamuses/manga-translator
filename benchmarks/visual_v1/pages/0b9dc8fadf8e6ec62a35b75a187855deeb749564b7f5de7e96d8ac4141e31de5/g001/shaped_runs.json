@@ -1,0 +1,78 @@
+[
+  {
+    "text": "異常警備",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5099",
+      "U+5E38",
+      "U+7570",
+      "U+8B66"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      12.0,
+      67.0,
+      317.0
+    ],
+    "advance": 322.5625,
+    "anchor": [
+      416.164,
+      105.21875
+    ]
+  },
+  {
+    "text": "體制下的這",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E0B",
+      "U+5236",
+      "U+7684",
+      "U+9019",
+      "U+9AD4"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      9.0,
+      71.0,
+      396.0
+    ],
+    "advance": 403.203125,
+    "anchor": [
+      260.5,
+      64.8984375
+    ]
+  },
+  {
+    "text": "個房間…",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+500B",
+      "U+623F",
+      "U+9593"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      10.0,
+      65.0,
+      309.0
+    ],
+    "advance": 322.5625,
+    "anchor": [
+      104.83600000000001,
+      105.21875
+    ]
+  }
+]

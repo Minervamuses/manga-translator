@@ -1,0 +1,94 @@
+[
+  {
+    "text": "結果你這傢伙突然拿劍",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4F19",
+      "U+4F60",
+      "U+50A2",
+      "U+528D",
+      "U+62FF",
+      "U+679C",
+      "U+7136",
+      "U+7A81",
+      "U+7D50",
+      "U+9019"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      24.0,
+      266.0
+    ],
+    "advance": 268.75,
+    "anchor": [
+      138.172,
+      70.625
+    ]
+  },
+  {
+    "text": "指著我,這不是很可怕",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+002C",
+      "U+4E0D",
+      "U+53EF",
+      "U+5F88",
+      "U+6015",
+      "U+6211",
+      "U+6307",
+      "U+662F",
+      "U+8457",
+      "U+9019"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      24.0,
+      266.0
+    ],
+    "advance": 268.75,
+    "anchor": [
+      92.5,
+      70.625
+    ]
+  },
+  {
+    "text": "嗎!我可是很纖細的!",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+0021",
+      "U+53EF",
+      "U+55CE",
+      "U+5F88",
+      "U+6211",
+      "U+662F",
+      "U+7684",
+      "U+7D30",
+      "U+7E96"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      4.0,
+      24.0,
+      264.0
+    ],
+    "advance": 268.75,
+    "anchor": [
+      46.828,
+      70.625
+    ]
+  }
+]

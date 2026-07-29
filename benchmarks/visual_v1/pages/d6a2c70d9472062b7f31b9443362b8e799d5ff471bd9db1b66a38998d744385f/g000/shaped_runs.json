@@ -1,0 +1,54 @@
+[
+  {
+    "text": "現在正潛入",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5165",
+      "U+5728",
+      "U+6B63",
+      "U+6F5B",
+      "U+73FE"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      14.0,
+      72.0,
+      407.0
+    ],
+    "advance": 414.375,
+    "anchor": [
+      272.312,
+      183.8125
+    ]
+  },
+  {
+    "text": "日本的學校",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5B78",
+      "U+65E5",
+      "U+672C",
+      "U+6821",
+      "U+7684"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      16.0,
+      72.0,
+      408.0
+    ],
+    "advance": 414.375,
+    "anchor": [
+      118.688,
+      183.8125
+    ]
+  }
+]

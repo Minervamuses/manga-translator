@@ -1,0 +1,52 @@
+[
+  {
+    "text": "某國的潛",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+570B",
+      "U+67D0",
+      "U+6F5B",
+      "U+7684"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      12.0,
+      92.0,
+      441.0
+    ],
+    "advance": 448.0,
+    "anchor": [
+      328.75,
+      178.0
+    ]
+  },
+  {
+    "text": "入搜查官",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+5165",
+      "U+5B98",
+      "U+641C",
+      "U+67E5"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      15.0,
+      98.0,
+      441.0
+    ],
+    "advance": 448.0,
+    "anchor": [
+      139.25,
+      178.0
+    ]
+  }
+]

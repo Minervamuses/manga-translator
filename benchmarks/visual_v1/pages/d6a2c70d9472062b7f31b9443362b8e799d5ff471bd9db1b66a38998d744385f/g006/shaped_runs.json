@@ -1,0 +1,54 @@
+[
+  {
+    "text": "接受了各種",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E86",
+      "U+53D7",
+      "U+5404",
+      "U+63A5",
+      "U+7A2E"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      11.0,
+      69.0,
+      397.0
+    ],
+    "advance": 403.203125,
+    "anchor": [
+      243.648,
+      149.8984375
+    ]
+  },
+  {
+    "text": "訓練長大了",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E86",
+      "U+5927",
+      "U+7DF4",
+      "U+8A13",
+      "U+9577"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      11.0,
+      70.0,
+      398.0
+    ],
+    "advance": 403.203125,
+    "anchor": [
+      89.352,
+      149.8984375
+    ]
+  }
+]

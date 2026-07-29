@@ -1,0 +1,55 @@
+[
+  {
+    "text": "…很可能就",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+53EF",
+      "U+5C31",
+      "U+5F88",
+      "U+80FD"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      13.0,
+      73.0,
+      413.0
+    ],
+    "advance": 420.0,
+    "anchor": [
+      256.25,
+      174.0
+    ]
+  },
+  {
+    "text": "在這個房間裡",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+500B",
+      "U+5728",
+      "U+623F",
+      "U+88E1",
+      "U+9019",
+      "U+9593"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      8.0,
+      73.0,
+      497.0
+    ],
+    "advance": 504.0,
+    "anchor": [
+      107.75,
+      132.0
+    ]
+  }
+]

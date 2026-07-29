@@ -192,6 +192,26 @@ def test_empty_inpaint_mask_does_not_add_unpaired_translation() -> None:
     assert np.array_equal(result.image, original)
 
 
+def test_high_contrast_source_text_residual_rolls_back_inpaint() -> None:
+    original = np.full((220, 260, 3), 245, dtype=np.uint8)
+    request = _request(60, 50)
+    x, y, width, height = request.roi_bbox
+    roi = original[y : y + height, x : x + width]
+    roi[request.inpaint_mask > 0] = 0
+    cv2.line(roi, (25, 28), (25, 70), (0, 0, 0), 5)
+    guarded = replace(
+        request,
+        source_text_bbox=(15, 15, 55, 70),
+        background_rgb=(245, 245, 245),
+    )
+
+    result = render_page_atomic(original, (guarded,))
+
+    assert not result.outcomes[0].committed
+    assert "source text remained" in result.outcomes[0].reason
+    assert np.array_equal(result.image, original)
+
+
 def test_single_working_page_profile_counts_roi_not_per_group_page_copies() -> None:
     original = np.full((1200, 1600, 3), 240, dtype=np.uint8)
     requests = (_request(100, 100), _request(500, 400), _request(900, 700))

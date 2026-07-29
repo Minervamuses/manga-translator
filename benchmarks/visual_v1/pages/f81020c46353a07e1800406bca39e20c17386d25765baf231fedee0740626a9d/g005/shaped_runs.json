@@ -1,0 +1,61 @@
+[
+  {
+    "text": "接下來只要收集能",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E0B",
+      "U+4F86",
+      "U+53EA",
+      "U+63A5",
+      "U+6536",
+      "U+80FD",
+      "U+8981",
+      "U+96C6"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      10.0,
+      67.0,
+      613.0
+    ],
+    "advance": 618.25,
+    "anchor": [
+      273.831,
+      118.375
+    ]
+  },
+  {
+    "text": "當證據的資料就行了",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+4E86",
+      "U+5C31",
+      "U+64DA",
+      "U+6599",
+      "U+7576",
+      "U+7684",
+      "U+884C",
+      "U+8B49",
+      "U+8CC7"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      8.0,
+      68.0,
+      690.0
+    ],
+    "advance": 695.53125,
+    "anchor": [
+      122.169,
+      79.734375
+    ]
+  }
+]

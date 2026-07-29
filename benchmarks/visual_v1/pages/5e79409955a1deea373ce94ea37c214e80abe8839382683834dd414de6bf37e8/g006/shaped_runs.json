@@ -1,0 +1,56 @@
+[
+  {
+    "text": "喔…這樣啊,",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+002C",
+      "U+2026",
+      "U+554A",
+      "U+5594",
+      "U+6A23",
+      "U+9019"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      4.0,
+      23.0,
+      153.0
+    ],
+    "advance": 154.59375,
+    "anchor": [
+      63.548,
+      23.203125
+    ]
+  },
+  {
+    "text": "你就是那個…",
+    "font_sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+    "font_path": "/mnt/c/Users/garyc/Documents/本/manga-translator-v0.3.2-complete/fonts/Iansui-Regular.ttf",
+    "glyph_coverage": [
+      "U+2026",
+      "U+4F60",
+      "U+500B",
+      "U+5C31",
+      "U+662F",
+      "U+90A3"
+    ],
+    "direction": "ttb",
+    "language": "zh-Hant-TW",
+    "features": [],
+    "bbox": [
+      0.0,
+      3.0,
+      23.0,
+      150.0
+    ],
+    "advance": 154.59375,
+    "anchor": [
+      32.452,
+      23.203125
+    ]
+  }
+]

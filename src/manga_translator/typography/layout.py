@@ -71,6 +71,17 @@ class LayoutRequest:
     source_weight: int = 400
     hard_font_floor: int = 10
     max_lines: int = 4
+    source_direction: LayoutDirection | None = None
+    allow_alternate_direction: bool = False
+    source_line_count: int | None = None
+    line_count_tolerance: int = 1
+    source_line_gap_em: float | None = None
+    source_text_bbox: tuple[int, int, int, int] | None = None
+    minimum_source_font_scale: float = 0.90
+    minimum_primary_axis_ratio: float = 0.50
+    minimum_secondary_axis_ratio: float = 0.75
+    minimum_text_block_area_ratio: float = 0.35
+    maximum_center_offset_ratio: float = 0.30
     directions: tuple[LayoutDirection, ...] = (
         LayoutDirection.VERTICAL,
         LayoutDirection.HORIZONTAL,

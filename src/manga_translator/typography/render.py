@@ -11,6 +11,7 @@ import numpy as np
 
 from ..config import InpaintingConfig
 from ..inpainter import inpaint_roi
+from ..style.models import ExtractedStyle
 from .layout import AcceptedLayout
 from .safe_region import SafeRegionArtifacts
 from .solver import layout_plan_hash
@@ -35,6 +36,8 @@ class AtomicRoiRequest:
     safe_region: SafeRegionArtifacts
     layout: AcceptedLayout
     style: RenderStyle = RenderStyle()
+    source_text_bbox: tuple[int, int, int, int] | None = None
+    background_rgb: RGB | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,162 @@ class AtomicRenderOutcome:
 
 class LayerRenderer(Protocol):
     def __call__(self, layout: AcceptedLayout, style: RenderStyle) -> np.ndarray: ...
+
+
+def _linear_channel(value: int) -> float:
+    channel = max(0.0, min(1.0, value / 255.0))
+    return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+
+def color_contrast_ratio(left: RGB, right: RGB) -> float:
+    """WCAG contrast ratio used as a conservative legibility guard."""
+
+    def luminance(color: RGB) -> float:
+        red, green, blue = (_linear_channel(value) for value in color)
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+    brighter, darker = sorted((luminance(left), luminance(right)), reverse=True)
+    return (brighter + 0.05) / (darker + 0.05)
+
+
+def has_high_contrast_text_residual(
+    repaired: np.ndarray,
+    *,
+    source_text_bbox: tuple[int, int, int, int],
+    background_rgb: RGB,
+) -> bool:
+    """Detect an interior text-like remnant after inpainting.
+
+    The check is deliberately conservative: it only considers high-contrast
+    connected components wholly inside the source text block. Components that
+    touch the block boundary are ignored because they are commonly bubble or
+    panel edges rather than missed glyph strokes.
+    """
+
+    x, y, width, height = source_text_bbox
+    left, top = max(0, x), max(0, y)
+    right = min(repaired.shape[1], x + width)
+    bottom = min(repaired.shape[0], y + height)
+    if right - left < 3 or bottom - top < 3:
+        return False
+    crop_rgb = repaired[top:bottom, left:right, :3][:, :, ::-1].astype(np.float32) / 255.0
+    linear = np.where(
+        crop_rgb <= 0.04045,
+        crop_rgb / 12.92,
+        ((crop_rgb + 0.055) / 1.055) ** 2.4,
+    )
+    luminance = 0.2126 * linear[:, :, 0] + 0.7152 * linear[:, :, 1] + 0.0722 * linear[:, :, 2]
+    background_luminance = (
+        0.2126 * _linear_channel(background_rgb[0])
+        + 0.7152 * _linear_channel(background_rgb[1])
+        + 0.0722 * _linear_channel(background_rgb[2])
+    )
+    lighter = np.maximum(luminance, background_luminance)
+    darker = np.minimum(luminance, background_luminance)
+    contrast = (lighter + 0.05) / (darker + 0.05)
+    high_contrast = (contrast >= 4.5).astype(np.uint8)
+    high_contrast = cv2.morphologyEx(
+        high_contrast,
+        cv2.MORPH_OPEN,
+        np.ones((2, 2), dtype=np.uint8),
+    )
+    count, _labels, stats, _centers = cv2.connectedComponentsWithStats(
+        high_contrast,
+        8,
+    )
+    minimum_area = max(8, round(width * height * 0.0004))
+    crop_height, crop_width = high_contrast.shape
+    for label in range(1, count):
+        component_x = int(stats[label, cv2.CC_STAT_LEFT])
+        component_y = int(stats[label, cv2.CC_STAT_TOP])
+        component_width = int(stats[label, cv2.CC_STAT_WIDTH])
+        component_height = int(stats[label, cv2.CC_STAT_HEIGHT])
+        component_area = int(stats[label, cv2.CC_STAT_AREA])
+        touches_boundary = (
+            component_x <= 1
+            or component_y <= 1
+            or component_x + component_width >= crop_width - 1
+            or component_y + component_height >= crop_height - 1
+        )
+        if component_area >= minimum_area and not touches_boundary:
+            return True
+    return False
+
+
+def conservative_render_style(
+    extracted: ExtractedStyle,
+    *,
+    maximum_stroke_width: int,
+) -> RenderStyle:
+    """Choose readable colors and keep decorations only with strong evidence."""
+
+    background = extracted.background
+    background_rgb = (
+        background.value
+        if background is not None
+        and background.status == "known"
+        and background.value is not None
+        and background.confidence >= 0.65
+        else None
+    )
+    background_lightness = (
+        sum(background_rgb) / 3.0 if background_rgb is not None else None
+    )
+    if background_lightness is not None and background_lightness >= 190.0:
+        return RenderStyle(fill=(0, 0, 0, 255))
+
+    fallback_fill: RGB = (
+        (255, 255, 255)
+        if background_lightness is not None and background_lightness <= 80.0
+        else (0, 0, 0)
+    )
+    values = extracted.renderer_values(
+        min_confidence=0.80,
+        default_fill=fallback_fill,
+        default_stroke=None,
+        stroke_min_confidence=0.80,
+        minimum_stroke_contrast=96.0,
+    )
+    fill = tuple(int(value) for value in values["fill_rgb"])
+    if background_rgb is not None and color_contrast_ratio(fill, background_rgb) < 4.5:
+        fill = fallback_fill
+
+    # Unknown/mid-tone backgrounds are intentionally undecorated.  A dark,
+    # confidently sampled background may retain a high-confidence outline/shadow.
+    allow_decoration = background_lightness is not None and background_lightness <= 80.0
+    stroke_value = values["stroke_rgb"] if allow_decoration else None
+    stroke = (
+        (*tuple(int(value) for value in stroke_value), 255)
+        if stroke_value is not None
+        else None
+    )
+    shadow_value = values["shadow"] if allow_decoration else None
+    shadow = (
+        (*tuple(int(value) for value in shadow_value.color.value), 128)
+        if shadow_value is not None
+        and shadow_value.confidence >= 0.85
+        and shadow_value.color.value is not None
+        else None
+    )
+    shadow_offset = (
+        tuple(round(value) for value in shadow_value.offset.value)
+        if shadow is not None and shadow_value.offset.value is not None
+        else (0, 0)
+    )
+    return RenderStyle(
+        fill=(*fill, 255),
+        stroke=stroke,
+        stroke_width=(
+            min(
+                max(0, round(float(values["stroke_width"]))),
+                max(0, maximum_stroke_width),
+            )
+            if stroke is not None
+            else 0
+        ),
+        shadow=shadow,
+        shadow_offset=shadow_offset,
+    )
 
 
 def build_atomic_roi_bbox(
@@ -188,6 +347,16 @@ def atomic_inpaint_render(
     original_roi = working_image[y : y + height, x : x + width].copy()
     try:
         repaired = inpaint_roi(original_roi, request.inpaint_mask, inpainting)
+        if (
+            request.source_text_bbox is not None
+            and request.background_rgb is not None
+            and has_high_contrast_text_residual(
+                repaired,
+                source_text_bbox=request.source_text_bbox,
+                background_rgb=request.background_rgb,
+            )
+        ):
+            raise ValueError("source text remained after inpainting")
         layer = renderer(request.layout, request.style)
         if layer.shape != (height, width, 4):
             raise ValueError("renderer returned non-ROI RGBA layer")

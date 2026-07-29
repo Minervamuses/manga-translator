@@ -7,12 +7,10 @@ import numpy as np
 
 from manga_translator.benchmark.visual import (
     ARTIFACT_NAMES,
-    REVIEW_CRITERIA,
     VisualMetrics,
     bootstrap_visual_v1,
-    build_blind_review_sheet,
+    build_review_sheet,
     build_visual_report,
-    resolve_blind_reviews,
     write_group_bundle,
 )
 
@@ -34,16 +32,13 @@ def _metrics(index: int) -> VisualMetrics:
 
 
 def _reviews(count: int) -> list[dict]:
-    ratings = {
-        "legacy": {criterion: 4 for criterion in REVIEW_CRITERIA},
-        "new": {criterion: 4 for criterion in REVIEW_CRITERIA},
-    }
     return [
         {
             "region_key": f"group-{index:02d}",
-            "verified_by": "reviewer",
-            "ratings": ratings,
+            "reviewer": None,
+            "decision": "tie",
             "critical_regression": False,
+            "notes": None,
         }
         for index in range(count)
     ]
@@ -91,7 +86,7 @@ def test_group_bundle_writes_all_eight_trace_artifacts(tmp_path: Path) -> None:
     assert all(Path(path).is_file() for path in paths.values())
 
 
-def test_blind_sheet_is_deterministic_and_hides_variant_identity() -> None:
+def test_review_sheet_is_deterministic_and_uses_only_simple_decisions() -> None:
     groups = [
         {
             "page_id": "p0",
@@ -101,26 +96,15 @@ def test_blind_sheet_is_deterministic_and_hides_variant_identity() -> None:
         }
         for index in range(30)
     ]
-    sheet, key = build_blind_review_sheet(groups)
-    repeated, _repeated_key = build_blind_review_sheet(reversed(groups))
+    sheet, sources = build_review_sheet(groups)
+    repeated, _repeated_sources = build_review_sheet(reversed(groups))
 
     assert sheet == repeated
     assert len(sheet["rows"]) == 30
-    assert "new_variant" not in json.dumps(sheet)
-    assert {row["new_variant"] for row in key["rows"]} == {"a", "b"}
-
-    for row in sheet["rows"]:
-        row["reviewer"] = "reviewer"
-        row["critical_regression"] = False
-        for criterion in REVIEW_CRITERIA:
-            row["criteria"][criterion] = {"a": 3, "b": 4}
-    resolved = resolve_blind_reviews(sheet, key)
-    by_blind_id = {row["blind_id"]: row for row in key["rows"]}
-    sorted_sheet = sorted(sheet["rows"], key=lambda row: row["blind_id"])
-    for sheet_row, review in zip(sorted_sheet, resolved):
-        new_variant = by_blind_id[sheet_row["blind_id"]]["new_variant"]
-        expected_new = 3.0 if new_variant == "a" else 4.0
-        assert review["ratings"]["new"]["readability"] == expected_new
+    assert sheet["allowed_decisions"] == ["new_better", "tie", "legacy_better"]
+    assert all(row["decision"] is None for row in sheet["rows"])
+    assert all(row["reviewer"] is None for row in sheet["rows"])
+    assert len(sources["rows"]) == 30
 
 
 def test_manual_gate_rejects_duplicate_or_unknown_review_regions() -> None:
@@ -161,3 +145,4 @@ def test_repository_visual_manifest_truthfully_records_current_blockers(tmp_path
         (tmp_path / "benchmarks" / "visual_v1" / "report.json").read_text(encoding="utf-8")
     )
     assert report["status"] == "blocked"
+    assert (tmp_path / "benchmarks" / "visual_v1" / "review_sheet.json").is_file()

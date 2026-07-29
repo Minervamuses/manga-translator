@@ -11,6 +11,7 @@ from manga_translator.config import AppConfig, OpenRouterConfig, PathsConfig
 from manga_translator.detector import DetectionResult, TextRegion
 from manga_translator.stages.render import RenderProfile, RenderStageResult
 from manga_translator.style.extract import extract_style_fingerprint
+from manga_translator.typography.render import conservative_render_style
 
 
 def _canvas(color=(255, 255, 255)) -> np.ndarray:
@@ -53,6 +54,22 @@ def test_white_fill_black_outline_has_distinct_stroke() -> None:
     assert style.stroke.value is not None and max(style.stroke.value) <= 10
     assert style.stroke_width.status == "known"
     assert style.stroke_width.sample_count > 0
+
+
+def test_light_dialogue_box_uses_black_fill_without_decoration() -> None:
+    mask = _rect_mask()
+    image = _canvas((248, 248, 248))
+    image[mask > 0] = (4, 4, 4)
+    style = extract_style_fingerprint(image, mask, bbox=(0, 0, 40, 40))
+
+    rendered = conservative_render_style(style, maximum_stroke_width=2)
+
+    assert style.background is not None and style.background.value is not None
+    assert min(style.background.value) >= 240
+    assert rendered.fill == (0, 0, 0, 255)
+    assert rendered.stroke is None
+    assert rendered.stroke_width == 0
+    assert rendered.shadow is None
 
 
 def test_contrast_guard_allows_only_legible_low_confidence_outline() -> None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import itertools
 import math
-import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -15,17 +14,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .config import TypesettingConfig
 from .detector import TextGroup, TextRegion
-
-VERTICAL_PUNCT_MAP = {
-    "(": "︵",
-    ")": "︶",
-    "[": "︹",
-    "]": "︺",
-    "{": "︷",
-    "}": "︸",
-    "<": "︿",
-    ">": "﹀",
-}
+from .text import grapheme_clusters, normalize_text
+from .typography.breaking import balanced_legal_chunks, greedy_legal_wrap
+from .typography.safe_region import build_safe_region
 
 
 @dataclass(frozen=True)
@@ -99,52 +90,11 @@ def _measure_char_advance(font: ImageFont.FreeTypeFont, char: str) -> int:
         return max(1, int(bbox[2] - bbox[0]))
 
 
-def _verticalize_punctuation(text: str) -> str:
-    return "".join(VERTICAL_PUNCT_MAP.get(ch, ch) for ch in text)
-
-
-@lru_cache(maxsize=8192)
-def _glyph_signature(
-    font_path: str,
-    size: int,
-    char: str,
-) -> tuple[object, tuple[int, int], bytes] | None:
-    try:
-        font = _load_font(font_path, size)
-        bbox = font.getbbox(char)
-        mask = font.getmask(char, mode="L")
-        return (bbox, mask.size, bytes(mask))
-    except (OSError, TypeError, ValueError):
-        return None
-
-
-@lru_cache(maxsize=512)
-def _missing_glyph_signatures(
-    font_path: str,
-    size: int,
-) -> frozenset[tuple[object, tuple[int, int], bytes]]:
-    signatures = {
-        signature
-        for sentinel in ("\u0378", "\u0380", "\U0010ffff")
-        if (signature := _glyph_signature(font_path, size, sentinel)) is not None
-    }
-    return frozenset(signatures)
-
-
 def _has_glyph(font_path: str, size: int, char: str) -> bool:
-    """Compare against the font's .notdef bitmap instead of trusting getbbox()."""
+    del size
+    from .typography.fonts import font_has_glyph
 
-    if not char:
-        return False
-    if char.isspace():
-        return True
-    signature = _glyph_signature(font_path, size, char)
-    if signature is None:
-        return False
-    bbox = signature[0]
-    if bbox is None or (bbox[2] - bbox[0]) <= 0:
-        return False
-    return signature not in _missing_glyph_signatures(font_path, size)
+    return font_has_glyph(font_path, char)
 
 
 def _get_font_and_char(
@@ -169,22 +119,11 @@ def _get_font_and_char(
 
 
 def _sanitize_render_text(text: str) -> str:
-    text = unicodedata.normalize("NFC", text or "")
-    chars: list[str] = []
-    for char in text:
-        if char in {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff", "\ufffd"}:
-            continue
-        category = unicodedata.category(char)
-        if category in {"Cc", "Cs", "Co", "Cn"}:
-            if char in {"\n", "\r", "\t"}:
-                chars.append(" ")
-            continue
-        chars.append(char)
-    return " ".join("".join(chars).split())
+    return normalize_text(text or "").nfc_display
 
 
 def _visible_length(text: str) -> int:
-    return sum(not char.isspace() for char in _sanitize_render_text(text))
+    return sum(not cluster.isspace() for cluster in grapheme_clusters(_sanitize_render_text(text)))
 
 
 def _decide_direction(obj: TextRegion | TextGroup, config_dir: str) -> str:
@@ -196,20 +135,11 @@ def _decide_direction(obj: TextRegion | TextGroup, config_dir: str) -> str:
 
 
 def _wrap_horizontal(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
-    lines: list[str] = []
-    current = ""
-    for ch in text:
-        test = current + ch
-        bbox = font.getbbox(test)
-        width = int(bbox[2] - bbox[0])
-        if width > max_w and current:
-            lines.append(current)
-            current = ch
-        else:
-            current = test
-    if current:
-        lines.append(current)
-    return lines
+    def measure(value: str) -> float:
+        bbox = font.getbbox(value)
+        return float(bbox[2] - bbox[0])
+
+    return list(greedy_legal_wrap(text, measure, max_w))
 
 
 def _font_bounds(cfg: TypesettingConfig, preferred_font_size: float | None) -> tuple[int, int]:
@@ -254,7 +184,7 @@ def _calculate_font_size(
             char_step = max(1, round(line_h * cfg.vertical_char_spacing))
             col_step = max(1, round(mid * cfg.line_spacing))
             chars_per_col = max(1, available_h // char_step)
-            cols_needed = math.ceil(len(text) / chars_per_col)
+            cols_needed = math.ceil(len(grapheme_clusters(text)) / chars_per_col)
             fits = mid + max(0, cols_needed - 1) * col_step <= available_w
         else:
             lines = _wrap_horizontal(text, font, available_w)
@@ -667,7 +597,7 @@ def _safe_background_bbox(
     preferred: float,
     cfg: TypesettingConfig,
 ) -> tuple[int, int, int, int] | None:
-    """Grow a rectangle through near-uniform bubble/caption background only."""
+    """Derive a candidate bbox from protected-edge-aware safe-region evidence."""
 
     if not cfg.adaptive_bubble_layout:
         return None
@@ -693,79 +623,21 @@ def _safe_background_bbox(
     group_mask = _build_group_local_mask(group, regions_by_id, group.bbox)
     if np.any(group_mask):
         _paste_mask_into_roi(text_mask, group_mask, group.bbox, search)
-    radius = max(2, round(preferred * 0.22))
-    kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE,
-        (radius * 2 + 1, radius * 2 + 1),
-    )
-    dilated = cv2.dilate(text_mask, kernel, iterations=1)
-    ring = (dilated > 0) & (text_mask == 0)
-    ring_pixels = roi[ring]
-    if ring_pixels.shape[0] < 40:
+    local_polygons: list[tuple[tuple[float, float], ...]] = []
+    for region_id in group.region_ids:
+        region = regions_by_id.get(region_id)
+        if region is None:
+            continue
+        local_polygons.extend(
+            tuple((px - rx, py - ry) for px, py in polygon)
+            for polygon in region.line_polygons
+        )
+    artifacts = build_safe_region(roi, text_mask, line_polygons=tuple(local_polygons))
+    points = cv2.findNonZero((artifacts.render_mask > 0).astype(np.uint8))
+    if points is None:
         return None
-
-    background = np.median(ring_pixels.astype(np.float32), axis=0)
-    luma = float(0.114 * background[0] + 0.587 * background[1] + 0.299 * background[2])
-    if luma < cfg.bubble_background_min_luma:
-        return None
-    distances = np.max(np.abs(ring_pixels.astype(np.float32) - background), axis=1)
-    if float(np.mean(distances <= cfg.bubble_background_tolerance)) < cfg.bubble_background_dominant_ratio:
-        return None
-
-    roi_float = roi.astype(np.float32)
-    color_distance = np.max(np.abs(roi_float - background.reshape(1, 1, 3)), axis=2)
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    valid = (
-        (color_distance <= cfg.bubble_background_tolerance)
-        & (gray >= cfg.bubble_background_min_luma)
-    )
-    valid[dilated > 0] = True
-
-    # The seed is known text territory.  Marking it valid prevents tiny holes in
-    # the detector mask from stopping expansion before it reaches the bubble edge.
-    lx1, ly1 = seed_x - rx, seed_y - ry
-    lx2, ly2 = lx1 + seed_w, ly1 + seed_h
-    valid[max(0, ly1) : min(rh, ly2), max(0, lx1) : min(rw, lx2)] = True
-    valid_u8 = cv2.morphologyEx(
-        valid.astype(np.uint8),
-        cv2.MORPH_CLOSE,
-        np.ones((3, 3), dtype=np.uint8),
-    ).astype(bool)
-
-    x1, y1 = max(0, lx1), max(0, ly1)
-    x2, y2 = min(rw, lx2), min(rh, ly2)
-    step = max(1, round(preferred * 0.04))
-    required_ratio = 1.0 - cfg.bubble_max_invalid_ratio
-
-    def strip_ok(strip: np.ndarray) -> bool:
-        return strip.size > 0 and float(np.mean(strip)) >= required_ratio
-
-    for _ in range(max(rw, rh) // step + 4):
-        changes = [False, False, False, False]
-        new_left = max(0, x1 - step)
-        new_right = min(rw, x2 + step)
-        new_top = max(0, y1 - step)
-        new_bottom = min(rh, y2 + step)
-        if new_left < x1 and strip_ok(valid_u8[y1:y2, new_left:x1]):
-            changes[0] = True
-        if new_right > x2 and strip_ok(valid_u8[y1:y2, x2:new_right]):
-            changes[1] = True
-        if new_top < y1 and strip_ok(valid_u8[new_top:y1, x1:x2]):
-            changes[2] = True
-        if new_bottom > y2 and strip_ok(valid_u8[y2:new_bottom, x1:x2]):
-            changes[3] = True
-        if not any(changes):
-            break
-        if changes[0]:
-            x1 = new_left
-        if changes[1]:
-            x2 = new_right
-        if changes[2]:
-            y1 = new_top
-        if changes[3]:
-            y2 = new_bottom
-
-    candidate = (rx + x1, ry + y1, x2 - x1, y2 - y1)
+    x1, y1, width_value, height_value = cv2.boundingRect(points)
+    candidate = (rx + x1, ry + y1, width_value, height_value)
     if candidate[2] <= seed_w and candidate[3] <= seed_h:
         return None
 
@@ -816,18 +688,6 @@ def _select_layout_bbox(
         cfg,
     )
     return bubble if bubble is not None else base
-
-
-def _balanced_chunks(text: str, count: int) -> tuple[str, ...]:
-    count = max(1, min(count, len(text)))
-    base, remainder = divmod(len(text), count)
-    lengths = [base + (1 if index < remainder else 0) for index in range(count)]
-    chunks: list[str] = []
-    cursor = 0
-    for length in lengths:
-        chunks.append(text[cursor : cursor + length])
-        cursor += length
-    return tuple(chunks)
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:
@@ -903,7 +763,8 @@ def _plan_vertical(
     target_y = geometry.bbox[1] + geometry.bbox[3] / 2.0 - layout_bbox[1]
     target_w = max(preferred, float(geometry.bbox[2]))
     target_h = max(preferred, float(geometry.bbox[3]))
-    length_ratio = len(text) / max(1, geometry.source_length)
+    text_length = len(grapheme_clusters(text))
+    length_ratio = text_length / max(1, geometry.source_length)
     expected_columns = max(
         1,
         round(geometry.primary_count * math.sqrt(max(0.15, length_ratio))),
@@ -922,15 +783,15 @@ def _plan_vertical(
         min_col_step = max(glyph_w, size * cfg.min_column_spacing_ratio)
         max_col_step = size * cfg.max_column_spacing_ratio
         max_columns = min(
-            len(text),
+            text_length,
             max(1, math.floor((available_w - glyph_w) / max(1.0, min_col_step)) + 1),
         )
 
         for columns in range(1, max_columns + 1):
-            chunks = _balanced_chunks(text, columns)
-            max_items = max(len(chunk) for chunk in chunks)
-            if columns > 1 and len(text) / columns < cfg.min_chars_per_column * 0.65:
-                sparse_penalty = (cfg.min_chars_per_column - len(text) / columns) * 0.7
+            chunks = balanced_legal_chunks(text, columns)
+            max_items = max(len(grapheme_clusters(chunk)) for chunk in chunks)
+            if columns > 1 and text_length / columns < cfg.min_chars_per_column * 0.65:
+                sparse_penalty = (cfg.min_chars_per_column - text_length / columns) * 0.7
             else:
                 sparse_penalty = 0.0
 
@@ -1187,8 +1048,6 @@ def plan_text_layout(
     direction = _decide_direction(group, cfg.direction)
     if direction == "vertical":
         cleaned = cleaned.replace(" ", "")
-        if cfg.vertical_punct_map:
-            cleaned = _verticalize_punctuation(cleaned)
     if not cleaned:
         return TextLayoutPlan(
             bbox=group.bbox,
@@ -1236,7 +1095,7 @@ def _simple_patch_plan(
         primary_count=1,
         primary_step=float(preferred),
         secondary_step=float(preferred) * 1.08,
-        source_length=max(1, len(text)),
+        source_length=max(1, len(grapheme_clusters(text))),
     )
     bbox = (0, 0, width, height)
     if direction == "vertical":
@@ -1295,8 +1154,6 @@ def render_text_into_patch(
     cleaned = _sanitize_render_text(text)
     if direction == "vertical":
         cleaned = cleaned.replace(" ", "")
-        if cfg.vertical_punct_map:
-            cleaned = _verticalize_punctuation(cleaned)
     if height <= 1 or width <= 1 or not cleaned:
         return np.zeros((height, width, 4), dtype=np.uint8)
 
@@ -1393,7 +1250,7 @@ def render_text_into_patch(
                 _maybe_outline_draw(draw, (x, y), draw_char, font, fill, cfg)
 
     layer_np = np.array(layer)
-    if cfg.clip_render and clip_mask is not None:
+    if clip_mask is not None:
         mask = clip_mask
         if mask.shape[:2] != (height, width):
             mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
@@ -1433,16 +1290,6 @@ def compose_patch_back(image: np.ndarray, patch_rgba: np.ndarray, x: int, y: int
     return result
 
 
-def _bbox_distance(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> int:
-    ax1, ay1, aw, ah = a
-    bx1, by1, bw, bh = b
-    ax2, ay2 = ax1 + aw, ay1 + ah
-    bx2, by2 = bx1 + bw, by1 + bh
-    dx = max(0, max(bx1 - ax2, ax1 - bx2))
-    dy = max(0, max(by1 - ay2, ay1 - by2))
-    return max(dx, dy)
-
-
 def render_text_into_group(
     image: np.ndarray,
     group: TextGroup,
@@ -1451,12 +1298,10 @@ def render_text_into_group(
     font_path: str | Path,
     cfg: TypesettingConfig | None = None,
     fallback_font_path: str | Path | None = None,
-    nearby_group_bboxes: list[tuple[int, int, int, int]] | None = None,
     layout_plan: TextLayoutPlan | None = None,
     layout_reference_image: np.ndarray | None = None,
 ) -> np.ndarray:
     cfg = cfg or TypesettingConfig()
-    del nearby_group_bboxes  # collision filtering happens before layout; do not shrink nearby text.
     reference = layout_reference_image if layout_reference_image is not None else image
     plan = layout_plan or plan_text_layout(
         reference,
@@ -1472,7 +1317,6 @@ def render_text_into_group(
 
     x, y, w, h = plan.bbox
     patch = image[y : y + h, x : x + w].copy()
-    clip_mask = np.full((h, w), 255, dtype=np.uint8) if cfg.clip_render else None
     layer = render_text_into_patch(
         patch,
         text,
@@ -1480,7 +1324,7 @@ def render_text_into_group(
         font_path=font_path,
         cfg=cfg,
         fallback_font_path=fallback_font_path,
-        clip_mask=clip_mask,
+        clip_mask=None,
         preferred_font_size=_preferred_group_font_size(group, regions_by_id),
         layout_plan=plan,
     )
@@ -1520,5 +1364,4 @@ def render_text_into_region(
         font_path=font_path,
         cfg=cfg,
         fallback_font_path=fallback_font_path,
-        nearby_group_bboxes=None,
     )

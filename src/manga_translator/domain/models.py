@@ -159,6 +159,21 @@ class RegionIdentity(DomainModel):
     is_active: bool = True
 
 
+class RasterTransform(DomainModel):
+    source_space: str = Field(min_length=1)
+    target_space: str = Field(min_length=1)
+    affine_2x3: tuple[float, float, float, float, float, float]
+
+
+class MaskLineage(DomainModel):
+    artifact: ArtifactRef
+    detector_pass: int
+    detection_input_size: int = Field(ge=0)
+    raw_index: int = Field(ge=-1)
+    source_revision_id: Sha256 | None = None
+    transform: RasterTransform
+
+
 class RegionRevision(DomainModel):
     revision_id: Sha256
     region_id: UUID
@@ -168,9 +183,33 @@ class RegionRevision(DomainModel):
     angle_degrees: float = 0.0
     orientation: Literal["horizontal", "vertical", "rotated", "unknown"] = "unknown"
     detector_score: Score
+    font_size_hint: float | None = Field(default=None, gt=0)
     mask_refs: tuple[ArtifactRef, ...] = ()
+    mask_lineage: tuple[MaskLineage, ...] = ()
     source: str = Field(min_length=1)
     raw_index: int = Field(ge=-1)
+
+    @model_validator(mode="after")
+    def validate_mask_lineage(self) -> RegionRevision:
+        mask_hashes = {artifact.sha256 for artifact in self.mask_refs}
+        for lineage in self.mask_lineage:
+            if lineage.artifact.sha256 not in mask_hashes:
+                raise ValueError("mask lineage artifact must appear in mask_refs")
+            if (
+                lineage.source_revision_id is not None
+                and lineage.source_revision_id != self.revision_id
+            ):
+                raise ValueError("region mask lineage must reference its owning revision")
+        return self
+
+
+class GroupGeometry(DomainModel):
+    group_id: str = Field(min_length=1)
+    member_revision_ids: tuple[Sha256, ...] = Field(min_length=1)
+    bbox: BoundingBox
+    polygon: Polygon | None = None
+    union_mask_ref: ArtifactRef | None = None
+    mask_lineage: tuple[MaskLineage, ...] = ()
 
 
 class OCRCandidate(DomainModel):
@@ -208,6 +247,11 @@ class StyleFingerprint(DomainModel):
     angle_degrees: float = 0.0
     features: dict[str, float] = Field(default_factory=dict)
     confidence: Score
+    sample_counts: dict[str, int] = Field(default_factory=dict)
+    confidences: dict[str, Score] = Field(default_factory=dict)
+    unknown_fields: tuple[str, ...] = ()
+    shadow_offset: tuple[float, float] | None = None
+    source: Literal["original_image"] = "original_image"
 
 
 class TranslationRecord(DomainModel):
@@ -277,6 +321,7 @@ class PageDocument(DomainModel):
     source: SourcePage
     region_identities: tuple[RegionIdentity, ...] = ()
     region_revisions: tuple[RegionRevision, ...] = ()
+    group_geometries: tuple[GroupGeometry, ...] = ()
     ocr_records: tuple[OCRRecord, ...] = ()
     style_fingerprints: tuple[StyleFingerprint, ...] = ()
     translations: tuple[TranslationRecord, ...] = ()
@@ -362,6 +407,28 @@ class PageDocument(DomainModel):
                     for point in polygon.points
                 ):
                     raise ValueError("revision polygon outside source page")
+        for group in self.group_geometries:
+            if any(revision_id not in revisions for revision_id in group.member_revision_ids):
+                raise ValueError("group geometry references unknown revision")
+            if len(set(group.member_revision_ids)) != len(group.member_revision_ids):
+                raise ValueError("group geometry has duplicate member revisions")
+            if group.bbox.right > self.source.width or group.bbox.bottom > self.source.height:
+                raise ValueError("group geometry bbox outside source page")
+            if group.union_mask_ref is None and group.mask_lineage:
+                raise ValueError("group mask lineage requires a union mask artifact")
+            if group.polygon is not None and any(
+                point.x > self.source.width or point.y > self.source.height
+                for point in group.polygon.points
+            ):
+                raise ValueError("group geometry polygon outside source page")
+            for lineage in group.mask_lineage:
+                if (
+                    group.union_mask_ref is None
+                    or lineage.artifact.sha256 != group.union_mask_ref.sha256
+                ):
+                    raise ValueError("group mask lineage must reference its union mask")
+                if lineage.source_revision_id not in group.member_revision_ids:
+                    raise ValueError("group mask lineage references a non-member revision")
         for record in (
             *self.ocr_records,
             *self.style_fingerprints,

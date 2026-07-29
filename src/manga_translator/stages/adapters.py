@@ -12,6 +12,7 @@ from typing import Any
 from ..config import AppConfig
 from ..domain.issues import StageName
 from ..manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
+from ..typography.safe_region import SAFE_REGION_MEDIA_TYPE
 from .base import (
     ArtifactContract,
     ArtifactSetContract,
@@ -19,6 +20,7 @@ from .base import (
     StageFunction,
     StageSpec,
 )
+from .detect import DETECTOR_GEOMETRY_MEDIA_TYPE
 from .runner import STAGE_DAG
 from .state import MASK_MEDIA_TYPE, STATE_MEDIA_TYPE
 
@@ -33,9 +35,17 @@ STATE_CONTRACT = ArtifactSetContract(
     required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
     additional_media_types=(MASK_MEDIA_TYPE,),
 )
+DETECT_CONTRACT = ArtifactSetContract(
+    required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
+    additional_media_types=(MASK_MEDIA_TYPE, DETECTOR_GEOMETRY_MEDIA_TYPE),
+)
 STATE_WITH_SOURCE_CONTRACT = ArtifactSetContract(
     required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
     additional_media_types=(MASK_MEDIA_TYPE, SOURCE_MEDIA_TYPE),
+)
+SAFE_REGION_CONTRACT = ArtifactSetContract(
+    required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
+    additional_media_types=(MASK_MEDIA_TYPE, SAFE_REGION_MEDIA_TYPE),
 )
 RENDER_CONTRACT = ArtifactSetContract(
     required=(ArtifactContract("state", STATE_MEDIA_TYPE),),
@@ -134,6 +144,7 @@ def build_pipeline_stage_specs(
             **_package_versions("manga-ocr", "transformers", "torch"),
         },
         StageName.TRANSLATE: _package_versions("httpx"),
+        StageName.SAFE_REGION: dict(shared_versions),
         StageName.LAYOUT: _package_versions("Pillow"),
         StageName.INPAINT_RENDER: {**shared_versions, **_package_versions("Pillow")},
         StageName.ENCODE: dict(shared_versions),
@@ -141,7 +152,7 @@ def build_pipeline_stage_specs(
     config_keys: Mapping[StageName, tuple[str, ...]] = {
         StageName.DETECT: ("detection", "postprocess"),
         StageName.STYLE: (),
-        StageName.SAFE_REGION: ("inpainting",),
+        StageName.SAFE_REGION: ("typesetting",),
         StageName.OCR: ("ocr",),
         StageName.ORDER: ("postprocess.reading_order",),
         StageName.TRANSLATE: ("openrouter", "postprocess", "glossary_revision"),
@@ -150,9 +161,9 @@ def build_pipeline_stage_specs(
     }
     output_contracts: Mapping[StageName, ArtifactSetContract] = {
         StageName.SOURCE: SOURCE_CONTRACT,
-        StageName.DETECT: STATE_CONTRACT,
+        StageName.DETECT: DETECT_CONTRACT,
         StageName.STYLE: STATE_WITH_SOURCE_CONTRACT,
-        StageName.SAFE_REGION: STATE_CONTRACT,
+        StageName.SAFE_REGION: SAFE_REGION_CONTRACT,
         StageName.OCR: STATE_CONTRACT,
         StageName.ORDER: STATE_CONTRACT,
         StageName.TRANSLATE: STATE_CONTRACT,
@@ -167,7 +178,15 @@ def build_pipeline_stage_specs(
             name=stage,
             dependencies=dependencies,
             run=runners[stage],
-            code_revision=f"manga-translator-v0.3.2-p1-{stage.value}.3",
+            code_revision=(
+                "manga-translator-v0.3.2-p2-style.2"
+                if stage is StageName.STYLE
+                else "manga-translator-v0.3.2-p2-safe-region.2"
+                if stage is StageName.SAFE_REGION
+                else "manga-translator-v0.3.2-p2-layout.2"
+                if stage is StageName.LAYOUT
+                else f"manga-translator-v0.3.2-p2-{stage.value}.1"
+            ),
             config_keys=config_keys.get(stage, ()),
             input_contracts={
                 dependency: output_contracts[dependency] for dependency in dependencies

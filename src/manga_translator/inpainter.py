@@ -240,16 +240,16 @@ def _flat_background_refined_mask(
     return _refine_flat_text_edge_mask(image, mask, median, cfg)
 
 
-def _inpaint_one_mask(
-    image: np.ndarray,
+def _inpaint_one_mask_inplace(
+    working: np.ndarray,
     mask: np.ndarray,
     cfg: InpaintingConfig,
     *,
     method: str,
-) -> np.ndarray:
+) -> bool:
     bbox = _mask_bbox(mask)
     if bbox is None:
-        return image
+        return False
 
     x, y, w, h = bbox
     margin = max(
@@ -259,12 +259,12 @@ def _inpaint_one_mask(
     )
     x1 = max(0, x - margin)
     y1 = max(0, y - margin)
-    x2 = min(image.shape[1], x + w + margin)
-    y2 = min(image.shape[0], y + h + margin)
+    x2 = min(working.shape[1], x + w + margin)
+    y2 = min(working.shape[0], y + h + margin)
     if x2 <= x1 or y2 <= y1:
-        return image
+        return False
 
-    roi = image[y1:y2, x1:x2]
+    roi = working[y1:y2, x1:x2]
     local_mask = mask[y1:y2, x1:x2]
     flag = cv2.INPAINT_TELEA if method == "telea" else cv2.INPAINT_NS
     repaired = cv2.inpaint(
@@ -273,9 +273,41 @@ def _inpaint_one_mask(
         inpaintRadius=float(cfg.inpaint_radius),
         flags=flag,
     )
-    result = image.copy()
-    result[y1:y2, x1:x2] = repaired
-    return result
+    working[y1:y2, x1:x2] = repaired
+    return True
+
+
+def inpaint_roi(
+    roi: np.ndarray,
+    mask: np.ndarray,
+    cfg: InpaintingConfig | None = None,
+) -> np.ndarray:
+    """Inpaint one already-bounded ROI without allocating a page-sized image."""
+
+    cfg = cfg or InpaintingConfig()
+    local_mask = _prepare_mask(mask, target_h=roi.shape[0], target_w=roi.shape[1])
+    total_dilate = max(0, cfg.mask_dilate) + max(0, cfg.extra_mask_dilate)
+    local_mask = _dilate_mask(local_mask, total_dilate)
+    if not np.any(local_mask):
+        return roi.copy()
+    if cfg.method == "white":
+        repaired = roi.copy()
+        repaired[local_mask > 0] = 255
+        return repaired
+    if cfg.method == "hybrid":
+        refined = _flat_background_refined_mask(roi, local_mask, cfg)
+        if refined is not None:
+            local_mask = refined
+        method = "telea"
+    else:
+        method = cfg.method
+    flag = cv2.INPAINT_TELEA if method == "telea" else cv2.INPAINT_NS
+    return cv2.inpaint(
+        roi,
+        local_mask,
+        inpaintRadius=float(cfg.inpaint_radius),
+        flags=flag,
+    )
 
 
 def _hybrid_inpaint(
@@ -303,10 +335,10 @@ def _hybrid_inpaint(
 
         refined_mask = _flat_background_refined_mask(image, mask, cfg)
         if refined_mask is not None:
-            result = _inpaint_one_mask(result, refined_mask, cfg, method="telea")
+            _inpaint_one_mask_inplace(result, refined_mask, cfg, method="telea")
             continue
 
-        result = _inpaint_one_mask(result, mask, cfg, method="telea")
+        _inpaint_one_mask_inplace(result, mask, cfg, method="telea")
     return result
 
 
@@ -348,4 +380,6 @@ def inpaint_regions(
         result[mask > 0] = 255
         return result
 
-    return _inpaint_one_mask(image, mask, cfg, method=cfg.method)
+    result = image.copy()
+    _inpaint_one_mask_inplace(result, mask, cfg, method=cfg.method)
+    return result

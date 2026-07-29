@@ -141,15 +141,10 @@ typesetting:
   adaptive_bubble_layout: true
   bubble_search_expand_ratio: 0.72
   bubble_search_max_px: 720
-  bubble_background_tolerance: 34
-  bubble_background_min_luma: 160
-  bubble_background_dominant_ratio: 0.62
   bubble_inner_margin_ratio: 0.07
-  bubble_max_invalid_ratio: 0.004
 
   # 直排採平衡換欄並置中，避免某一欄塞滿、其他欄大量留白。
   vertical_char_spacing: 1.03
-  balance_columns: true
   min_char_spacing_ratio: 0.88
   max_char_spacing_ratio: 1.32
   min_column_spacing_ratio: 0.92
@@ -158,12 +153,8 @@ typesetting:
   reject_unreadable_layout: true
 
   # 中文字形不能拿日文字形像素裁切，否則會缺筆。
-  clip_render: false
   outline_width: 0
   outline_color: "auto"
-  min_gap_px: 4
-  use_font_metrics: true
-  vertical_punct_map: true
   replace_unsupported_glyphs: true
   inner_padding: 2
 

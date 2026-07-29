@@ -1,0 +1,32 @@
+{
+  "schema_version": "font_catalog.v1",
+  "license_reviewed": true,
+  "fonts": [
+    {
+      "path": "fonts/Iansui-Regular.ttf",
+      "sha256": "7f1aa62e9dcbf40d0ce41a5d3f1e5ea602e66c295778ac6fefb6b84d8ed08bd5",
+      "family": "Iansui",
+      "subfamily": "Regular",
+      "weight_class": 400,
+      "width_class": 5,
+      "coverage_codepoints": 12666,
+      "vertical_metrics": true,
+      "vertical_features": ["vert"],
+      "license": "SIL Open Font License 1.1",
+      "license_url": "https://scripts.sil.org/OFL"
+    },
+    {
+      "path": "fonts/NotoSansCJKtc-Regular.otf",
+      "sha256": "dce08bd4fd91aa8aa76ed8fea4b694c2dfb8550f67871e326843212ddbeb88b4",
+      "family": "Noto Sans CJK TC",
+      "subfamily": "Regular",
+      "weight_class": 400,
+      "width_class": 5,
+      "coverage_codepoints": 44810,
+      "vertical_metrics": true,
+      "vertical_features": ["vert", "vrt2"],
+      "license": "SIL Open Font License 1.1",
+      "license_url": "http://scripts.sil.org/OFL"
+    }
+  ]
+}

@@ -21,14 +21,20 @@ from manga_translator.contracts.mapping import (
     ResponseItem,
     bind_validated_responses,
 )
-from manga_translator.detector import DetectionResult, TextGroup, TextRegion
+from manga_translator.detector import DetectionResult, MaskSource, TextGroup, TextRegion
 from manga_translator.domain.issues import IssueCode, StageName, StageStatus
+from manga_translator.domain.models import ArtifactRef
 from manga_translator.domain.serialization import canonical_document_bytes
 from manga_translator.manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from manga_translator.ocr import OCRCandidate, OCRResult
+from manga_translator.stages.state import decode_pipeline_state
 from manga_translator.storage import ArtifactStore, JobStore
 from manga_translator.translator import TranslationValidation
 from manga_translator.typesetter import TextLayoutPlan
+from manga_translator.typography.safe_region import (
+    SAFE_REGION_MEDIA_TYPE,
+    decode_safe_region_artifacts,
+)
 
 
 def _config(tmp_path: Path) -> AppConfig:
@@ -62,7 +68,19 @@ def _detection() -> DetectionResult:
             w=12,
             h=18,
             confidence=0.9,
+            font_size_hint=18.0,
+            page_bbox=(4.0, 5.0, 12.0, 18.0),
+            line_polygons=(((5.0, 6.0), (14.0, 5.0), (15.0, 20.0), (6.0, 21.0)),),
+            angle_degrees=6.5,
             local_mask=np.full((18, 12), 255, dtype=np.uint8),
+            mask_source=MaskSource(
+                detector_pass=0,
+                detection_input_size=1024,
+                raw_index=0,
+                source="ctd",
+                source_region_id="r1",
+                page_to_local_affine=(1.0, 0.0, -4.0, 0.0, 1.0, -5.0),
+            ),
         ),
         TextRegion(
             id="r2",
@@ -71,7 +89,16 @@ def _detection() -> DetectionResult:
             w=12,
             h=18,
             confidence=0.8,
+            page_bbox=(34.0, 5.0, 12.0, 18.0),
             local_mask=np.full((18, 12), 255, dtype=np.uint8),
+            mask_source=MaskSource(
+                detector_pass=0,
+                detection_input_size=1024,
+                raw_index=1,
+                source="ctd",
+                source_region_id="r2",
+                page_to_local_affine=(1.0, 0.0, -34.0, 0.0, 1.0, -5.0),
+            ),
         ),
     ]
     groups = [
@@ -276,6 +303,57 @@ def test_region_mask_artifacts_require_canonical_png_and_bbox_dimensions(
             pipeline_module._read_local_mask_artifact(store, wrong_shape_ref, bbox)
 
 
+def test_safe_region_stage_persists_replayable_roi_artifacts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    _source(config)
+    state = tmp_path / "state"
+    _install_component_fakes(monkeypatch, config)
+    result = pipeline_module.run_pipeline(
+        config, job_id="job-1", state_dir=state, resume=True
+    )
+    page_id = result.pages[0].page_id
+
+    with JobStore(state / "jobs.sqlite3", ArtifactStore(state / "artifacts")) as store:
+        row = next(
+            item
+            for item in store.list_stage_runs(job_id="job-1", page_id=page_id)
+            if item[0] == StageName.SAFE_REGION.value
+        )
+        outputs = []
+        for sha256 in json.loads(row[4]):
+            artifact_row = store.connection.execute(
+                "SELECT media_type, size_bytes FROM artifacts WHERE sha256=?", (sha256,)
+            ).fetchone()
+            assert artifact_row is not None
+            outputs.append(
+                ArtifactRef(
+                    sha256=sha256,
+                    media_type=str(artifact_row[0]),
+                    size_bytes=int(artifact_row[1]),
+                )
+            )
+        safe_state = decode_pipeline_state(
+            outputs,
+            expected_stage=StageName.SAFE_REGION,
+            read_bytes=store.artifacts.read_bytes,
+        )
+        index = safe_state.extras["safe_regions"]
+        assert set(index) == {group.id for group in safe_state.detection.groups}
+        for entry in index.values():
+            reference = ArtifactRef.model_validate(entry["artifact"])
+            assert reference.media_type == SAFE_REGION_MEDIA_TYPE
+            assert reference in outputs
+            artifacts = decode_safe_region_artifacts(
+                store.artifacts.read_bytes(reference.sha256)
+            )
+            _x, _y, width, height = entry["roi_bbox"]
+            assert artifacts.safe_mask.shape == (height, width)
+            assert np.any(artifacts.safe_mask)
+            assert np.any(artifacts.render_mask)
+
+
 def test_component_stages_resume_without_reloading_models_or_provider(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -300,6 +378,18 @@ def test_component_stages_resume_without_reloading_models_or_provider(
     first_document = _open_document(state, page_id)
     assert first_document is not None
     first_bytes = canonical_document_bytes(first_document)
+    assert len(first_document.translations) == 1
+    assert first_document.region_revisions[0].angle_degrees == 6.5
+    assert first_document.region_revisions[0].line_polygons
+    assert first_document.region_revisions[0].mask_lineage[0].source_revision_id == (
+        first_document.region_revisions[0].revision_id
+    )
+    assert len(first_document.group_geometries) == 2
+    assert len(first_document.style_fingerprints) == 2
+    assert all(
+        fingerprint.source == "original_image"
+        for fingerprint in first_document.style_fingerprints
+    )
 
     second = pipeline_module.run_pipeline(
         config, job_id="job-1", state_dir=state, resume=True, dump_json=True

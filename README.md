@@ -172,8 +172,6 @@ typesetting:
   font_preserve_floor_scale: 0.92
   min_font_scale: 0.85
   reject_unreadable_layout: true
-  balance_columns: true
-  clip_render: false
 ```
 
 含義：
@@ -182,7 +180,6 @@ typesetting:
 - `min_font_scale: 0.85`：預設可接受的最低字級比例。
 - `reject_unreadable_layout: true`：低於門檻就保留原文，不進行擦除。
 - `adaptive_bubble_layout: true`：先利用同一對話框／字幕框內的安全留白。
-- `balance_columns: true`：直排欄位平均分配，避免最後一欄塞滿或其他欄大片空白。
 
 ### 精確遮罩與修復
 
@@ -221,7 +218,7 @@ postprocess:
 
 ### 字仍然偏小或留白太多
 
-先確認 `layout_mode` 仍為 `preserve`、`adaptive_bubble_layout` 與 `balance_columns` 仍為 `true`。不要直接降低 `font_size_min`；那只會重新允許難以閱讀的小字。
+先確認 `layout_mode` 仍為 `preserve` 且 `adaptive_bubble_layout` 為 `true`。不要直接降低 `font_size_min`；那只會重新允許難以閱讀的小字。
 
 翻譯本身明顯比原文冗長時，應先檢查是否存在重複 OCR／重複譯文。正常情況下，0.3.2 會先增加欄數與利用安全留白，而不是縮字。
 

@@ -30,18 +30,30 @@ from .contracts.mapping import (
     build_request_map,
     mapping_chain_template,
 )
-from .detector import DetectionResult, TextGroup, TextRegion, detect_text_regions
+from .detector import (
+    DetectionResult,
+    DetectorIssue,
+    TextGroup,
+    TextRegion,
+    detect_text_regions,
+)
 from .domain.issues import Issue, IssueCode, IssueSeverity, StageName, StageStatus
 from .domain.models import (
     ArtifactRef,
     BoundingBox,
     EntityRecord,
+    GroupGeometry,
+    MaskLineage,
     OCRCandidate,
     OCRRecord,
     PageDocument,
+    Point,
+    Polygon,
+    RasterTransform,
     RegionRevision,
     SourcePage,
     StageRecord,
+    StyleFingerprint,
     TranslationRecord,
 )
 from .domain.reconcile import RegionObservation, reconcile_regions
@@ -82,6 +94,7 @@ from .stages.base import (
     StageInputs,
     StageOutputs,
 )
+from .stages.detect import detection_geometry_output
 from .stages.runner import StageFailureContext, StageOutcome, StageRunner
 from .stages.state import (
     MASK_MEDIA_TYPE,
@@ -90,6 +103,7 @@ from .stages.state import (
     encode_pipeline_state,
 )
 from .storage import ArtifactStore, JobStore
+from .style import ExtractedStyle, extract_style_fingerprint
 from .translator import (
     load_glossary,
     sanitize_translation_text,
@@ -103,6 +117,11 @@ from .typesetter import (
     layout_plan_block_bbox,
     plan_text_layout,
     render_text_into_group,
+)
+from .typography.safe_region import (
+    SAFE_REGION_MEDIA_TYPE,
+    build_safe_region,
+    encode_safe_region_artifacts,
 )
 
 console = Console()
@@ -511,13 +530,21 @@ def _paste_group_mask(
     if local is None:
         return
     canvas_x, canvas_y, _canvas_w, _canvas_h = canvas_bbox
-    x1 = group.x - canvas_x
-    y1 = group.y - canvas_y
-    x2 = x1 + group.w
-    y2 = y1 + group.h
-    if x1 < 0 or y1 < 0 or x2 > canvas.shape[1] or y2 > canvas.shape[0]:
+    page_x1 = max(group.x, canvas_x)
+    page_y1 = max(group.y, canvas_y)
+    page_x2 = min(group.x + group.w, canvas_x + canvas.shape[1])
+    page_y2 = min(group.y + group.h, canvas_y + canvas.shape[0])
+    if page_x2 <= page_x1 or page_y2 <= page_y1:
         return
-    canvas[y1:y2, x1:x2] = cv2.bitwise_or(canvas[y1:y2, x1:x2], local)
+    destination = canvas[
+        page_y1 - canvas_y : page_y2 - canvas_y,
+        page_x1 - canvas_x : page_x2 - canvas_x,
+    ]
+    source = local[
+        page_y1 - group.y : page_y2 - group.y,
+        page_x1 - group.x : page_x2 - group.x,
+    ]
+    destination[:] = cv2.bitwise_or(destination, source)
 
 
 def _group_mask_containment(inner: TextGroup, outer: TextGroup) -> float:
@@ -1695,11 +1722,13 @@ def _build_pipeline_stage_runners(
             height=int(image.shape[0]),
             detected_groups=len(detection.groups),
         )
-        return encode_pipeline_state(
+        state_outputs = encode_pipeline_state(
             detection,
             producer_stage=StageName.DETECT,
             extras={"source_artifact": reference.model_dump(mode="json")},
         )
+        geometry_outputs = detection_geometry_output(detection)
+        return StageOutputs((*state_outputs.artifacts, *geometry_outputs.artifacts))
 
     def adapter_state(
         inputs: StageInputs,
@@ -1718,25 +1747,143 @@ def _build_pipeline_stage_runners(
         )
 
     def style_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
-        encoded = adapter_state(inputs, stage=StageName.STYLE, adapter="style")
+        state = _read_stage_state(store, inputs, StageName.DETECT)
         reference = _source_artifact(inputs)
+        if _source_ref_from_extras(state.extras) != reference:
+            raise ValueError("style stage received inconsistent source lineage")
+        original = _decode_source_image(store, reference)
+        extracted: dict[str, dict[str, object]] = {}
+        for region in state.detection.regions_post:
+            if region.local_mask is None or not np.any(region.local_mask):
+                continue
+            try:
+                fingerprint = extract_style_fingerprint(
+                    original,
+                    region.local_mask,
+                    bbox=region.bbox,
+                    source_angle=region.angle_degrees,
+                )
+            except ValueError as error:
+                state.detection.issues.append(
+                    DetectorIssue(
+                        code="style_extract_failed",
+                        message=str(error),
+                        details={"region_id": region.id},
+                    )
+                )
+                continue
+            extracted[region.id] = fingerprint.model_dump(mode="json")
+        encoded = encode_pipeline_state(
+            state.detection,
+            producer_stage=StageName.STYLE,
+            extras={
+                **state.extras,
+                "style_adapter": "p2-original-image-v1",
+                "style_fingerprints": extracted,
+            },
+        )
         return StageOutputs(
             (
                 *encoded.artifacts,
                 ArtifactPayload(
                     store.artifacts.read_bytes(reference.sha256),
                     reference.media_type,
-                    "legacy_layout_reference",
+                    "layout_reference",
                 ),
             )
         )
 
     def safe_region_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
-        return adapter_state(
-            inputs,
-            stage=StageName.SAFE_REGION,
-            adapter="safe_region",
+        state = _read_stage_state(store, inputs, StageName.DETECT)
+        reference = _source_artifact(inputs)
+        if _source_ref_from_extras(state.extras) != reference:
+            raise ValueError("safe-region stage received inconsistent source lineage")
+        original = _decode_source_image(store, reference)
+        image_height, image_width = original.shape[:2]
+        regions_by_id = {region.id: region for region in state.detection.regions_post}
+        groups = list(state.detection.groups)
+        safe_region_index: dict[str, dict[str, object]] = {}
+        artifact_payloads: list[ArtifactPayload] = []
+
+        for group in groups:
+            local_mask = _local_group_mask(group)
+            if local_mask is None or not np.any(local_mask):
+                state.detection.issues.append(
+                    DetectorIssue(
+                        code="safe_region_missing_mask",
+                        message="safe region requires a real group text mask",
+                        details={"group_id": group.id},
+                    )
+                )
+                continue
+            font_hints = [
+                regions_by_id[region_id].font_size_hint
+                for region_id in group.region_ids
+                if region_id in regions_by_id
+            ]
+            preferred = float(np.median(font_hints)) if font_hints else float(max(1, group.h))
+            expand = (
+                min(
+                    config.typesetting.bubble_search_max_px,
+                    max(
+                        round(max(group.w, group.h) * config.typesetting.bubble_search_expand_ratio),
+                        round(preferred * 1.5),
+                    ),
+                )
+                if config.typesetting.adaptive_bubble_layout
+                else 0
+            )
+            left = max(0, group.x - expand)
+            top = max(0, group.y - expand)
+            right = min(image_width, group.x + group.w + expand)
+            bottom = min(image_height, group.y + group.h + expand)
+            roi_bbox = (left, top, right - left, bottom - top)
+            text_mask = np.zeros((roi_bbox[3], roi_bbox[2]), dtype=np.uint8)
+            _paste_group_mask(text_mask, group, roi_bbox)
+            if not np.any(text_mask):
+                raise ValueError(f"group {group.id} mask did not overlap its safe-region ROI")
+            other_text_mask = np.zeros_like(text_mask)
+            for other_group in groups:
+                if other_group.id != group.id:
+                    _paste_group_mask(other_text_mask, other_group, roi_bbox)
+            line_polygons = tuple(
+                tuple((x - left, y - top) for x, y in polygon)
+                for region_id in group.region_ids
+                if region_id in regions_by_id
+                for polygon in regions_by_id[region_id].line_polygons
+            )
+            artifacts = build_safe_region(
+                original[top:bottom, left:right],
+                text_mask,
+                line_polygons=line_polygons,
+                other_text_mask=other_text_mask,
+            )
+            payload = encode_safe_region_artifacts(artifacts)
+            artifact_ref = ArtifactRef(
+                sha256=hashlib.sha256(payload).hexdigest(),
+                media_type=SAFE_REGION_MEDIA_TYPE,
+                size_bytes=len(payload),
+            )
+            safe_region_index[group.id] = {
+                "artifact": artifact_ref.model_dump(mode="json"),
+                "confidence": artifacts.confidence,
+                "roi_bbox": list(roi_bbox),
+                "strategy": artifacts.strategy,
+            }
+            artifact_payloads.append(
+                ArtifactPayload(payload, SAFE_REGION_MEDIA_TYPE, f"safe_region:{group.id}")
+            )
+
+        encoded = encode_pipeline_state(
+            state.detection,
+            producer_stage=StageName.SAFE_REGION,
+            extras={
+                **state.extras,
+                "safe_region_adapter": "p2-protected-edge-v1",
+                "safe_regions": safe_region_index,
+            },
         )
+        return StageOutputs((*encoded.artifacts, *artifact_payloads))
 
     def ocr_stage(_context: StageContext, inputs: StageInputs) -> StageOutputs:
         state = _read_stage_state(store, inputs, StageName.DETECT)
@@ -1919,6 +2066,22 @@ def _build_pipeline_stage_runners(
             raise ValueError("layout stage received inconsistent source lineage")
         if reference not in inputs.upstream[StageName.STYLE]:
             raise ValueError("layout reference is not a declared style-stage artifact")
+        declared_safe_artifacts = set(inputs.upstream[StageName.SAFE_REGION])
+        safe_regions = safe_region.extras.get("safe_regions")
+        if not isinstance(safe_regions, dict):
+            raise TypeError("layout stage is missing durable safe-region artifacts")
+        for group_id, payload in safe_regions.items():
+            if not isinstance(group_id, str) or not isinstance(payload, dict):
+                raise TypeError("safe-region index must map group IDs to objects")
+            artifact_payload = payload.get("artifact")
+            if not isinstance(artifact_payload, dict):
+                raise TypeError(f"safe-region entry {group_id} is missing its artifact")
+            artifact_ref = ArtifactRef.model_validate(artifact_payload)
+            if (
+                artifact_ref.media_type != SAFE_REGION_MEDIA_TYPE
+                or artifact_ref not in declared_safe_artifacts
+            ):
+                raise ValueError(f"safe-region entry {group_id} references an undeclared artifact")
         original = _decode_source_image(store, reference)
         detection = state.detection
         regions_by_id = {region.id: region for region in detection.regions_post}
@@ -1947,6 +2110,8 @@ def _build_pipeline_stage_runners(
             producer_stage=StageName.LAYOUT,
             extras={
                 **state.extras,
+                "style_fingerprints": style.extras.get("style_fingerprints", {}),
+                "safe_regions": safe_regions,
                 "layout_plan_artifact": plan_reference.model_dump(mode="json"),
                 "mapping_snapshots": _merge_mapping_snapshot_payloads(
                     state.extras.get("mapping_snapshots"), groups
@@ -2107,6 +2272,18 @@ def _mapping_snapshots_from_extras(extras: dict[str, object]) -> list[GroupMappi
     return snapshots
 
 
+def _style_fingerprints_from_extras(
+    extras: dict[str, object],
+) -> dict[str, ExtractedStyle]:
+    payload = extras.get("style_fingerprints", {})
+    if not isinstance(payload, dict):
+        raise TypeError("style fingerprint state must be an object")
+    return {
+        str(region_id): ExtractedStyle.model_validate(fingerprint)
+        for region_id, fingerprint in payload.items()
+    }
+
+
 def _page_result_from_stage_outcomes(
     *,
     image_path: Path,
@@ -2135,7 +2312,7 @@ def _page_result_from_stage_outcomes(
         ResultIssue(
             code=issue.code,
             message=issue.message,
-            stage="detection",
+            stage=("style" if issue.code.startswith("style_") else "detection"),
             page_id=outcomes[StageName.SOURCE].outputs[0].sha256,
             details=issue.details,
         )
@@ -2164,6 +2341,7 @@ def _page_result_from_stage_outcomes(
         ocr_results=[group.ocr_text for group in groups],
         translations=[group.translation for group in groups],
         groups=groups,
+        style_fingerprints=_style_fingerprints_from_extras(render_state.extras),
         mapping_chains=(
             _mapping_snapshots_from_extras(render_state.extras)
             or [GroupMappingSnapshot.from_group(group) for group in groups]
@@ -2252,6 +2430,7 @@ def _page_result_from_stage_failure(
         ocr_results=[group.ocr_text for group in groups],
         translations=[group.translation for group in groups],
         groups=groups,
+        style_fingerprints=_style_fingerprints_from_extras(state.extras),
         mapping_chains=(
             _mapping_snapshots_from_extras(state.extras)
             or [GroupMappingSnapshot.from_group(group) for group in groups]
@@ -2261,7 +2440,11 @@ def _page_result_from_stage_failure(
                 ResultIssue(
                     code=detector_issue.code,
                     message=detector_issue.message,
-                    stage="detect",
+                    stage=(
+                        "style"
+                        if detector_issue.code.startswith("style_")
+                        else "detect"
+                    ),
                     page_id=page_id,
                     details=detector_issue.details,
                 )
@@ -2386,6 +2569,7 @@ def _typed_issue(issue: ResultIssue) -> Issue:
     stage_alias = {
         "decode": StageName.SOURCE,
         "detection": StageName.DETECT,
+        "style": StageName.STYLE,
         "ocr": StageName.OCR,
         "translation": StageName.TRANSLATE,
         "layout": StageName.LAYOUT,
@@ -2398,12 +2582,15 @@ def _typed_issue(issue: ResultIssue) -> Issue:
         stage = stage_alias.get(issue.stage, StageName.SOURCE)
     code = {
         StageName.DETECT: IssueCode.DETECTOR_FAILED,
+        StageName.STYLE: IssueCode.STYLE_FAILED,
         StageName.OCR: IssueCode.OCR_FAILED,
         StageName.TRANSLATE: IssueCode.TRANSLATION_FAILED,
         StageName.LAYOUT: IssueCode.LAYOUT_FAILED,
         StageName.INPAINT_RENDER: IssueCode.RENDER_FAILED,
         StageName.ENCODE: IssueCode.ENCODE_FAILED,
     }.get(stage, IssueCode.SOURCE_FAILED if issue.stage == "decode" else IssueCode.PIPELINE_FAILED)
+    if "polygon" in issue.code or "geometry" in issue.code:
+        code = IssueCode.INVALID_GEOMETRY
     if issue.stage == "output":
         code = IssueCode.OUTPUT_FAILED
     return Issue(
@@ -2455,6 +2642,7 @@ def _document_from_page_result(
             revision.bbox,
         )
     observations: list[RegionObservation] = []
+    region_mask_sources = []
     for region in page.regions:
         bbox = BoundingBox(
             x=float(region.x),
@@ -2483,6 +2671,11 @@ def _document_from_page_result(
             RegionObservation(
                 bbox=bbox,
                 detector_score=max(0.0, min(1.0, float(region.confidence))),
+                line_polygons=tuple(
+                    Polygon(points=tuple(Point(x=x, y=y) for x, y in line))
+                    for line in region.line_polygons
+                ),
+                angle_degrees=region.angle_degrees,
                 source=region.source,
                 raw_index=region.raw_index,
                 orientation="vertical" if region.vertical else "horizontal",
@@ -2491,6 +2684,7 @@ def _document_from_page_result(
                 crop_dhash=_source_crop_dhash(page.source_image, bbox),
             )
         )
+        region_mask_sources.append(region.mask_source)
     reconciled = reconcile_regions(
         page_id=page.page_id,
         detector_fingerprint=outcomes[StageName.DETECT].fingerprint,
@@ -2498,6 +2692,47 @@ def _document_from_page_result(
         previous=previous,
         previous_masks=previous_masks,
         previous_crop_dhashes=previous_crop_dhashes,
+    )
+    enriched_current: dict[str, RegionRevision] = {}
+    for region, revision, mask_source in zip(
+        page.regions,
+        reconciled.current_revisions,
+        region_mask_sources,
+        strict=True,
+    ):
+        lineage = ()
+        if revision.mask_refs and mask_source is not None:
+            lineage = (
+                MaskLineage(
+                    artifact=revision.mask_refs[0],
+                    detector_pass=mask_source.detector_pass,
+                    detection_input_size=mask_source.detection_input_size,
+                    raw_index=mask_source.raw_index,
+                    source_revision_id=revision.revision_id,
+                    transform=RasterTransform(
+                        source_space="page",
+                        target_space="region_local",
+                        affine_2x3=mask_source.page_to_local_affine,
+                    ),
+                ),
+            )
+        enriched_current[revision.revision_id] = revision.model_copy(
+            update={
+                "font_size_hint": (
+                    float(region.font_size_hint) if region.font_size_hint > 0 else None
+                ),
+                "mask_lineage": lineage,
+            }
+        )
+    reconciled = reconciled.__class__(
+        reconciled.identities,
+        tuple(
+            enriched_current.get(revision.revision_id, revision)
+            for revision in reconciled.revisions
+        ),
+        reconciled.issues,
+        reconciled.current_region_ids,
+        reconciled.current_revision_ids,
     )
     revision_by_legacy_id = {
         region.id: revision
@@ -2593,6 +2828,129 @@ def _document_from_page_result(
                         },
                     )
                 )
+    group_geometries: list[GroupGeometry] = []
+    source_by_id = {region.id: region.mask_source for region in page.regions}
+    for group in page.groups:
+        member_pairs = tuple(
+            (legacy_id, revision_by_legacy_id[legacy_id])
+            for legacy_id in group.region_ids
+            if legacy_id in revision_by_legacy_id
+        )
+        if not member_pairs:
+            continue
+        union_mask_ref = None
+        if group.mask is not None and np.any(group.mask):
+            group_bbox = BoundingBox(
+                x=float(group.x),
+                y=float(group.y),
+                width=float(group.w),
+                height=float(group.h),
+            )
+            local_group_mask = _validate_local_mask(
+                group.mask,
+                group_bbox,
+                identity=group.id,
+            )
+            encoded, buffer = cv2.imencode(".png", local_group_mask)
+            if not encoded:
+                raise ValueError(f"group mask {group.id} could not be encoded as PNG")
+            union_mask_ref = store.store_artifact(
+                buffer.tobytes(),
+                media_type=MASK_MEDIA_TYPE,
+                owner_type="group_union_mask",
+                owner_id=f"{job_id}:{page.page_id}:{group.id}",
+            )
+        mask_lineage = ()
+        if union_mask_ref is not None:
+            mask_lineage = tuple(
+                MaskLineage(
+                    artifact=union_mask_ref,
+                    detector_pass=source.detector_pass,
+                    detection_input_size=source.detection_input_size,
+                    raw_index=source.raw_index,
+                    source_revision_id=revision.revision_id,
+                    transform=RasterTransform(
+                        source_space="page",
+                        target_space="group_local",
+                        affine_2x3=(
+                            1.0,
+                            0.0,
+                            -float(group.x),
+                            0.0,
+                            1.0,
+                            -float(group.y),
+                        ),
+                    ),
+                )
+                for legacy_id, revision in member_pairs
+                if (source := source_by_id.get(legacy_id)) is not None
+            )
+        group_geometries.append(
+            GroupGeometry(
+                group_id=group.id,
+                member_revision_ids=tuple(revision.revision_id for _, revision in member_pairs),
+                bbox=BoundingBox(
+                    x=float(group.x),
+                    y=float(group.y),
+                    width=float(group.w),
+                    height=float(group.h),
+                ),
+                union_mask_ref=union_mask_ref,
+                mask_lineage=mask_lineage,
+            )
+        )
+    domain_styles: list[StyleFingerprint] = [
+        fingerprint
+        for fingerprint in previous.style_fingerprints
+        if fingerprint.revision_id not in current_revision_ids
+    ]
+    for legacy_region_id, extracted in page.style_fingerprints.items():
+        revision = revision_by_legacy_id.get(legacy_region_id)
+        if revision is None or not isinstance(extracted, ExtractedStyle):
+            continue
+        estimates = {
+            "fill": extracted.fill,
+            "stroke": extracted.stroke,
+            "stroke_width": extracted.stroke_width,
+            "ink_density": extracted.ink_density,
+            "normalized_stroke_width": extracted.normalized_stroke_width,
+            "width_height_ratio": extracted.width_height_ratio,
+            "edge_roundness": extracted.edge_roundness,
+            "stroke_variation": extracted.stroke_variation,
+            "source_angle": extracted.source_angle,
+        }
+        features = {
+            name: float(estimate.value)
+            for name, estimate in estimates.items()
+            if name not in {"fill", "stroke"} and estimate.value is not None
+        }
+        known_confidences = [
+            estimate.confidence for estimate in estimates.values() if estimate.status == "known"
+        ]
+        domain_styles.append(
+            StyleFingerprint(
+                region_id=revision.region_id,
+                revision_id=revision.revision_id,
+                fill_rgb=extracted.fill.value,
+                stroke_rgb=extracted.stroke.value,
+                shadow_rgb=extracted.shadow.color.value,
+                stroke_width=extracted.stroke_width.value,
+                ink_density=extracted.ink_density.value,
+                angle_degrees=extracted.source_angle.value or 0.0,
+                features=features,
+                confidence=(
+                    sum(known_confidences) / len(known_confidences)
+                    if known_confidences
+                    else 0.0
+                ),
+                sample_counts={name: estimate.sample_count for name, estimate in estimates.items()},
+                confidences={name: estimate.confidence for name, estimate in estimates.items()},
+                unknown_fields=tuple(
+                    name for name, estimate in estimates.items() if estimate.status == "unknown"
+                ),
+                shadow_offset=extracted.shadow.offset.value,
+            )
+        )
     stage_records = _stage_records(outcomes)
     retained_entities = tuple(
         entity
@@ -2634,6 +2992,8 @@ def _document_from_page_result(
         source=previous.source,
         region_identities=reconciled.identities,
         region_revisions=reconciled.revisions,
+        group_geometries=tuple(group_geometries),
+        style_fingerprints=tuple(domain_styles),
         ocr_records=tuple(ocr_records),
         translations=tuple(translations),
         stages=stage_records,
@@ -2823,6 +3183,11 @@ def _page_result_from_document(
             if record.revision_id in active_revision_ids
         ],
         groups=groups,
+        style_fingerprints={
+            str(fingerprint.region_id): fingerprint
+            for fingerprint in document.style_fingerprints
+            if fingerprint.revision_id in active_revision_ids
+        },
         mapping_chains=mappings,
         issues=[
             ResultIssue(

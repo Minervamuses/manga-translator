@@ -570,21 +570,26 @@ def _redacted_config_artifact(root: Path) -> tuple[dict[str, Any], bool]:
     }, configured
 
 
-def _ocr_asset() -> dict[str, Any]:
+def _ocr_asset(
+    *,
+    model_id: str = DEFAULT_MODEL_ID,
+    requested_revision: str | None = None,
+) -> dict[str, Any]:
     hf_home = Path(os.getenv("HF_HOME", Path.home() / ".cache" / "huggingface"))
     hub = Path(os.getenv("HF_HUB_CACHE", hf_home / "hub"))
-    repository = hub / f"models--{DEFAULT_MODEL_ID.replace('/', '--')}"
+    repository = hub / f"models--{model_id.replace('/', '--')}"
     reference = repository / "refs" / "main"
     try:
         revision = reference.read_text(encoding="utf-8").strip()
     except OSError:
         revision = ""
-    snapshot = repository / "snapshots" / revision if revision else None
+    resolved_revision = requested_revision or revision
+    snapshot = repository / "snapshots" / resolved_revision if resolved_revision else None
     if snapshot is None or not snapshot.is_dir():
         return {
-            "model_id": DEFAULT_MODEL_ID,
-            "requested_revision": None,
-            "resolved_revision": revision or None,
+            "model_id": model_id,
+            "requested_revision": requested_revision,
+            "resolved_revision": resolved_revision or None,
             "status": "missing",
             "snapshot_fingerprint": None,
         }
@@ -602,10 +607,10 @@ def _ocr_asset() -> dict[str, Any]:
             }
         )
     return {
-        "model_id": DEFAULT_MODEL_ID,
-        "requested_revision": None,
-        "resolved_revision": revision,
-        "status": "present_unpinned",
+        "model_id": model_id,
+        "requested_revision": requested_revision,
+        "resolved_revision": resolved_revision,
+        "status": "present_pinned" if requested_revision else "present_unpinned",
         "snapshot_fingerprint": {
             "algorithm": "hf-relative-path-size-content-sha256-v1",
             "sha256": _canonical_sha256(records),
@@ -1189,7 +1194,11 @@ def run_performance_baseline(
     created = datetime.now(UTC)
     run_id = f"{profile}-{created.strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     config_artifact, credentials_configured = _redacted_config_artifact(root)
-    ocr_asset = _ocr_asset()
+    benchmark_config = AppConfig.from_yaml(root / "config.yaml")
+    ocr_asset = _ocr_asset(
+        model_id=benchmark_config.ocr.model_id,
+        requested_revision=benchmark_config.ocr.revision,
+    )
     artifacts = {
         "effective_config": config_artifact,
         "detector_model": _artifact(root / "models" / "comictextdetector.pt", root),

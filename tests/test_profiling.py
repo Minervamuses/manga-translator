@@ -257,7 +257,7 @@ def _allow_synthetic_benchmark(monkeypatch) -> None:
     monkeypatch.setattr(
         performance_module,
         "_ocr_asset",
-        lambda: {
+        lambda **_kwargs: {
             "model_id": "test/ocr",
             "requested_revision": None,
             "resolved_revision": None,
@@ -740,10 +740,14 @@ def test_ocr_snapshot_fingerprint_hashes_file_contents(tmp_path, monkeypatch) ->
     before = performance_module._ocr_asset()
     model_file.write_bytes(b"other")
     after = performance_module._ocr_asset()
+    pinned = performance_module._ocr_asset(requested_revision="revision-1")
 
     assert before["resolved_revision"] == "revision-1"
     assert before["snapshot_fingerprint"]["algorithm"].endswith("content-sha256-v1")
     assert before["snapshot_fingerprint"]["sha256"] != after["snapshot_fingerprint"]["sha256"]
+    assert pinned["requested_revision"] == "revision-1"
+    assert pinned["resolved_revision"] == "revision-1"
+    assert pinned["status"] == "present_pinned"
 
 
 def test_inventory_and_percentile_algorithms_are_deterministic() -> None:

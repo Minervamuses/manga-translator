@@ -170,6 +170,25 @@ def test_token_scores_handle_empty_eos_padding_and_max_length_truncation() -> No
     assert truncated.mean_margin is not None and 0 <= truncated.mean_margin <= 1
 
 
+def test_token_scores_include_shared_eos_pad_and_keep_entropy_finite() -> None:
+    sequences = torch.tensor([[1, 2]])
+    logits = torch.tensor([[float("-inf"), float("-inf"), 4.0]])
+
+    (metrics,) = _score_generation(
+        sequences,
+        (logits,),
+        pad_token_id=2,
+        eos_token_id=2,
+        max_length=2,
+        torch_module=torch,
+    )
+
+    assert metrics.token_ids == (2,)
+    assert metrics.token_logprobs == pytest.approx((0.0,))
+    assert metrics.mean_entropy == pytest.approx(0.0)
+    assert not metrics.truncated
+
+
 def test_oom_halves_only_current_batch_then_restores_requested_size(monkeypatch) -> None:
     calls = _install_fake_transformers(monkeypatch, oom_above=2)
     runtime = MangaOcrRuntime(batch_size=4, force_cpu=True)

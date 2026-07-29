@@ -82,16 +82,20 @@ def _score_generation(
         saw_eos = False
         for step_index, (log_probs, probs) in enumerate(zip(log_probabilities, probabilities)):
             token_id = int(generated_ids[batch_index, step_index].item())
-            if pad_token_id is not None and token_id == pad_token_id:
+            is_eos = token_id in eos_ids
+            if not is_eos and pad_token_id is not None and token_id == pad_token_id:
                 continue
             row_log_probs = log_probs[batch_index]
             row_probs = probs[batch_index]
             token_ids.append(token_id)
             token_logprobs.append(float(row_log_probs[token_id].item()))
-            entropies.append(float((-(row_probs * row_log_probs)).sum().item()))
+            entropy_terms = torch_module.nan_to_num(
+                -(row_probs * row_log_probs), nan=0.0, posinf=0.0, neginf=0.0
+            )
+            entropies.append(float(entropy_terms.sum().item()))
             top = torch_module.topk(row_probs, k=min(2, int(row_probs.shape[-1]))).values
             margins.append(float((top[0] - top[1]).item()) if len(top) > 1 else float(top[0].item()))
-            if token_id in eos_ids:
+            if is_eos:
                 saw_eos = True
                 break
         count = len(token_logprobs)

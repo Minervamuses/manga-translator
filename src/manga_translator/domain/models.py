@@ -13,6 +13,8 @@ SCHEMA_VERSION = "1.0"
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 Channel = Annotated[int, Field(ge=0, le=255)]
 Score = Annotated[float, Field(ge=0.0, le=1.0)]
+TokenId = Annotated[int, Field(ge=0)]
+LogProbability = Annotated[float, Field(le=0.0)]
 
 
 class DomainModel(BaseModel):
@@ -219,15 +221,26 @@ class OCRCandidate(DomainModel):
     confidence: Score
     confidence_kind: Literal["model", "heuristic", "ensemble", "unknown"]
     source_view: str = Field(min_length=1)
-    token_ids: tuple[int, ...] = ()
-    token_logprobs: tuple[float, ...] = ()
+    token_ids: tuple[TokenId, ...] = ()
+    token_logprobs: tuple[LogProbability, ...] = ()
     sequence: str = ""
-    length_normalized_transition_logprob: float | None = None
+    length_normalized_transition_logprob: LogProbability | None = None
     mean_token_entropy: float | None = Field(default=None, ge=0.0)
     mean_token_margin: float | None = Field(default=None, ge=0.0, le=1.0)
     truncated: bool = False
     actual_batch_size: int = Field(default=1, ge=1)
     generation_config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("generation_config")
+    @classmethod
+    def validate_generation_config(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return ensure_json_object(value, field_name="generation_config")
+
+    @model_validator(mode="after")
+    def token_metrics_have_matching_lengths(self) -> OCRCandidate:
+        if len(self.token_ids) != len(self.token_logprobs):
+            raise ValueError("token_ids and token_logprobs must have matching lengths")
+        return self
 
 
 class OCRRecord(DomainModel):

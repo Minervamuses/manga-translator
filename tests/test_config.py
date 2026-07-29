@@ -41,6 +41,7 @@ def test_api_key_can_come_from_environment(monkeypatch) -> None:
     assert cfg.api_key == "env-secret"
 
 
-def test_ocr_revision_must_be_an_immutable_commit_hash() -> None:
+@pytest.mark.parametrize("revision", ["main", "a" * 7, "a" * 39, "a" * 41])
+def test_ocr_revision_must_be_a_full_immutable_commit_hash(revision: str) -> None:
     with pytest.raises(ValueError):
-        OCRConfig(revision="main")
+        OCRConfig(revision=revision)

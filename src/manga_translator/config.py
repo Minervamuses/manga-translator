@@ -117,8 +117,9 @@ class OCRConfig(BaseModel):
     model_id: str = Field(default="kha-white/manga-ocr-base", min_length=1)
     revision: str = Field(
         default="aa6573bd10b0d446cbf622e29c3e084914df9741",
-        min_length=7,
-        pattern=r"^[0-9a-f]{7,64}$",
+        min_length=40,
+        max_length=40,
+        pattern=r"^[0-9a-f]{40}$",
     )
     batch_size: int = Field(default=4, ge=1, le=64)
     max_length: int = Field(default=300, ge=2, le=1024)

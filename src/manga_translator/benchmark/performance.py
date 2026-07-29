@@ -1025,6 +1025,29 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _real_sample_completion_errors(result: Any, profile: dict[str, Any]) -> list[str]:
+    """Require a decoded result and every timed production stage.
+
+    Region-level quality rejection makes a page ``blocked`` by design, but the
+    full decode-to-encode path has still completed and remains a valid runtime
+    sample.  A missing image or stage is an execution failure and must not be
+    recorded as a real baseline measurement.
+    """
+
+    errors: list[str] = []
+    if result.image is None:
+        errors.append("encoded_result_missing")
+    observed_stages = {
+        str(span.get("stage"))
+        for span in profile.get("spans", [])
+        if isinstance(span, dict)
+    }
+    missing_stages = sorted(set(REQUIRED_STAGES) - observed_stages)
+    if missing_stages:
+        errors.append(f"required_stages_missing:{','.join(missing_stages)}")
+    return errors
+
+
 def _run_real_pipeline(
     root: Path,
     pages: list[dict[str, Any]],
@@ -1064,10 +1087,12 @@ def _run_real_pipeline(
             )
         wall_ms = (time.perf_counter_ns() - started) / 1_000_000
         profile = profiler.finish()
-        if not result.succeeded:
-            issue_codes = [issue.code for issue in result.issues]
+        issue_codes = [issue.code for issue in result.issues]
+        completion_errors = _real_sample_completion_errors(result, profile)
+        if completion_errors:
             raise RuntimeError(
-                f"real pipeline sample failed: {sample_id}: {result.status}: {issue_codes}"
+                "real pipeline sample failed: "
+                f"{sample_id}: {result.status}: {completion_errors}: {issue_codes}"
             )
         spans = [span for span in profile["spans"] if span["stage"] != "page_wall"]
         return {
@@ -1076,6 +1101,8 @@ def _run_real_pipeline(
             "kind": sample_kind,
             "iteration": iteration,
             "wall_ms": wall_ms,
+            "pipeline_status": result.status,
+            "issue_codes": issue_codes,
             "stage_wall_ms": {
                 stage: sum(float(span["wall_ms"]) for span in spans if span["stage"] == stage)
                 for stage in REQUIRED_STAGES

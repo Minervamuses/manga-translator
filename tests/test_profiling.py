@@ -285,6 +285,23 @@ def test_redacted_config_accepts_environment_credential_without_persisting_it(
     assert secret not in json.dumps(artifact)
 
 
+def test_real_sample_accepts_region_rejection_after_complete_encode() -> None:
+    result = SimpleNamespace(image=np.zeros((2, 2, 3), dtype=np.uint8))
+    profile = {"spans": [{"stage": stage} for stage in REQUIRED_STAGES]}
+
+    assert performance_module._real_sample_completion_errors(result, profile) == []
+
+
+def test_real_sample_rejects_missing_output_and_required_stage() -> None:
+    result = SimpleNamespace(image=None)
+    profile = {"spans": [{"stage": stage} for stage in REQUIRED_STAGES[:-1]]}
+
+    assert performance_module._real_sample_completion_errors(result, profile) == [
+        "encoded_result_missing",
+        "required_stages_missing:encode",
+    ]
+
+
 def test_performance_baseline_separates_mock_from_blocked_real_run(
     tmp_path,
     monkeypatch,

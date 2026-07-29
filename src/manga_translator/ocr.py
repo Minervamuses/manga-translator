@@ -109,6 +109,12 @@ def _reset_ocr_state_for_tests() -> None:
     _ocr_cache.clear()
 
 
+def clear_ocr_result_cache() -> None:
+    """Discard pixel-result reuse while keeping the initialized model warm."""
+
+    _ocr_cache.clear()
+
+
 def sanitize_ocr_text(text: str) -> str:
     """移除 OCR 常見控制字元、replacement char 與不可見雜訊。"""
     if not text:

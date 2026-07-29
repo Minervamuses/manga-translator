@@ -1074,6 +1074,7 @@ def _run_real_pipeline(
         state_dir: Path,
     ) -> dict[str, Any]:
         sample_id = f"{page_id[:12]}-{sample_kind}-{iteration}"
+        ocr_module.clear_ocr_result_cache()
         profiler = RunProfiler(f"{run_id}-{sample_id}", environment_kind="real")
         started = time.perf_counter_ns()
         with activate_profiler(profiler):
@@ -1081,7 +1082,7 @@ def _run_real_pipeline(
                 source,
                 config,
                 glossary,
-                state_dir=state_dir,
+                state_dir=state_dir / sample_id,
                 job_id=sample_id,
                 resume=False,
             )

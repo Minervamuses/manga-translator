@@ -8,7 +8,12 @@ from PIL import Image
 
 from manga_translator.config import OCRConfig
 from manga_translator.manga_ocr_runtime import GenerationTokenMetrics, OCRBatchResult
-from manga_translator.ocr import _make_candidate, _reset_ocr_state_for_tests, ocr_regions_batch
+from manga_translator.ocr import (
+    _make_candidate,
+    _reset_ocr_state_for_tests,
+    clear_ocr_result_cache,
+    ocr_regions_batch,
+)
 from manga_translator.stages.ocr import (
     DurableOCRViewCache,
     PageOCRStager,
@@ -73,6 +78,22 @@ def test_ocr_regions_batch_calls_model_once_and_preserves_order(monkeypatch) -> 
 
     assert output == ["3", "1", "3", "2"]
     assert runtime.calls == [[3, 1, 2]]
+    _reset_ocr_state_for_tests()
+
+
+def test_clear_ocr_result_cache_keeps_model_but_forces_inference(monkeypatch) -> None:
+    from manga_translator import ocr as ocr_module
+
+    runtime = FakeRuntime()
+    _reset_ocr_state_for_tests()
+    monkeypatch.setattr(ocr_module, "_get_model", lambda: runtime)
+
+    assert ocr_regions_batch([_image(4)]) == ["4"]
+    assert ocr_regions_batch([_image(4)]) == ["4"]
+    clear_ocr_result_cache()
+    assert ocr_regions_batch([_image(4)]) == ["4"]
+
+    assert runtime.calls == [[4], [4]]
     _reset_ocr_state_for_tests()
 
 

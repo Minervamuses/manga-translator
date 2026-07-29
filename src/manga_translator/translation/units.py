@@ -69,13 +69,17 @@ def build_translation_units(
 ) -> TranslationUnitBuildResult:
     """Build exact-ID units while keeping OCR content attached to persistent region IDs."""
 
+    active_identities = tuple(
+        identity for identity in document.region_identities if identity.is_active
+    )
+    active_region_ids = {identity.region_id for identity in active_identities}
     active_revisions = {
         identity.region_id: next(
             revision
             for revision in document.region_revisions
             if revision.revision_id == identity.active_revision_id
         )
-        for identity in document.region_identities
+        for identity in active_identities
     }
     order_regions = tuple(
         OrderRegion(
@@ -83,19 +87,28 @@ def build_translation_units(
             active_revisions[identity.region_id].bbox,
             active_revisions[identity.region_id].orientation,
         )
-        for identity in document.region_identities
+        for identity in active_identities
     )
     effective_panels = _manual_panels(document) or tuple(panels)
     order = resolve_reading_order(
         order_regions,
         panels=effective_panels,
-        manual_overrides=document.reading_order_overrides,
+        manual_overrides=tuple(
+            override
+            for override in document.reading_order_overrides
+            if override.region_id in active_region_ids
+        ),
     )
-    ocr_by_region = {record.region_id: record for record in document.ocr_records}
+    ocr_by_revision = {}
+    for record in document.ocr_records:
+        key = (record.region_id, record.revision_id)
+        if key in ocr_by_revision:
+            raise ValueError("duplicate OCR record for a region revision")
+        ocr_by_revision[key] = record
     units: list[TranslationUnit] = []
     for ordered in order.regions:
         revision = active_revisions[ordered.region_id]
-        record = ocr_by_region.get(ordered.region_id)
+        record = ocr_by_revision.get((ordered.region_id, revision.revision_id))
         candidates = record.candidates if record is not None else ()
         selected: OCRCandidate | None = None
         if record is not None and record.selected_index is not None:
@@ -103,7 +116,6 @@ def build_translation_units(
         elif candidates:
             selected = max(candidates, key=lambda item: item.confidence)
         raw = selected.raw_text if selected is not None else ""
-        normalized = selected.normalized_text if selected is not None else raw
         units.append(
             TranslationUnit(
                 request_item_id=f"u{ordered.order + 1:04d}",
@@ -119,7 +131,7 @@ def build_translation_units(
                 orientation=revision.orientation,
                 kind=revision.kind,
                 ocr_raw=raw,
-                ocr_nfc=unicodedata.normalize("NFC", normalized),
+                ocr_nfc=unicodedata.normalize("NFC", raw),
                 candidates=candidates,
                 confidence=selected.confidence if selected is not None else 0.0,
                 confidence_kind=selected.confidence_kind if selected is not None else "unknown",

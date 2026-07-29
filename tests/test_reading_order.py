@@ -4,6 +4,7 @@ from uuid import UUID
 
 import cv2
 import numpy as np
+import pytest
 
 from manga_translator.domain.models import (
     ArtifactRef,
@@ -217,3 +218,86 @@ def test_sort_change_never_swaps_ocr_content_between_persistent_regions() -> Non
         == {_id(1): "g004", _id(2): "g005"}
     )
     assert [unit.region_id for unit in first.units] != [unit.region_id for unit in second.units]
+
+
+def test_translation_units_use_only_active_revision_ocr_and_preserve_raw_nfc() -> None:
+    document = _document(
+        [
+            (1, (150, 20, 20, 40), "vertical", "active"),
+            (2, (20, 20, 20, 40), "vertical", "retired"),
+        ]
+    )
+    active_record = document.ocr_records[0].model_copy(
+        update={
+            "candidates": (
+                document.ocr_records[0].candidates[0].model_copy(
+                    update={"raw_text": "カ\u3099", "normalized_text": "FILTERED"}
+                ),
+            )
+        }
+    )
+    stale_revision = document.region_revisions[0].model_copy(
+        update={"revision_id": "f" * 64, "raw_index": 99}
+    )
+    stale_record = document.ocr_records[0].model_copy(
+        update={
+            "revision_id": stale_revision.revision_id,
+            "candidates": (
+                document.ocr_records[0].candidates[0].model_copy(
+                    update={"raw_text": "stale", "normalized_text": "stale"}
+                ),
+            ),
+        }
+    )
+    manual_panel = PanelOverride(
+        panel_id="manual", bbox=BoundingBox(x=0, y=0, width=200, height=200), order=0
+    )
+    revised = document.model_copy(
+        update={
+            "region_identities": (
+                document.region_identities[0],
+                document.region_identities[1].model_copy(update={"is_active": False}),
+            ),
+            "region_revisions": (*document.region_revisions, stale_revision),
+            "ocr_records": (active_record, document.ocr_records[1], stale_record),
+            "panel_overrides": (manual_panel,),
+            "reading_order_overrides": (
+                ReadingOrderOverride(region_id=_id(1), panel_id="manual", order=0),
+                ReadingOrderOverride(region_id=_id(2), panel_id="manual", order=1),
+            ),
+        }
+    )
+
+    result = build_translation_units(
+        PageDocument.model_validate(revised.model_dump(mode="python")),
+        panels=(_panel("page", 0, 0, 200, 200),),
+    )
+
+    assert len(result.units) == 1
+    assert result.units[0].region_id == _id(1)
+    assert result.units[0].ocr_raw == "カ\u3099"
+    assert result.units[0].ocr_nfc == "ガ"
+    assert result.used_manual_override
+
+    duplicated = revised.model_copy(
+        update={"ocr_records": (active_record, active_record, document.ocr_records[1])}
+    )
+    with pytest.raises(ValueError, match="duplicate OCR record"):
+        build_translation_units(duplicated)
+
+
+def test_panel_candidates_reject_invalid_geometry_and_duplicate_ids() -> None:
+    with pytest.raises(ValueError, match="positive size"):
+        _panel("invalid", 0, 0, 0, 100)
+    with pytest.raises(ValueError, match="between zero and one"):
+        PanelCandidate("invalid", 0, 0, 100, 100, 1.1, "border")
+
+    regions = (_order_region(1, (20, 20, 20, 40)),)
+    duplicate_panels = (
+        _panel("same", 0, 0, 100, 200),
+        _panel("same", 100, 0, 100, 200),
+    )
+    result = resolve_reading_order(regions, panels=duplicate_panels)
+
+    assert result.order_uncertain
+    assert "unique IDs" in result.issues[0].message

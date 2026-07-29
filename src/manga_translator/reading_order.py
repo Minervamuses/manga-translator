@@ -152,6 +152,8 @@ def order_precedence_graph(
 ) -> tuple[tuple[OrderRegion, ...], bool]:
     """Resolve an explicit precedence graph and expose cycle detection for audit/tests."""
 
+    if len({region.region_id for region in regions}) != len(regions):
+        raise ValueError("reading-order regions must have unique IDs")
     ordered, cyclic = _stable_topological_order(regions, edges)
     if cyclic:
         return tuple(sorted(regions, key=_page_key)), True
@@ -199,6 +201,8 @@ def _manual_result(
     if not overrides:
         return None
     by_region = {override.region_id: override for override in overrides}
+    if len(by_region) != len(overrides):
+        return None
     if set(by_region) != {region.region_id for region in regions}:
         return None
     ordered = sorted(regions, key=lambda region: by_region[region.region_id].order)
@@ -241,6 +245,16 @@ def resolve_reading_order(
 ) -> ReadingOrderResult:
     """Resolve final order without treating ambiguous panel inference as fact."""
 
+    if len({region.region_id for region in regions}) != len(regions):
+        raise ValueError("reading-order regions must have unique IDs")
+    panel_ids = {panel.panel_id for panel in panels}
+    if len(panel_ids) != len(panels):
+        return _fallback(regions, "panel candidates must have unique IDs")
+    if any(
+        override.panel_id is not None and override.panel_id not in panel_ids
+        for override in manual_overrides
+    ):
+        return _fallback(regions, "manual reading-order override references an unknown panel")
     manual = _manual_result(regions, manual_overrides)
     if manual is not None:
         return manual

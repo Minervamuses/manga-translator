@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
@@ -27,6 +28,17 @@ class PanelCandidate:
     height: float
     confidence: float
     source: Literal["border", "xy_cut", "manual"]
+
+    def __post_init__(self) -> None:
+        if not self.panel_id.strip():
+            raise ValueError("panel_id must not be empty")
+        numeric = (self.x, self.y, self.width, self.height, self.confidence)
+        if any(isinstance(value, bool) or not math.isfinite(float(value)) for value in numeric):
+            raise ValueError("panel geometry and confidence must be finite")
+        if self.x < 0 or self.y < 0 or self.width <= 0 or self.height <= 0:
+            raise ValueError("panel geometry must have a non-negative origin and positive size")
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("panel confidence must be between zero and one")
 
     @property
     def right(self) -> float:
@@ -202,15 +214,16 @@ def detect_panel_candidates(
 ) -> tuple[PanelCandidate, ...]:
     """Return separated panel proposals; weak/duplicate geometry is discarded."""
 
+    if not 0.0 <= minimum_confidence <= 1.0:
+        raise ValueError("minimum_confidence must be between zero and one")
+    if image.size == 0:
+        return ()
     if image.ndim == 3:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     elif image.ndim == 2:
         gray = image
     else:
         raise ValueError("panel detection expects a 2D or 3D image")
-    if gray.size == 0:
-        return ()
-
     proposals = sorted(
         [*_border_candidates(gray), *_xy_candidates(gray)],
         key=lambda item: (-item.confidence, -_area(item), item.y, item.x),

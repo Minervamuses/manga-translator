@@ -313,8 +313,8 @@ def test_performance_baseline_separates_mock_from_blocked_real_run(
     assert report["real_run"]["status"] == "blocked"
     assert report["real_run"]["measurements"] == []
     assert report["real_run"]["summary"] is None
-    assert "real_runner_not_implemented" in report["real_run"]["blockers"]
-    assert "api_authorization_missing" in report["real_run"]["blockers"]
+    assert report["real_run"]["runner_status"] == "implemented_not_run"
+    assert "corpus_human_verification_pending:15" in report["real_run"]["blockers"]
     assert "dependency_policy:poetry_lock_missing" in report["real_run"]["blockers"]
     samples = [
         *report["mock_run"]["cold"],
@@ -357,6 +357,26 @@ def test_performance_baseline_separates_mock_from_blocked_real_run(
     assert entry["dependency_policy_compliant"] is False
 
 
+def test_real_runner_preflight_reports_missing_gpu_model_and_api(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(performance_module.torch.cuda, "is_available", lambda: False)
+    blockers = performance_module._real_run_blockers(
+        tmp_path,
+        [{"source_image": "missing.png", "source_sha256": None}],
+        credentials_configured=False,
+        dependencies={"management_policy": {"violations": []}},
+        ocr_asset={"status": "missing", "requested_revision": None},
+    )
+
+    assert "target_cuda_unavailable" in blockers
+    assert "translation_api_credentials_unavailable" in blockers
+    assert "ocr_model_snapshot_missing" in blockers
+    assert "ocr_model_revision_unpinned" in blockers
+    assert "artifact_missing:models/comictextdetector.pt" in blockers
+    assert "corpus_pages_missing:1" in blockers
+
+
 def test_runner_enforces_preconditions_before_writing(tmp_path, monkeypatch) -> None:
     root = _benchmark_root(tmp_path)
     _allow_synthetic_benchmark(monkeypatch)
@@ -370,6 +390,81 @@ def test_runner_enforces_preconditions_before_writing(tmp_path, monkeypatch) -> 
         run_performance_baseline(root)
 
     assert not (root / "benchmarks" / "performance").exists()
+
+
+def test_authorized_real_runner_publishes_authoritative_measurement(
+    tmp_path, monkeypatch
+) -> None:
+    root = _benchmark_root(tmp_path)
+    _allow_synthetic_benchmark(monkeypatch)
+    monkeypatch.setattr(
+        performance_module,
+        "validate_profile",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            ok=True,
+            pages=5,
+            regions=15,
+            unverified=0,
+            errors=[],
+            warnings=[],
+        ),
+    )
+    monkeypatch.setattr(performance_module, "_real_run_blockers", lambda *_args, **_kwargs: [])
+    fake_real = {
+        "environment_kind": "real",
+        "measurement_kind": "full_pipeline",
+        "status": "passed",
+        "authoritative": True,
+        "performance_claim_allowed": True,
+        "runner_status": "implemented",
+        "blockers": [],
+        "measurements": [{"sample_id": "real-1", "wall_ms": 1.0}],
+        "summary": {"p50_wall_ms": 1.0, "p95_wall_ms": 1.0},
+    }
+    monkeypatch.setattr(performance_module, "_run_real_pipeline", lambda *_args: fake_real)
+
+    run_path, report = run_performance_baseline(root, execute_real=True)
+
+    assert run_path.is_file()
+    assert report["real_run"] == fake_real
+    assert report["truth"]["authoritative"] is True
+    assert report["truth"]["performance_claim_allowed"] is True
+    manifest = json.loads(
+        (root / "benchmarks/performance/v032_baseline/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["runs"][-1]["real_status"] == "passed"
+    assert manifest["runs"][-1]["authoritative"] is True
+
+
+def test_real_runner_failure_does_not_publish_partial_run(tmp_path, monkeypatch) -> None:
+    root = _benchmark_root(tmp_path)
+    _allow_synthetic_benchmark(monkeypatch)
+    monkeypatch.setattr(
+        performance_module,
+        "validate_profile",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            ok=True,
+            pages=5,
+            regions=15,
+            unverified=0,
+            errors=[],
+            warnings=[],
+        ),
+    )
+    monkeypatch.setattr(performance_module, "_real_run_blockers", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        performance_module,
+        "_run_real_pipeline",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("sample failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="sample failed"):
+        run_performance_baseline(root, execute_real=True)
+
+    assert not (root / "benchmarks/performance/v032_baseline/manifest.json").exists()
+    assert not (root / "benchmarks/performance/v032_baseline/runs").exists()
 
 
 def test_atomic_json_failure_preserves_existing_destination(tmp_path, monkeypatch) -> None:

@@ -12,6 +12,7 @@ import platform
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 import uuid
@@ -819,7 +820,7 @@ def _real_run_blockers(
     dependencies: dict[str, Any],
     ocr_asset: dict[str, Any],
 ) -> list[str]:
-    blockers = ["real_runner_not_implemented", "api_authorization_missing"]
+    blockers: list[str] = []
     if not torch.cuda.is_available():
         blockers.append("target_cuda_unavailable")
     if not credentials_configured:
@@ -850,12 +851,13 @@ def _protocol(pages: list[dict[str, Any]]) -> dict[str, Any]:
         "invocation": (
             "conda run --no-capture-output -n manga env PYTHONDONTWRITEBYTECODE=1 "
             "PYTHONPATH=src python -B -m manga_translator.benchmark --root . performance "
-            "--profile v032_baseline"
+            "--profile v032_baseline --require-real"
         ),
-        "measurement_kind": "mock_infrastructure",
-        "cold_semantics": "first synthetic instrumentation invocation per page",
-        "warmup_runs_per_page": 1,
-        "warm_repeats_per_page": 5,
+        "measurement_kind": "full_pipeline_real",
+        "cold_semantics": "models and in-memory OCR cache reset before one cold run per page",
+        "cold_runs_per_page": 1,
+        "warmup_runs_per_page": 2,
+        "measured_runs_per_page": 5,
         "page_order": [page["page_id"] for page in pages],
         "percentiles": {
             "p50": "statistics.median",
@@ -1016,9 +1018,149 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _run_real_pipeline(
+    root: Path,
+    pages: list[dict[str, Any]],
+    run_id: str,
+) -> dict[str, Any]:
+    """Execute the complete production call path under a fixed measurement protocol."""
+
+    from .. import detector as detector_module
+    from .. import ocr as ocr_module
+    from ..config import AppConfig
+    from ..pipeline import process_single_page
+    from ..translator import load_glossary
+
+    config = AppConfig.from_yaml(root / "config.yaml")
+    glossary = load_glossary(config.paths.glossary)
+    samples: dict[str, list[dict[str, Any]]] = {"cold": [], "warmup": [], "measured": []}
+
+    def execute(
+        source: Path,
+        *,
+        page_id: str,
+        sample_kind: str,
+        iteration: int,
+        state_dir: Path,
+    ) -> dict[str, Any]:
+        sample_id = f"{page_id[:12]}-{sample_kind}-{iteration}"
+        profiler = RunProfiler(f"{run_id}-{sample_id}", environment_kind="real")
+        started = time.perf_counter_ns()
+        with activate_profiler(profiler):
+            result = process_single_page(
+                source,
+                config,
+                glossary,
+                state_dir=state_dir,
+                job_id=sample_id,
+                resume=False,
+            )
+        wall_ms = (time.perf_counter_ns() - started) / 1_000_000
+        profile = profiler.finish()
+        if not result.succeeded:
+            issue_codes = [issue.code for issue in result.issues]
+            raise RuntimeError(
+                f"real pipeline sample failed: {sample_id}: {result.status}: {issue_codes}"
+            )
+        spans = [span for span in profile["spans"] if span["stage"] != "page_wall"]
+        return {
+            "sample_id": sample_id,
+            "page_id": page_id,
+            "kind": sample_kind,
+            "iteration": iteration,
+            "wall_ms": wall_ms,
+            "stage_wall_ms": {
+                stage: sum(float(span["wall_ms"]) for span in spans if span["stage"] == stage)
+                for stage in REQUIRED_STAGES
+            },
+            "profiler": profile,
+        }
+
+    with tempfile.TemporaryDirectory(prefix="manga-performance-") as temporary:
+        temporary_root = Path(temporary)
+        config.paths = config.paths.model_copy(update={"output_dir": temporary_root / "output"})
+        for page in pages:
+            source = root / str(page["source_image"])
+            page_id = str(page["page_id"])
+            detector_module._detector = None
+            detector_module._detector_key = None
+            ocr_module._reset_ocr_state_for_tests()
+            samples["cold"].append(
+                execute(
+                    source,
+                    page_id=page_id,
+                    sample_kind="cold",
+                    iteration=0,
+                    state_dir=temporary_root / "state",
+                )
+            )
+            for iteration in range(2):
+                samples["warmup"].append(
+                    execute(
+                        source,
+                        page_id=page_id,
+                        sample_kind="warmup",
+                        iteration=iteration,
+                        state_dir=temporary_root / "state",
+                    )
+                )
+            for iteration in range(5):
+                samples["measured"].append(
+                    execute(
+                        source,
+                        page_id=page_id,
+                        sample_kind="measured",
+                        iteration=iteration,
+                        state_dir=temporary_root / "state",
+                    )
+                )
+
+    measured = samples["measured"]
+    wall_values = [float(sample["wall_ms"]) for sample in measured]
+    worst = max(measured, key=lambda sample: float(sample["wall_ms"]))
+    api_latencies = [
+        float(api["latency_ms"])
+        for sample in measured
+        for api in sample["profiler"]["api_usage"]
+    ]
+    rss_values = [
+        int(sample["profiler"]["resources"]["cpu_rss_peak_bytes"])
+        for sample in measured
+        if sample["profiler"]["resources"]["cpu_rss_peak_bytes"] is not None
+    ]
+    cuda_values = [
+        int(sample["profiler"]["resources"]["cuda"]["peak_allocated_bytes"])
+        for sample in measured
+        if sample["profiler"]["resources"]["cuda"] is not None
+    ]
+    return {
+        "environment_kind": "real",
+        "measurement_kind": "full_pipeline",
+        "status": "passed",
+        "authoritative": True,
+        "performance_claim_allowed": True,
+        "runner_status": "implemented",
+        "blockers": [],
+        "cold": samples["cold"],
+        "warmup": samples["warmup"],
+        "measurements": measured,
+        "summary": {
+            "p50_wall_ms": statistics.median(wall_values),
+            "p95_wall_ms": _percentile(wall_values, 0.95),
+            "worst_page": {"page_id": worst["page_id"], "wall_ms": worst["wall_ms"]},
+            "cpu_rss_peak_bytes": max(rss_values) if rss_values else None,
+            "cuda_peak_allocated_bytes": max(cuda_values) if cuda_values else None,
+            "api_p50_ms": statistics.median(api_latencies) if api_latencies else None,
+            "api_p95_ms": _percentile(api_latencies, 0.95) if api_latencies else None,
+        },
+    }
+
+
 def run_performance_baseline(
     root: Path,
     profile: str = PROFILE_NAME,
+    *,
+    execute_real: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
     if profile != PROFILE_NAME:
         raise ValueError(f"unknown performance profile: {profile}")
@@ -1062,6 +1204,23 @@ def run_performance_baseline(
         dependencies=dependencies,
         ocr_asset=ocr_asset,
     )
+    if validation_summary["unverified"]:
+        blockers.append(f"corpus_human_verification_pending:{validation_summary['unverified']}")
+    real_run = (
+        _run_real_pipeline(root, pages, run_id)
+        if execute_real and not blockers
+        else {
+            "environment_kind": "real",
+            "measurement_kind": "full_pipeline",
+            "status": "blocked",
+            "authoritative": False,
+            "performance_claim_allowed": False,
+            "runner_status": "implemented_not_run",
+            "blockers": blockers or ["real_run_not_requested"],
+            "measurements": [],
+            "summary": None,
+        }
+    )
     report = {
         "schema_version": "performance_baseline.v2",
         "profile": profile,
@@ -1080,9 +1239,11 @@ def run_performance_baseline(
         },
         "protocol": _protocol(pages),
         "truth": {
-            "measurement_kind": "mock_infrastructure",
-            "authoritative": False,
-            "performance_claim_allowed": False,
+            "measurement_kind": (
+                "full_pipeline_real" if real_run["status"] == "passed" else "mock_infrastructure"
+            ),
+            "authoritative": real_run["authoritative"],
+            "performance_claim_allowed": real_run["performance_claim_allowed"],
             "components": {
                 "gpu_probe": "available" if torch.cuda.is_available() else "unavailable",
                 "dependency_policy": (
@@ -1095,25 +1256,15 @@ def run_performance_baseline(
                     if validation_summary["unverified"] == 0
                     else f"pending:{validation_summary['unverified']}"
                 ),
-                "real_detector": "not_run",
-                "real_ocr": "not_run",
-                "translation_api": "not_run",
-                "full_pipeline": "not_run",
+                "real_detector": "passed" if real_run["status"] == "passed" else "not_run",
+                "real_ocr": "passed" if real_run["status"] == "passed" else "not_run",
+                "translation_api": "passed" if real_run["status"] == "passed" else "not_run",
+                "full_pipeline": real_run["status"],
             },
         },
         "profiler_overhead": measure_profiler_overhead(),
         "mock_run": _run_mock_baseline(run_id, pages),
-        "real_run": {
-            "environment_kind": "real",
-            "measurement_kind": "full_pipeline",
-            "status": "blocked",
-            "authoritative": False,
-            "performance_claim_allowed": False,
-            "runner_status": "not_implemented",
-            "blockers": blockers,
-            "measurements": [],
-            "summary": None,
-        },
+        "real_run": real_run,
     }
 
     runs_dir = output_dir / "runs"
@@ -1139,10 +1290,10 @@ def run_performance_baseline(
                 "run_id": run_id,
                 "path": relative_run,
                 "sha256": _sha256_file(run_path),
-                "measurement_kind": "mock_infrastructure",
-                "authoritative": False,
-                "performance_claim_allowed": False,
-                "real_status": "blocked",
+                "measurement_kind": real_run["measurement_kind"],
+                "authoritative": real_run["authoritative"],
+                "performance_claim_allowed": real_run["performance_claim_allowed"],
+                "real_status": real_run["status"],
                 "dependency_policy_compliant": dependencies["management_policy"][
                     "compliant"
                 ],

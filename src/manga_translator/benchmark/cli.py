@@ -6,6 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .detector_parity import DetectorParityBlocked, run_detector_parity
 from .ground_truth import prepare_profile, validate_profile
 from .performance import run_performance_baseline
 from .translation import validate_translation_corpus
@@ -22,6 +23,13 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument("--require-verified", action="store_true")
     performance = commands.add_parser("performance")
     performance.add_argument("--profile", default="v032_baseline")
+    performance.add_argument("--require-real", action="store_true")
+    detector_parity = commands.add_parser("detector-parity")
+    detector_parity.add_argument("--profile", default="regression_v032")
+    detector_parity.add_argument(
+        "--output", type=Path, default=Path("benchmarks/detector_fp16_parity.json")
+    )
+    detector_parity.add_argument("--require-real", action="store_true")
     translation = commands.add_parser("translation-validate")
     translation.add_argument(
         "--manifest",
@@ -36,7 +44,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "performance":
-        run_path, report = run_performance_baseline(args.root.resolve(), args.profile)
+        run_path, report = run_performance_baseline(
+            args.root.resolve(), args.profile, execute_real=args.require_real
+        )
         print(
             json.dumps(
                 {
@@ -48,7 +58,34 @@ def main(argv: list[str] | None = None) -> int:
                 ensure_ascii=False,
             )
         )
+        if args.require_real and report["real_run"]["status"] != "passed":
+            return 1
         return 0
+
+    if args.command == "detector-parity":
+        try:
+            output, report = run_detector_parity(
+                args.root.resolve(), profile=args.profile, output=args.output
+            )
+        except DetectorParityBlocked as error:
+            print(
+                json.dumps(
+                    {"status": "blocked", "blockers": list(error.blockers)},
+                    ensure_ascii=False,
+                )
+            )
+            return 1 if args.require_real else 0
+        print(
+            json.dumps(
+                {
+                    "status": report["status"],
+                    "run_id": report["run_id"],
+                    "output": output.relative_to(args.root.resolve()).as_posix(),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0 if report["status"] == "passed" else 1
 
     if args.command == "translation-validate":
         manifest_path = args.manifest

@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 from collections.abc import Sequence
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from .models import ArtifactRef, BoundingBox, Polygon
 
@@ -26,6 +26,17 @@ def new_region_id() -> UUID:
     """Create a persistent identity for a newly confirmed logical region."""
 
     return uuid4()
+
+
+REGION_ID_NAMESPACE = UUID("b31a9434-574a-4d8f-90fd-b679055f57e0")
+
+
+def region_id_for_revision(*, page_id: str, revision_id: str) -> UUID:
+    """Return the reproducible identity of a first-seen detector revision."""
+
+    _validate_sha256(page_id, "page_id")
+    _validate_sha256(revision_id, "revision_id")
+    return uuid5(REGION_ID_NAMESPACE, f"{page_id}:{revision_id}")
 
 
 def canonical_geometry_bytes(

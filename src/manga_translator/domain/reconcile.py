@@ -10,7 +10,7 @@ from uuid import UUID
 import numpy as np
 from shapely.geometry import Polygon as ShapelyPolygon
 
-from .ids import dhash_distance, new_region_id, revision_id_for
+from .ids import dhash_distance, region_id_for_revision, revision_id_for
 from .issues import Issue, IssueCode, IssueSeverity, StageName
 from .models import (
     ArtifactRef,
@@ -209,7 +209,7 @@ def reconcile_regions(
     previous_masks: Mapping[str, np.ndarray] | None = None,
     previous_crop_dhashes: Mapping[str, int] | None = None,
     config: ReconciliationConfig | None = None,
-    id_factory: Callable[[], UUID] = new_region_id,
+    id_factory: Callable[[], UUID] | None = None,
 ) -> ReconciliationResult:
     """Assign durable IDs without guessing when detector matches are ambiguous."""
 
@@ -334,7 +334,11 @@ def reconcile_regions(
             region_id = previous_revisions[previous_index].region_id
             lineage = previous_identities[region_id].lineage
         else:
-            region_id = id_factory()
+            region_id = (
+                id_factory()
+                if id_factory is not None
+                else region_id_for_revision(page_id=page_id, revision_id=revision_id)
+            )
             predecessor_indexes = ambiguous.get(index, ())
             predecessors = tuple(previous_revisions[item].region_id for item in predecessor_indexes)
             lineage_ids = tuple(previous_revisions[item].region_id for item in lineage_indexes)

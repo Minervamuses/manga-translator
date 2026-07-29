@@ -100,6 +100,23 @@ def test_page_and_revision_ids_are_deterministic_but_region_ids_are_persistent()
     assert second.identities[0].region_id == first.identities[0].region_id
 
 
+def test_first_seen_region_identity_is_reproducible_across_independent_runs() -> None:
+    observation = _observation(10.0)
+    first = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint=DETECTOR,
+        observations=[observation],
+    )
+    second = reconcile_regions(
+        page_id=PAGE_ID,
+        detector_fingerprint=DETECTOR,
+        observations=[observation],
+    )
+
+    assert first.current_region_ids == second.current_region_ids
+    assert first.current_revision_ids == second.current_revision_ids
+
+
 def test_small_detector_drift_reuses_region_identity() -> None:
     ids = _ids()
     first = reconcile_regions(

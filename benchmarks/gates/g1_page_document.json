@@ -1,35 +1,67 @@
 {
+  "schema_version": "g1_page_document.v2",
   "gate": "G1",
   "name": "PageDocument replay/resume gate",
   "date": "2026-07-29",
-  "branch": "reapir_p1",
-  "implementation_head": "7fb4504",
+  "branch": "repair_p0_p4_completion",
+  "implementation_head": "3cf19e0",
   "status": "passed",
   "assertions": {
+    "page_document_checkpoint_is_atomic_with_stage_success": "tests/test_stage_runner.py::test_stage_success_and_page_document_checkpoint_commit_atomically",
     "content_page_id_and_persistent_region_identity": "tests/test_region_identity.py",
+    "first_seen_region_identity_is_reproducible": "tests/test_region_identity.py::test_first_seen_region_identity_is_reproducible_across_independent_runs",
     "ambiguous_identity_fails_closed": "tests/test_region_identity.py::test_strong_content_winner_conflict_is_ambiguous_even_below_delta_margin",
-    "canonical_replay_hash_identical": "tests/test_pipeline_resume.py::test_component_stages_resume_without_reloading_models_or_provider",
-    "accepted_and_rejected_group_parity": "tests/test_pipeline_resume.py::test_component_stages_resume_without_reloading_models_or_provider",
-    "restart_skips_successful_unchanged_stages": "tests/test_pipeline_resume.py::test_component_stages_resume_without_reloading_models_or_provider",
+    "canonical_replay_hash_identical": "tests/test_process_restart.py::test_real_process_kills_resume_without_repeating_completed_work",
+    "group_result_persisted_once": "tests/test_pipeline_resume.py::test_multi_region_group_is_persisted_once_and_replays_by_durable_group_id",
+    "restart_skips_successful_unchanged_stages": "tests/test_process_restart.py::test_real_process_kills_resume_without_repeating_completed_work",
     "all_production_entrypoints_are_durable": "tests/test_pipeline_resume.py::test_default_batch_and_single_page_entrypoints_persist_page_documents",
     "inspect_reports_active_revisions_and_cache_hits": "tests/test_pipeline_resume.py::test_inspect_and_replay_need_only_durable_state",
-    "replay_requires_no_model_or_network": "tests/test_pipeline_resume.py::test_inspect_and_replay_need_only_durable_state",
+    "replay_requires_no_model_or_network": "tests/test_process_restart.py::test_real_process_kills_resume_without_repeating_completed_work",
     "concurrent_page_runs_are_fenced": "tests/test_stage_runner.py::test_expired_page_runner_is_fenced_from_replacement_stage_and_artifacts",
-    "raw_provider_response_is_replayed": "tests/test_stage_runner.py::test_raw_provider_response_is_replayed_after_interrupted_stage",
+    "raw_provider_response_is_replayed": "tests/test_process_restart.py::test_real_process_kills_resume_without_repeating_completed_work",
     "ocr_model_revision_is_immutable": "tests/test_manga_ocr_runtime.py::test_runtime_rejects_moving_or_invalid_revisions",
     "no_legacy_page_manifest_dual_write": "src/manga_translator/artifacts.py::dump_page_document"
+  },
+  "process_restart": {
+    "execution_kind": "real_os_subprocess_kill_and_restart",
+    "kill_exit_code": 91,
+    "kill_points": [
+      "detect-after",
+      "ocr-after",
+      "provider-response-after",
+      "render-before"
+    ],
+    "expected_total_calls_after_resume": {
+      "detector_load": 1,
+      "detector_forward": 1,
+      "ocr_load": 1,
+      "ocr_forward": 1,
+      "provider_request": 1
+    },
+    "provider_transport": "deterministic_counted_local_transport",
+    "canonical_document_hash": "identical_to_uninterrupted_run_for_all_kill_points",
+    "offline_replay": {
+      "network_access": 0,
+      "model_loads": 0,
+      "document_hash": "identical_to_durable_page_document",
+      "encoded_image": "replayed_from_content_addressed_artifact"
+    }
   },
   "verification": {
     "environment_manager": "conda:manga",
     "python_package_manager": "poetry",
-    "network_or_paid_api_calls": false,
-    "targeted_suite": "83 passed",
-    "full_suite": "279 passed, 1 deselected",
+    "paid_api_calls": false,
+    "targeted_suite": "17 passed",
+    "full_suite": "497 passed, 2 deselected",
     "ruff": "passed",
-    "poetry_lock": "passed"
+    "poetry_lock": "passed",
+    "pip_check": "passed",
+    "compileall": "passed"
   },
-  "deferred_validation": [
-    "real target-GPU restart run",
-    "live provider interruption run"
-  ]
+  "scope_exclusions": {
+    "live_provider_capability": "G5 strict doctor",
+    "GPU_numerical_and_throughput": "G0 and P3 gates"
+  },
+  "deferred_validation": [],
+  "blockers": []
 }

@@ -54,10 +54,10 @@ def main(argv: list[str] | None = None) -> int:
         manifest_path = args.manifest
         if not manifest_path.is_absolute():
             manifest_path = args.root.resolve() / manifest_path
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             units = validate_translation_corpus(manifest)
-        except (TypeError, ValueError) as error:
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
             print(
                 json.dumps(
                     {"status": "blocked", "manifest": str(manifest_path), "error": str(error)},

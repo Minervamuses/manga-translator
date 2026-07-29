@@ -1,7 +1,7 @@
 {
   "schema_version": "performance_manifest.v2",
   "profile": "v032_baseline",
-  "latest_run_id": "v032_baseline-20260728T152018Z-8bab15f6",
+  "latest_run_id": "v032_baseline-20260729T081215Z-d1a2445d",
   "runs": [
     {
       "run_id": "v032_baseline-20260728T064929Z-e9b477fa",
@@ -33,7 +33,9 @@
       "compatibility": "historical_stale",
       "stale_reasons": [
         "source_changed",
-        "dependency_environment_changed"
+        "dependency_environment_changed",
+        "artifacts_changed",
+        "protocol_changed"
       ],
       "superseded_by": "v032_baseline-20260728T152018Z-8bab15f6"
     },
@@ -42,6 +44,24 @@
       "path": "benchmarks/performance/v032_baseline/runs/v032_baseline-20260728T152018Z-8bab15f6.json",
       "sha256": "7d592d4306896a33a559bfc98020a094970150d194f6621f63f3b06ff50b33da",
       "measurement_kind": "mock_infrastructure",
+      "authoritative": false,
+      "performance_claim_allowed": false,
+      "real_status": "blocked",
+      "dependency_policy_compliant": true,
+      "compatibility": "historical_stale",
+      "stale_reasons": [
+        "source_changed",
+        "dependency_environment_changed",
+        "artifacts_changed",
+        "protocol_changed"
+      ],
+      "superseded_by": "v032_baseline-20260729T081215Z-d1a2445d"
+    },
+    {
+      "run_id": "v032_baseline-20260729T081215Z-d1a2445d",
+      "path": "benchmarks/performance/v032_baseline/runs/v032_baseline-20260729T081215Z-d1a2445d.json",
+      "sha256": "adcaf9bea03038db599d2dadf2248bc43e1920f6d05139385ac977573ddb5a7f",
+      "measurement_kind": "full_pipeline",
       "authoritative": false,
       "performance_claim_allowed": false,
       "real_status": "blocked",

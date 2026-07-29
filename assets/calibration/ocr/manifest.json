@@ -1,0 +1,16 @@
+{
+  "schema_version": "ocr_calibration_manifest.v1",
+  "status": "blocked",
+  "artifact": null,
+  "blockers": [
+    "human-labelled OCR calibration corpus unavailable",
+    "human-labelled no-text art crop corpus unavailable",
+    "title-held-out train/dev/test split unavailable"
+  ],
+  "required_outputs": [
+    "piecewise isotonic calibration",
+    "no-text logistic coefficients and threshold",
+    "dialogue/short_cjk/latin_sfx thresholds",
+    "held-out reliability, Brier, precision, recall, and coverage"
+  ]
+}

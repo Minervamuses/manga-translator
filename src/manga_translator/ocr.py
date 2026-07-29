@@ -6,6 +6,7 @@ import hashlib
 import itertools
 import math
 import unicodedata
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
@@ -30,8 +31,8 @@ class OCRInitializationError(RuntimeError):
 
 _model: MangaOcrRuntime | None = None
 _model_init_error: OCRInitializationError | None = None
-_ocr_cache: dict[str, str] = {}
-_CACHE_MAX_ITEMS = 4096
+_ocr_cache: OrderedDict[str, str] = OrderedDict()
+_CACHE_MAX_ITEMS = 128
 
 _ZERO_WIDTH = {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"}
 _SEPARATOR_NOISE = {"|", "｜", "¦", "‖", "∥", "￤", "丨"}
@@ -318,12 +319,18 @@ def ocr_cache_key(
 
 
 def _remember_cache(key: str, text: str) -> None:
-    if len(_ocr_cache) >= _CACHE_MAX_ITEMS:
-        # dict 保留插入順序；清掉最舊的四分之一，避免長篇漫畫無限吃記憶體。
-        remove_count = max(1, _CACHE_MAX_ITEMS // 4)
-        for old_key in list(_ocr_cache)[:remove_count]:
-            _ocr_cache.pop(old_key, None)
+    _ocr_cache.pop(key, None)
     _ocr_cache[key] = text
+    if len(_ocr_cache) > _CACHE_MAX_ITEMS:
+        _ocr_cache.popitem(last=False)
+
+
+def _pil_image(region_image: np.ndarray) -> Image.Image:
+    if region_image.ndim == 2:
+        rgb = cv2.cvtColor(region_image, cv2.COLOR_GRAY2RGB)
+    else:
+        rgb = cv2.cvtColor(region_image, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(rgb)
 
 
 def _ocr_image(region_image: np.ndarray, cache_key: str | None = None) -> str:
@@ -335,14 +342,11 @@ def _ocr_image(region_image: np.ndarray, cache_key: str | None = None) -> str:
         return _ocr_cache[key]
 
     model = _get_model()
-    if region_image.ndim == 2:
-        rgb = cv2.cvtColor(region_image, cv2.COLOR_GRAY2RGB)
-    else:
-        rgb = cv2.cvtColor(region_image, cv2.COLOR_BGR2RGB)
-    pil_img = Image.fromarray(rgb)
     device = str(getattr(model, "device", "cpu"))
     with profile_span("ocr_forward", gpu=device.startswith("cuda"), device=device):
-        text = sanitize_ocr_text(model(pil_img))
+        text = sanitize_ocr_text(
+            model.recognize_batch([_pil_image(region_image)], batch_size=1)[0].text
+        )
     _remember_cache(key, text)
     return text
 
@@ -356,11 +360,36 @@ def ocr_regions_batch(
     cache_prefix: str = "",
 ) -> list[str]:
     del cache_prefix  # cache 以像素內容為準；路徑或批次位置不應製造重複項目。
-    results: list[str] = []
-    for image in region_images:
-        key = _image_cache_key(image)
-        results.append(ocr_region(image, cache_key=key))
-    return results
+    if not region_images:
+        return []
+    keys = [_image_cache_key(image) for image in region_images]
+    results: list[str | None] = [None] * len(region_images)
+    misses: dict[str, tuple[np.ndarray, list[int]]] = {}
+    for index, (key, image) in enumerate(zip(keys, region_images)):
+        cached = _ocr_cache.get(key)
+        if cached is not None:
+            _ocr_cache.move_to_end(key)
+            results[index] = cached
+            continue
+        if key not in misses:
+            misses[key] = (image, [])
+        misses[key][1].append(index)
+    if misses:
+        model = _get_model()
+        device = str(getattr(model, "device", "cpu"))
+        images = [_pil_image(image) for image, _indices in misses.values()]
+        with profile_span("ocr_forward", gpu=device.startswith("cuda"), device=device):
+            generated = model.recognize_batch(images)
+        if len(generated) != len(images):
+            raise RuntimeError("OCR batch output count does not match input count")
+        for (key, (_image, indices)), item in zip(misses.items(), generated):
+            text = sanitize_ocr_text(item.text)
+            _remember_cache(key, text)
+            for index in indices:
+                results[index] = text
+    if any(result is None for result in results):
+        raise RuntimeError("OCR batch left unresolved input positions")
+    return [str(result) for result in results]
 
 
 def _expanded_bbox(
@@ -514,7 +543,7 @@ def _contrast_variant(image: np.ndarray) -> np.ndarray:
 
 def _make_candidate(image: np.ndarray, source: str, cfg: OCRConfig) -> OCRCandidate:
     with profile_span("ocr_view", source=source):
-        prepared = _upscale_for_ocr(image, cfg)
+        prepared = _upscale_for_ocr(image, cfg) if cfg.pre_upscale else image
         # 相同像素在不同 detector pass／group 中應共用 OCR 結果；source 只供 debug。
         key = _image_cache_key(prepared)
         text = _ocr_image(prepared, cache_key=key)

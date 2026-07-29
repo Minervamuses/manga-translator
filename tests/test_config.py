@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from manga_translator.config import AppConfig, OpenRouterConfig
+import pytest
+
+from manga_translator.config import AppConfig, OCRConfig, OpenRouterConfig
 
 
 def test_config_paths_are_relative_to_yaml(tmp_path: Path) -> None:
@@ -37,3 +39,9 @@ def test_api_key_can_come_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "env-secret")
     cfg = OpenRouterConfig(api_key="YOUR_OPENROUTER_API_KEY", model="test/model")
     assert cfg.api_key == "env-secret"
+
+
+@pytest.mark.parametrize("revision", ["main", "a" * 7, "a" * 39, "a" * 41])
+def test_ocr_revision_must_be_a_full_immutable_commit_hash(revision: str) -> None:
+    with pytest.raises(ValueError):
+        OCRConfig(revision=revision)

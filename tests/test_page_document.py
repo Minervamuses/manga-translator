@@ -254,6 +254,30 @@ def test_records_must_reference_a_revision_owned_by_the_same_region() -> None:
         )
 
 
+def test_ocr_candidate_requires_consistent_json_safe_token_metrics() -> None:
+    values = {
+        "raw_text": "text",
+        "normalized_text": "text",
+        "confidence": 0.9,
+        "confidence_kind": "model",
+        "source_view": "original",
+    }
+
+    with pytest.raises(ValidationError, match="matching lengths"):
+        OCRCandidate(**values, token_ids=(1, 2), token_logprobs=(-0.1,))
+    with pytest.raises(ValidationError, match="NaN"):
+        OCRCandidate(**values, generation_config={"temperature": float("nan")})
+
+    candidate = OCRCandidate(
+        **values,
+        token_ids=(1, 2),
+        token_logprobs=(-0.1, 0.0),
+        length_normalized_transition_logprob=-0.05,
+        generation_config={"max_length": 80, "do_sample": False},
+    )
+    assert candidate.token_ids == (1, 2)
+
+
 def test_issue_scope_must_belong_to_the_document() -> None:
     document = _document()
     with pytest.raises(ValidationError, match="different source page"):

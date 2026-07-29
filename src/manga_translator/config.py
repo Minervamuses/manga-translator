@@ -24,6 +24,8 @@ class OpenRouterConfig(BaseModel):
     content_retries: int = Field(default=2, ge=0, le=5)
     validate_translation: bool = True
     max_output_length_ratio: float = Field(default=4.0, ge=1.5, le=20.0)
+    data_collection: Literal["deny", "allow"] = "deny"
+    zdr: bool = True
 
     @field_validator("api_key", mode="before")
     @classmethod
@@ -34,6 +36,13 @@ class OpenRouterConfig(BaseModel):
 
         env_key = os.getenv("OPENROUTER_API_KEY", "").strip()
         return env_key or cfg_key
+
+
+class VisualContextConfig(BaseModel):
+    enabled: bool = False
+    max_image_side: int = Field(default=1024, ge=128, le=2048)
+    require_zdr: bool = True
+    allow_non_zdr: bool = False
 
 
 class PathsConfig(BaseModel):
@@ -216,6 +225,7 @@ class InpaintingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     openrouter: OpenRouterConfig
+    visual_context: VisualContextConfig = Field(default_factory=VisualContextConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     detection: DetectionConfig = Field(default_factory=DetectionConfig)
     postprocess: PostprocessConfig = Field(default_factory=PostprocessConfig)

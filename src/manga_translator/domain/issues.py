@@ -71,6 +71,7 @@ class IssueCode(StrEnum):
     CACHE_INVALIDATED = "cache_invalidated"
     STAGE_INTERRUPTED = "stage_interrupted"
     AMBIGUOUS_IDENTITY = "ambiguous_identity"
+    ORDER_UNCERTAIN = "order_uncertain"
 
 
 class IssueSeverity(StrEnum):

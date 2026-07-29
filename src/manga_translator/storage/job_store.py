@@ -18,7 +18,7 @@ from ..domain.models import ArtifactRef, PageDocument
 from ..domain.serialization import canonical_document_bytes, parse_document
 from .artifact_store import ArtifactIntegrityError, ArtifactStore, require_local_storage
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class NewerDatabaseSchemaError(RuntimeError):
@@ -93,6 +93,8 @@ class JobStore:
             raise NewerDatabaseSchemaError(
                 f"database schema {version} is newer than supported schema {SCHEMA_VERSION}"
             )
+        if version >= 3 and not self._migration_already_applied(self.connection, 3):
+            self._repair_divergent_schema_three()
         migration_root = files("manga_translator.storage.migrations")
         for target in range(version + 1, SCHEMA_VERSION + 1):
             resource = migration_root.joinpath(f"{target:03d}_initial.sql")
@@ -137,6 +139,18 @@ class JobStore:
                 and str(last_cache_hit_at[2]).upper() == "TEXT"
                 and int(last_cache_hit_at[3]) == 0
             )
+        if target == 3:
+            claim_columns = {
+                str(row[1])
+                for row in connection.execute(
+                    "PRAGMA table_info(provider_response_claims)"
+                )
+            }
+            return {
+                "owner_id",
+                "claim_token",
+                "lease_expires_at_ms",
+            } <= claim_columns
         if target == 4:
             claim_columns = {
                 str(row[1])
@@ -148,7 +162,40 @@ class JobStore:
                 "claim_token",
                 "lease_expires_at_ms",
             } <= claim_columns
+        if target == 5:
+            tables = {
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            return {
+                "chapter_entities",
+                "entity_aliases",
+                "translation_memory",
+            } <= tables
         return False
+
+    def _repair_divergent_schema_three(self) -> None:
+        """Repair databases created when an abandoned branch reused schema version 3."""
+        with self.transaction() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS provider_response_claims (
+                    owner_id TEXT PRIMARY KEY,
+                    claim_token TEXT NOT NULL,
+                    lease_expires_at_ms INTEGER NOT NULL CHECK(lease_expires_at_ms > 0),
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_provider_response_claims_expiry
+                ON provider_response_claims(lease_expires_at_ms)
+                """
+            )
 
     @staticmethod
     def _set_user_version(connection: sqlite3.Connection, target: int) -> None:

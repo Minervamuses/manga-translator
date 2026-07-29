@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.0",
+  "status": "blocked",
+  "description": "Japanese manga to Taiwan Traditional Chinese human-reviewed benchmark",
+  "requirements": {
+    "minimum_units": 200,
+    "minimum_titles": 3,
+    "required_categories": [
+      "cross_panel",
+      "pronoun",
+      "entity",
+      "tone",
+      "sfx",
+      "caption"
+    ],
+    "reviewer_qualification": "Japanese to Taiwan Traditional Chinese",
+    "adjudication_required_for_disagreement": true
+  },
+  "counts": {
+    "human_reviewed_units": 0,
+    "titles": 0,
+    "qualified_reviewers": 0
+  },
+  "units": [],
+  "blockers": [
+    "200 or more qualified human-reviewed units are not available",
+    "three or more independent manga titles are not available",
+    "reviewer adjudication records are not available"
+  ],
+  "metrics": {
+    "mapping_error": null,
+    "omission": null,
+    "hallucination": null,
+    "mqm": null,
+    "approved_name_consistency": null,
+    "taiwan_usage": null,
+    "layout_overflow": null,
+    "repair_success_cost": null,
+    "visual_escalation": null
+  },
+  "model_upgrade_claim": "not_allowed",
+  "translation_flow_switch": "not_performed",
+  "legacy_context_window_parser": "retained_until_gate_passes",
+  "page_document_translation_record": "target_source_of_truth_after_gate"
+}

@@ -61,7 +61,7 @@ def test_pipeline_maps_translations_by_region_key_not_batch_position(monkeypatch
 
     _translate_groups([first, second], "page", _config(), {})
 
-    assert first.translation == "是貓"
+    assert first.translation == "||是貓..."
     assert second.translation == "是狗"
     assert first.mapping_chain["region"] == first.mapping_region_key
     assert first.mapping_chain["validated_translation"] == hashlib.sha256(

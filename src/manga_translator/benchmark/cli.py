@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .ground_truth import prepare_profile, validate_profile
 from .performance import run_performance_baseline
+from .translation import validate_translation_corpus
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,6 +22,12 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument("--require-verified", action="store_true")
     performance = commands.add_parser("performance")
     performance.add_argument("--profile", default="v032_baseline")
+    translation = commands.add_parser("translation-validate")
+    translation.add_argument(
+        "--manifest",
+        type=Path,
+        default=Path("benchmarks/translation_zh_tw_v1/manifest.json"),
+    )
     args = parser.parse_args(argv)
 
     if args.command == "prepare":
@@ -37,6 +44,34 @@ def main(argv: list[str] | None = None) -> int:
                     "run_id": report["run_id"],
                     "real_status": report["real_run"]["status"],
                     "run_path": run_path.relative_to(args.root.resolve()).as_posix(),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
+
+    if args.command == "translation-validate":
+        manifest_path = args.manifest
+        if not manifest_path.is_absolute():
+            manifest_path = args.root.resolve() / manifest_path
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            units = validate_translation_corpus(manifest)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+            print(
+                json.dumps(
+                    {"status": "blocked", "manifest": str(manifest_path), "error": str(error)},
+                    ensure_ascii=False,
+                )
+            )
+            return 1
+        print(
+            json.dumps(
+                {
+                    "status": "ready",
+                    "manifest": str(manifest_path),
+                    "units": len(units),
+                    "titles": len({unit.title for unit in units}),
                 },
                 ensure_ascii=False,
             )

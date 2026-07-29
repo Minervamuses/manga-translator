@@ -1,32 +1,36 @@
 {
   "gate": "G3",
   "name": "OCR quality and throughput gate",
-  "date": "2026-07-28",
-  "branch": "reapir_p3",
-  "implementation_head": "93de6f1",
+  "date": "2026-07-29",
+  "branch": "repair_p3",
+  "implementation_head": "a15c60b",
   "status": "blocked",
   "traceability": {
     "model_revision": "aa6573bd10b0d446cbf622e29c3e084914df9741",
     "transformers": "5.14.1",
-    "preprocess_version": "awaiting production calibration artifact",
+    "preprocess_version": null,
     "calibration_artifact": null,
     "ocr_manifest": "benchmarks/ocr_v1/manifest.json",
     "calibration_manifest": "assets/calibration/ocr/manifest.json"
   },
   "replay_contracts": {
-    "ocr_error": "runtime exception and staged view result are persisted independently",
-    "uncertain": "stages/ocr.py records every attempted view and provisional score",
-    "no_text": "ocr_confidence.py decision includes no_text_probability and artifact fingerprint"
+    "ocr_error": "not yet persisted independently by the staged OCR component",
+    "uncertain": "successful views are cached durably, but provisional score and attempted-view manifest are not yet persisted",
+    "no_text": "artifact fingerprints are validated on load, but the production decision record is not yet wired to the durable page document"
   },
   "automated_tests": {
-    "result": "238 passed, 1 skipped, 2 deselected",
+    "default_suite": "386 passed, 1 skipped, 2 deselected",
+    "offline_real_model": "1 passed",
     "ruff": "passed",
-    "compileall": "passed"
+    "poetry_lock": "passed"
   },
   "blockers": [
     "human-labelled calibration data unavailable",
-    "title-held-out corpus has 0/300 verified text and 0/300 verified no-text crops",
-    "target GPU batching throughput comparison unavailable"
+    "title-held-out corpus has 0/300 verified text crops, 0/300 verified no-text crops, and 0/3 titles",
+    "target GPU batching throughput comparison unavailable",
+    "OCR errors, attempted-view manifest, and provisional scores are not durably persisted",
+    "production confidence decisions are not linked to a calibration artifact in PageDocument",
+    "new staged OCR orchestrator has not replaced the legacy production path"
   ],
   "acceptance_profile_switch": "not_performed",
   "orchestrator_switch": "not_performed",

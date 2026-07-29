@@ -267,6 +267,24 @@ def _allow_synthetic_benchmark(monkeypatch) -> None:
     )
 
 
+def test_redacted_config_accepts_environment_credential_without_persisting_it(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    secret = "sk-environment-secret-marker"
+    (tmp_path / "config.yaml").write_text(
+        "openrouter:\n  api_key: YOUR_OPENROUTER_API_KEY\n  model: test/model\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", secret)
+
+    artifact, configured = performance_module._redacted_config_artifact(tmp_path)
+
+    assert configured
+    assert artifact["status"] == "present_redacted"
+    assert secret not in json.dumps(artifact)
+
+
 def test_performance_baseline_separates_mock_from_blocked_real_run(
     tmp_path,
     monkeypatch,
@@ -571,8 +589,8 @@ def test_checked_in_corpus_is_valid_for_non_authoritative_smoke() -> None:
     assert len(pages) == 5
     assert sum(page["groups"] for page in pages) == 38
     assert len(corpus_sha256) == 64
-    assert validation["status"] == "valid_with_unverified_debt"
-    assert validation["unverified"] == 36
+    assert validation["status"] == "valid"
+    assert validation["unverified"] == 0
 
 
 def test_source_fingerprint_excludes_performance_outputs(tmp_path) -> None:

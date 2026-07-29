@@ -550,10 +550,11 @@ def _redacted_config_artifact(root: Path) -> tuple[dict[str, Any], bool]:
             "size_bytes": None,
         }, False
     openrouter = payload.get("openrouter")
-    configured = False
+    environment_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    configured = bool(environment_key)
     if isinstance(openrouter, dict):
         key = str(openrouter.get("api_key") or "").strip()
-        configured = bool(key and key != "YOUR_OPENROUTER_API_KEY")
+        configured = configured or bool(key and key != "YOUR_OPENROUTER_API_KEY")
         openrouter["api_key"] = "<redacted>"
     canonical = json.dumps(
         payload,

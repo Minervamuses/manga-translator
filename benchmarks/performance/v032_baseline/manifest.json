@@ -1,7 +1,7 @@
 {
   "schema_version": "performance_manifest.v2",
   "profile": "v032_baseline",
-  "latest_run_id": "v032_baseline-20260729T081432Z-5e070373",
+  "latest_run_id": "v032_baseline-20260729T082329Z-6c4354fa",
   "runs": [
     {
       "run_id": "v032_baseline-20260728T064929Z-e9b477fa",
@@ -32,6 +32,7 @@
       "dependency_policy_compliant": false,
       "compatibility": "historical_stale",
       "stale_reasons": [
+        "corpus_changed",
         "source_changed",
         "dependency_environment_changed",
         "artifacts_changed",
@@ -50,6 +51,7 @@
       "dependency_policy_compliant": true,
       "compatibility": "historical_stale",
       "stale_reasons": [
+        "corpus_changed",
         "source_changed",
         "dependency_environment_changed",
         "artifacts_changed",
@@ -68,6 +70,7 @@
       "dependency_policy_compliant": true,
       "compatibility": "historical_stale",
       "stale_reasons": [
+        "corpus_changed",
         "source_changed",
         "artifacts_changed"
       ],
@@ -77,6 +80,22 @@
       "run_id": "v032_baseline-20260729T081432Z-5e070373",
       "path": "benchmarks/performance/v032_baseline/runs/v032_baseline-20260729T081432Z-5e070373.json",
       "sha256": "bdeebf90d82e344058e0d16da852fa15739ffe26a05e39d5d317602ada90e8cb",
+      "measurement_kind": "full_pipeline",
+      "authoritative": false,
+      "performance_claim_allowed": false,
+      "real_status": "blocked",
+      "dependency_policy_compliant": true,
+      "compatibility": "historical_stale",
+      "stale_reasons": [
+        "corpus_changed",
+        "source_changed"
+      ],
+      "superseded_by": "v032_baseline-20260729T082329Z-6c4354fa"
+    },
+    {
+      "run_id": "v032_baseline-20260729T082329Z-6c4354fa",
+      "path": "benchmarks/performance/v032_baseline/runs/v032_baseline-20260729T082329Z-6c4354fa.json",
+      "sha256": "830d028cf55ea9e1cd3739a71732f6df82ac09d6f32c427441428f57718cbe06",
       "measurement_kind": "full_pipeline",
       "authoritative": false,
       "performance_claim_allowed": false,

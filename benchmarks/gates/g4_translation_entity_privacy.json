@@ -1,33 +1,49 @@
 {
   "gate": "G4",
   "name": "translation, entity, and privacy gate",
-  "date": "2026-07-28",
-  "branch": "reapir_p4",
-  "implementation_head": "c4cbb15",
+  "date": "2026-07-29",
+  "branch": "repair_p4",
+  "implementation_head": "bc0df07",
   "status": "blocked",
+  "component_status": "audited_offline_components_ready",
+  "production_switch_status": "not_performed",
   "automated_assertions": {
     "strict_structured_output": "tests/test_structured_translation.py",
     "exact_id_mapping": "tests/test_structured_translation.py::test_exact_id_failures_reject_the_whole_response",
     "array_reorder_safe": "tests/test_structured_translation.py::test_reordered_array_still_maps_by_exact_id",
+    "active_revision_translation_mapping": "tests/test_reading_order.py::test_translation_units_use_only_active_revision_ocr_and_preserve_raw_nfc",
     "entity_candidates_not_auto_approved": "tests/test_entity_ledger.py::test_ocr_aliases_reuse_one_candidate_and_model_cannot_auto_approve",
+    "entity_alias_conflicts_require_review": "tests/test_entity_ledger.py::test_alias_bridge_requires_a_reviewed_merge",
     "approved_names_are_hard_constraints": "tests/test_entity_ledger.py::test_only_human_approval_turns_an_entity_into_a_hard_constraint",
+    "translation_memory_exact_revision_binding": "tests/test_entity_ledger.py::test_translation_memory_requires_exact_context_order_and_entity_revision",
     "non_destructive_validation": "tests/test_translation_validation.py::test_quote_dash_ellipsis_and_fullwidth_punctuation_golden_are_lossless",
+    "raw_repair_candidate_preserved": "tests/test_translation_validation.py::test_targeted_repair_preserves_raw_candidate_and_rejects_duplicate_unit_ids",
     "targeted_and_compact_repair_no_erase": "tests/test_translation_validation.py",
     "visual_context_default_off": "tests/test_visual_escalation.py::test_disabled_visual_context_never_calls_provider_or_sends_image",
     "visual_requests_manifest_auditable": "tests/test_visual_escalation.py::test_triggered_visual_request_uploads_low_resolution_overlay_and_maps_exact_id",
-    "visual_zdr_default": "tests/test_visual_escalation.py::test_zdr_requirement_blocks_unsupported_endpoint_unless_explicitly_relaxed"
+    "visual_semantic_failure_no_erase": "tests/test_visual_escalation.py::test_semantically_invalid_visual_response_preserves_first_valid_translation",
+    "visual_zdr_default": "tests/test_visual_escalation.py::test_zdr_requirement_blocks_unsupported_endpoint_unless_explicitly_relaxed",
+    "paired_translation_switch_gate": "tests/golden/test_translation_contract.py"
   },
   "automated_tests": {
-    "result": "278 passed, 1 skipped, 2 deselected",
+    "result": "458 passed, 1 skipped, 2 deselected",
     "ruff": "passed",
-    "compileall": "passed",
-    "diff_check": "passed"
+    "poetry_lock": "passed",
+    "diff_check": "passed",
+    "compileall": "not run; cache-producing checks are intentionally excluded",
+    "network_or_paid_api_calls": "none; provider behavior was exercised only with local mocks"
+  },
+  "environment_policy": {
+    "environment_manager": "Conda environment manga",
+    "python_package_manager": "Poetry",
+    "dependency_installation_during_audit": false
   },
   "privacy_defaults": {
     "visual_context_enabled": false,
     "data_collection": "deny",
     "visual_zdr_required": true,
-    "non_zdr_requires_explicit_override": true
+    "non_zdr_requires_explicit_override": true,
+    "real_images_uploaded_during_audit": false
   },
   "human_benchmark": {
     "manifest": "benchmarks/translation_zh_tw_v1/manifest.json",
@@ -35,15 +51,30 @@
     "required_units": 200,
     "titles": 0,
     "required_titles": 3,
-    "qualified_reviewer_adjudication": false
+    "qualified_reviewers": 0,
+    "qualified_reviewer_adjudication": false,
+    "baseline_assessments": 0,
+    "candidate_assessments": 0
+  },
+  "integration_boundaries": {
+    "translation_units": "component implemented; production PageDocument orchestration not switched",
+    "structured_translation_client": "component implemented; legacy production request path retained",
+    "entity_ledger_and_memory": "storage and CLI/API implemented; production prompt and reuse orchestration not switched",
+    "repair_coordinator": "component implemented; production layout orchestration not switched",
+    "visual_escalation": "component implemented and default-off; production orchestration not switched",
+    "page_document_translation_record": "not yet the sole production source of truth",
+    "legacy_context_window_parser": "retained until the benchmark gate passes"
   },
   "blockers": [
     "qualified Japanese to Taiwan Traditional Chinese human corpus has 0 of 200 required units",
     "corpus has 0 of 3 required manga titles",
-    "qualified reviewer and adjudication records are unavailable"
+    "qualified reviewer and adjudication records are unavailable",
+    "paired baseline and candidate human assessments are unavailable",
+    "the production translation, entity-memory, repair, and visual orchestrator switch is deliberately withheld until G4 passes"
   ],
   "translation_flow_switch": "not_performed",
   "model_upgrade_claim": "not_allowed",
+  "contract_reliability_claim": "not_allowed_until_human_gate_passes",
   "legacy_context_window_parser_retained": true,
   "visual_upload_default": "disabled"
 }

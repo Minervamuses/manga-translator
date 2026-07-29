@@ -4,6 +4,12 @@ channels:
   - defaults
 dependencies:
   - python=3.11
-  # Conda only owns the interpreter and the approved Python package manager.
-  # Project/runtime dependencies are resolved from poetry.lock by Poetry.
+  # Conda owns the interpreter, native text stack, and the approved tooling.
+  # Python project/runtime dependencies (including Pillow) remain owned by
+  # Poetry so the two solvers never install the same Python distribution.
   - poetry=2.2.1
+  - conda-lock=4.0.0
+  - freetype
+  - harfbuzz
+  - fribidi
+  - libraqm

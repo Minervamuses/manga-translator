@@ -1,0 +1,16 @@
+{
+  "schema_version": "environment_reconcile_observation.v1",
+  "captured_at": "2026-07-29T16:00:00+08:00",
+  "environment": "manga",
+  "python": "3.11.15",
+  "poetry": "2.2.1",
+  "pillow": {
+    "imported_version": "12.3.0",
+    "conda_recorded_version": "10.4.0",
+    "poetry_locked_version": "11.3.0",
+    "raqm": false,
+    "harfbuzz": false,
+    "fribidi": false
+  },
+  "finding": "The imported, Conda-recorded, and Poetry-locked Pillow versions disagreed; the imported build had no production shaping support."
+}

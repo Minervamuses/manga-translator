@@ -1,0 +1,28 @@
+{
+  "schema_version": "environment_reconcile_observation.v1",
+  "captured_at": "2026-07-29T16:15:00+08:00",
+  "environment": "manga",
+  "python": "3.11.15",
+  "python_executable": "/home/minervamuses/miniconda3/envs/manga/bin/python3.11",
+  "poetry_executable": "/home/minervamuses/miniconda3/envs/manga/bin/python",
+  "poetry": "2.2.1",
+  "conda_lock": "4.0.0",
+  "pillow": {
+    "imported_version": "11.3.0",
+    "conda_recorded_version": "11.3.0",
+    "poetry_locked_version": "11.3.0",
+    "raqm": true,
+    "raqm_version": "0.10.1",
+    "harfbuzz": true,
+    "harfbuzz_version": "11.2.1",
+    "fribidi": true,
+    "fribidi_version": "1.0.16"
+  },
+  "native_conda_inputs": {
+    "freetype": "2.14.3",
+    "fribidi": "1.0.16",
+    "harfbuzz": "14.2.1",
+    "libraqm": "0.11.0"
+  },
+  "venv_created": false
+}

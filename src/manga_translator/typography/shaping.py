@@ -78,7 +78,31 @@ class PillowRaqmEngine:
             "stroke_width": stroke_width,
             "anchor": "lt",
         }
-        bbox = tuple(float(value) for value in draw.textbbox((0, 0), run.text, **kwargs))
+        logical_bbox = draw.textbbox((0, 0), run.text, **kwargs)
+        # ``textbbox`` reports the logical vertical advance for RAQM ``ttb``
+        # text, while the renderer only paints the glyph ink.  Keep the
+        # advance below for layout, but persist an ink bbox so measurement and
+        # rendering use the same geometry (including punctuation offsets).
+        mask, offset = font.getmask2(
+            run.text,
+            mode="L",
+            direction=direction,
+            language=language,
+            features=list(features),
+            stroke_width=stroke_width,
+            anchor="lt",
+        )
+        ink_bbox = mask.getbbox()
+        if ink_bbox is None:
+            measured_bbox = logical_bbox
+        else:
+            measured_bbox = (
+                offset[0] + ink_bbox[0],
+                offset[1] + ink_bbox[1],
+                offset[0] + ink_bbox[2],
+                offset[1] + ink_bbox[3],
+            )
+        bbox = tuple(float(value) for value in measured_bbox)
         advance = float(
             draw.textlength(
                 run.text,

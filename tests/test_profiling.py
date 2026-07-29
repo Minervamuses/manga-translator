@@ -279,6 +279,17 @@ def _allow_synthetic_benchmark(monkeypatch) -> None:
     )
 
 
+def test_dependency_artifact_records_absent_conda_lock_as_missing(
+    tmp_path: Path,
+) -> None:
+    assert performance_module._artifact(tmp_path / "conda-lock.yml", tmp_path) == {
+        "path": "conda-lock.yml",
+        "status": "missing",
+        "sha256": None,
+        "size_bytes": None,
+    }
+
+
 def test_redacted_config_accepts_environment_credential_without_persisting_it(
     tmp_path: Path,
     monkeypatch,

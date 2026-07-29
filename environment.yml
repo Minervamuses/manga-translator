@@ -8,7 +8,6 @@ dependencies:
   # Python project/runtime dependencies (including Pillow) remain owned by
   # Poetry so the two solvers never install the same Python distribution.
   - poetry=2.2.1
-  - conda-lock=4.0.0
   - freetype
   - harfbuzz
   - fribidi

@@ -14,9 +14,9 @@
 | T1 | done | 修正 38 組候選排版的視覺退步 | 使用者於 2026-07-30 核准 38/38 `new_better`，`critical_regression = 0` |
 | T2 | done | 新排版設為預設，保留明確 rollback | 五頁 production E2E 完成；RAQM 預設、legacy 僅能明確選用；功能測試 516 passed，取消的 G0 live gate 已 archived |
 | O1 | done | 只修真實頁面可證明的 OCR 問題 | group views 改為保序 batch；兩頁 17/17 OCR 不變，8.611s／8.496s，模型單次初始化 |
-| X1 | in_progress | 只修 exact mapping 與實際翻譯問題 |  |
-| E1 | pending | 環境政策收斂為 Conda＋Poetry |  |
-| V1 | pending | 一次性最終驗收 |  |
+| X1 | done | 只修 exact mapping 與實際翻譯問題 | 五頁 mapping 完整、每頁一份 provider response；64 個 targeted tests 通過，無需修改 |
+| E1 | done | 環境政策收斂為 Conda＋Poetry | 移除 repo `conda-lock` 宣告與 lockfile；缺檔 metadata regression test 與五項環境驗證通過 |
+| V1 | in_progress | 一次性最終驗收 |  |
 | OLD | cancelled | 舊 P3/P4/P5、G0～G5、release infrastructure | 不再執行 |
 
 ## 2. 硬限制

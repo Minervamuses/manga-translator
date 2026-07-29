@@ -5,19 +5,21 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Any
 
 
 def normalize_display_text(raw_text: str) -> str:
     """Only normalize NFC and safe whitespace/control characters; preserve punctuation."""
 
-    text = unicodedata.normalize("NFC", str(raw_text))
+    if not isinstance(raw_text, str):
+        raise TypeError("translation text must be a string")
+    text = unicodedata.normalize("NFC", raw_text)
     safe: list[str] = []
     for character in text:
         category = unicodedata.category(character)
-        if category in {"Cs", "Co", "Cn"}:
-            continue
         if category in {"Cc", "Cf"}:
             if character in {"\n", "\r", "\t"}:
                 safe.append(" ")
@@ -47,6 +49,8 @@ def _is_cjk(character: str) -> bool:
 
 def _has_adjacent_repeat(text: str, minimum: int = 4) -> bool:
     compact = _compact(text)
+    if len(compact) > 256:
+        return False
     for length in range(len(compact) // 2, minimum - 1, -1):
         for start in range(len(compact) - length * 2 + 1):
             if compact[start : start + length] == compact[start + length : start + length * 2]:
@@ -91,13 +95,48 @@ def validate_translation_batch(
     inputs: tuple[TranslationInput, ...],
     *,
     expected_ids: tuple[str, ...] | None = None,
-    approved_entities: dict[str, str] | None = None,
+    approved_entities: Mapping[str, str] | None = None,
     maximum_length_ratio: float = 4.0,
 ) -> TranslationValidationResult:
     """Report issues without ever mutating ``raw_translation``."""
 
+    if (
+        isinstance(maximum_length_ratio, bool)
+        or not isinstance(maximum_length_ratio, (int, float))
+        or not isfinite(maximum_length_ratio)
+        or maximum_length_ratio <= 0
+    ):
+        raise ValueError("maximum_length_ratio must be finite and positive")
+    for item in inputs:
+        if not isinstance(item, TranslationInput):
+            raise TypeError("inputs must contain TranslationInput values")
+        if not isinstance(item.unit_id, str) or not item.unit_id.strip():
+            raise ValueError("translation unit IDs must not be empty")
+        if not isinstance(item.source, str):
+            raise TypeError("translation sources must be strings")
+        if not isinstance(item.raw_translation, str):
+            raise TypeError("raw translations must be strings")
+        if any(
+            not isinstance(ref, str) or not normalize_display_text(ref)
+            for ref in item.entity_refs
+        ):
+            raise ValueError("entity references must be non-empty strings")
+    if expected_ids is not None:
+        if any(not isinstance(unit_id, str) or not unit_id.strip() for unit_id in expected_ids):
+            raise ValueError("expected translation unit IDs must not be empty")
+        if len(set(expected_ids)) != len(expected_ids):
+            raise ValueError("expected translation unit IDs must be unique")
+    if approved_entities is not None and not isinstance(approved_entities, Mapping):
+        raise TypeError("approved_entities must be a mapping")
+    approved: dict[str, str] = {}
+    for source_name, target in (approved_entities or {}).items():
+        if not isinstance(source_name, str) or not source_name.strip():
+            raise ValueError("approved entity source names must not be empty")
+        if not isinstance(target, str) or not normalize_display_text(target):
+            raise ValueError("approved entity targets must not be empty")
+        approved[unicodedata.normalize("NFC", source_name)] = normalize_display_text(target)
+
     issues: list[TranslationIssue] = []
-    approved = approved_entities or {}
     counts = Counter(item.unit_id for item in inputs)
     for unit_id, count in counts.items():
         if count > 1:
@@ -125,6 +164,22 @@ def validate_translation_batch(
             issues.append(
                 TranslationIssue(
                     "encoding_anomaly", item.unit_id, "translation contains encoding artifacts"
+                )
+            )
+        unsupported = sorted(
+            {
+                f"U+{ord(character):04X}"
+                for character in item.raw_translation
+                if unicodedata.category(character) in {"Cs", "Co", "Cn"}
+            }
+        )
+        if unsupported:
+            issues.append(
+                TranslationIssue(
+                    "unsupported_unicode",
+                    item.unit_id,
+                    "translation contains unsupported Unicode code points",
+                    {"code_points": unsupported},
                 )
             )
         if not display:
@@ -173,8 +228,9 @@ def validate_translation_batch(
                         {"entity": required},
                     )
                 )
+        normalized_source = unicodedata.normalize("NFC", item.source)
         for source_name, approved_target in approved.items():
-            if source_name in item.source and approved_target not in display:
+            if source_name in normalized_source and approved_target not in display:
                 issues.append(
                     TranslationIssue(
                         "approved_glossary_mismatch",

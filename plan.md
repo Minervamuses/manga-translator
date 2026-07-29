@@ -16,7 +16,7 @@
 | O1 | done | 只修真實頁面可證明的 OCR 問題 | group views 改為保序 batch；兩頁 17/17 OCR 不變，8.611s／8.496s，模型單次初始化 |
 | X1 | done | 只修 exact mapping 與實際翻譯問題 | 五頁 mapping 完整、每頁一份 provider response；64 個 targeted tests 通過，無需修改 |
 | E1 | done | 環境政策收斂為 Conda＋Poetry | 移除 repo `conda-lock` 宣告與 lockfile；缺檔 metadata regression test 與五項環境驗證通過 |
-| V1 | in_progress | 一次性最終驗收 |  |
+| V1 | done | 一次性最終驗收 | 六頁 smoke 與最終檢查完成；完整 suite 的兩個舊 fingerprint assertions 已依取消政策 archived，詳見 `VALIDATION_REPORT.md` |
 | OLD | cancelled | 舊 P3/P4/P5、G0～G5、release infrastructure | 不再執行 |
 
 ## 2. 硬限制

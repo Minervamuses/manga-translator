@@ -1,193 +1,68 @@
-# 0.3.2 驗證報告
+# manga-translator v0.3.2 最終驗證報告
 
-## 一、自動測試
+日期：2026-07-30
 
-執行：
+分支：`repair_p0_p4_completion`
 
-```bash
-PYTHONPATH=src python -m compileall -q src tests
-PYTHONPATH=src pytest -q
-```
+受驗證的實作 HEAD：`1e58b46`（V1 報告 commit 的 SHA 另見交付訊息；Git commit 無法在自身內容中固定自己的 SHA）
 
-目前結果：
+## 實際命令與結果
 
-```text
-compileall: passed
-67 passed
-```
-
-新增與既有測試涵蓋：
-
-- refined mask 必須受 raw segmentation 支持。
-- 空 mask 預設保留原圖；bbox fallback 只有明確啟用時才存在。
-- 平坦背景反鋸齒文字邊緣可被補抓，附近線稿不受影響。
-- 意外尺寸 local mask 不得擴張成整頁遮罩。
-- whole-region OCR 與 leaf-column OCR 視為替代假設，不串成重複句。
-- 大框／小欄位即使 IoU 很低，也可由像素包含率辨識為同一段文字。
-- OCR 與翻譯重複內容折疊，但原文合法的短促重複仍保留。
-- 原文沒有省略號／直線／dash 時，不允許模型自行加入。
-- 日文長音符 `ー` 不轉成 `——`。
-- 原字級估計會交叉檢查 detector hint 與 mask 投影。
-- 原尺寸附近有可行方案時，不會為了幾何分數選擇更小字。
-- 翻譯需要低於可讀門檻時，layout 會拒絕而不是縮到極小。
-- 直排文字會平衡分欄，橫排短句會使用有限 tracking 填回原寬。
-- 實際計畫文字 block 的 bbox 可重現並參與碰撞檢查。
-- 兩個計畫 block 重疊時，只允許較可靠者進入 inpainting。
-- 排版預演與最終寫回使用同一份 plan。
-- OCR runtime 只初始化一次；失敗狀態也只回報一次。
-- OCR preflight 失敗時，不進入頁面處理或產生假成功摘要。
-- Unicode 路徑、字體 fallback、局部 alpha compositing 與設定路徑解析。
-
-## 二、五張實際問題頁回歸
-
-使用專案內真實 `comictextdetector.pt`、真實輸入頁、真實 detector mask 與 0.3.2 排版／修復程式；譯文由驗證腳本固定指定，以隔離外部翻譯模型波動。沒有讀取使用者 API key，也沒有呼叫 OpenRouter。
-
-驗證頁：
-
-1. `__#Uf008_#Ueff9#Ue7cc (3).jpg`
-2. `__#Uf008_#Ueff9#Ue7cc (4).jpg`
-3. `__#Uf008_#Ueff9#Ue7cc (5).jpg`
-4. `0188_ive_hwa002.jpg`
-5. `0211_t_11takamatic006.jpg`
-
-總計：
+所有 Python、測試、lint、Poetry 與 CLI 命令均由既有 Conda environment `manga` 進入；未建立 virtualenv、未安裝或更新 dependency。
 
 ```text
-實際文字群組：38
-成功產生可讀排版計畫：38 / 38
-排版碰撞：0
-低於可讀門檻：0
-矩形擦除 fallback：0
+PYTHONPATH=src conda run -n manga python -m compileall -q src tests
+passed
+
+PYTHONPATH=src conda run -n manga python -m pytest -q -p no:cacheprovider
+516 passed, 2 failed, 1 skipped, 2 deselected in 118.04s
+
+PYTHONPATH=src conda run -n manga python -m pytest -q -p no:cacheprovider tests/test_baseline_manifest.py
+13 passed, 2 skipped in 1.80s
+
+conda run -n manga ruff check .
+passed
+
+conda run -n manga poetry check --lock
+passed
+
+conda run -n manga python -m pip check
+passed
+
+git diff --check
+passed
+
+conda run -n manga manga-translate --help
+passed
 ```
 
-逐群組數據位於 `validation_samples/v032_layout_metrics.json`。
+完整 pytest 的兩個失敗都來自舊 `benchmarks/baseline/v0.3.2/manifest.json` 將 `environment.yml` SHA 當成 current regression contract。E1 依 `plan.md` 明確移除 `conda-lock` 宣告，而同一份計畫禁止刷新舊 fingerprint／gate；因此未改寫歷史 manifest，將兩個 SHA assertion 標為 archived，再以 targeted test 確認該檔其餘 13 項測試通過。依「V1 完整 pytest 只跑一次」限制，沒有為取得綠色摘要而重跑完整 suite。
 
-## 三、字級與空間保留量化結果
+## 六頁真實 smoke
 
-以 detector／mask 推得的原字級為分母：
+前五頁在 T2 已各執行唯一一次真 detector、OCR、provider 與預設 RAQM renderer；V1 直接驗證其產物與保存狀態，沒有再次呼叫 provider。T1 固定 38-group corpus 的新排版 review sheets 已由使用者核准為 38/38 `new_better`、`critical_regression = 0`。
 
-```text
-計畫字級 / 原字級估計
-最小值：0.987
-中位數：1.000
-最大值：1.029
-```
+1. `0188_ive_hwa002.jpg`（page `5e79409955a1…`）：20 個 live groups；`g017` 安全寫回。`g000`–`g009`、`g011`、`g014`、`g015`、`g018`、`g019` 因 layout 安全檢查拒絕；`g010` OCR reject；`g012`、`g013`、`g016` collision reject。所有拒絕區域保留輸入像素，沒有先擦除。
+2. `0211_t_11takamatic006.jpg`（page `01b5cbea3c23…`）：9 個 live groups；`g000`–`g003`、`g005`–`g008` layout reject，`g004` OCR reject；無安全 candidate，因此全頁保留輸入。
+3. `__#Uf008_#Ueff9#Ue7cc (3).jpg`（page `d6a2c70d9472…`）：9 個 live groups，`g000`–`g008` 全部 layout reject；全頁保留輸入。
+4. `__#Uf008_#Ueff9#Ue7cc (4).jpg`（page `f81020c46353…`）：8 個 live groups；`g001` 安全寫回，`g000`、`g002`–`g007` layout reject 並保留輸入。
+5. `__#Uf008_#Ueff9#Ue7cc (5).jpg`（page `0b9dc8fadf8e…`）：13 個 live groups；`g000`–`g010`、`g012` layout reject，`g011` safe-region confidence reject；無安全 candidate，因此全頁保留輸入。
+6. 非 benchmark 自有頁 `0822_omake_hayaten002.jpg`（page `e6ab27185440…`）：CLI 單頁 smoke 成功，10 個 stages 全部 succeeded。17 個 mapping groups 中有 16 個唯一 request IDs；15 個 layout reject、1 個 collision reject、1 個 OCR reject，沒有 render target。輸出與輸入同尺寸，JPEG 重編碼平均絕對差 `0.0479`、最大差 `3`，沒有像素通道差超過 `8`；因此沒有新擦除、空白框或排版覆寫。
 
-亦即這五張問題頁的 38 個群組，最終計畫字級全部落在原字級估計的約 98.7%–102.9%，沒有出現舊版一路縮小到難以閱讀的情況。
+前五頁各只有一份主要 provider response。第六頁的一個 `source_echo` 驗證失敗依既有邏輯觸發單句 retry，因此同一次頁面執行保存 2 份 response artifacts；16 個 request IDs 仍全部唯一且 exact mapping 完整。針對 454 個相關 artifacts、JSON、設定與本報告的 secret 掃描通過，未保存 API key。
 
-文字 block 相對原文字像素範圍：
+## 已知限制
 
-```text
-block 寬度比中位數：1.013
-block 高度比中位數：1.000
-```
+- Production live detection／OCR 與 T1 固定 38-group visual corpus 的群組邊界不同；T1 的人工核准不能外推成所有 live OCR 譯文都能安全排入。
+- 六頁 smoke 中只有 `0188:g017` 與字幕頁 `(4):g001` 取得安全 writeback。其餘疑慮 groups 已逐頁列出並保留輸入，未為了提高成功率降低字級、方向、欄數、碰撞或 safe-region 門檻。
+- `LayoutOverflow:shaping_failed` 是目前累積的拒絕標籤；其中部分 candidate 的實際原因是 tracking、safe mask、字級 floor 或幾何條件，不應解讀為 RAQM runtime 故障。
+- 非 benchmark 頁的輸入本身已有肉眼可見的舊翻譯／排版瑕疵；本次只能證明新流程未進一步改寫或擦除，不能宣稱該頁視覺品質改善。
+- OpenRouter 回傳品質仍受 OCR 雜訊影響；第六頁發生一次 `source_echo` retry。沒有再擴充 prompt、評測集或 provider gate。
 
-這代表新排版在整體上維持原文字塊的寬高佔用，而不是只把字放進框內就算完成。短譯文因字數變少，不可能每一段同時百分之百複製原寬與原高；此時仍優先維持原字級、中心與合理字距。
+## Rollback
 
-## 四、使用者指出的具體問題
+預設 renderer 為 `typesetting.engine: raqm`。若需明確回退，只把 `config.yaml` 的 `typesetting.engine` 設為 `legacy`；程式不會在 RAQM 拒絕時靜默切換 legacy。任何拒絕 candidate 都保留輸入文字，不先 inpaint。
 
-### 1. 前三張字幕重疊
+## 取消項目
 
-三張彩色字幕頁重新偵測後分別得到：
-
-```text
-(3)：7 個群組，7 份排版計畫
-(4)：6 個群組，6 份排版計畫
-(5)：7 個群組，7 份排版計畫
-```
-
-結果：
-
-- 完整框與欄位碎片沒有被重複翻譯。
-- 實際文字 block 沒有互相覆蓋。
-- 文字維持接近原字級並重新填滿原字幕框。
-- 不再把多餘文字塞進最後一欄。
-
-對照圖：
-
-- `v032_caption_3_final_preview.jpg`
-- `v032_caption_4_final_preview.jpg`
-- `v032_caption_5_final_preview.jpg`
-
-### 2. `0188_ive_hwa002.jpg` 中間偏左沒有對準對話框
-
-真實 detector 產生 27 個 post candidates，最後收斂為 11 個文字群組。原本有完整對白框與多個欄位碎片同時存在；0.3.2 只保留完整 OCR 假設，並以原文字中心、欄數與實際 mask 範圍排版。
-
-結果：11 / 11 群組皆有可讀計畫，沒有重複句、跨框文字或計畫 block 碰撞。
-
-對照圖：`v032_overlap_0188_final_preview.jpg`。
-
-### 3. `0211_t_11takamatic006.jpg` 的「謝謝指導」下方多出線條
-
-驗證輸入故意使用：
-
-```text
-原文：ありがとうございましたーッ
-模型式譯文：謝謝指導——！
-```
-
-來源感知清洗後：
-
-```text
-謝謝指導!
-```
-
-最終圖沒有 `——` 形成的額外水平線；原日文字形也已由局部安全 mask 清除。
-
-對照圖：`v032_dash_0211_final_preview.jpg`。
-
-## 五、修復範圍檢查
-
-`hybrid` 修復在平坦字幕框執行以下限制：
-
-- 原始 group mask 必須存在。
-- 只在局部 bbox 內處理。
-- 先確認周圍背景近似純色。
-- 最多向外搜尋 3 px 的反鋸齒邊緣。
-- 新 mask 像素數受最大增長比限制。
-- Telea 半徑維持 2 px。
-
-實際中間圖：
-
-- `v032_caption_4_inpainted.jpg`
-- `v032_dash_0211_inpainted.jpg`
-
-可見原文字已清除，但人物、字幕框邊線與附近背景沒有被整塊模糊。
-
-## 六、OCR runtime 回歸
-
-針對先前日誌中的：
-
-```text
-Unrecognized feature extractor
-逐文字框反覆載入模型
-整批 OCR 失敗卻顯示失敗 0 頁
-```
-
-保留以下驗證：
-
-```text
-ViTImageProcessor + 日文 BERT tokenizer + VisionEncoderDecoderModel
-成功初始化：整批共用一次
-失敗初始化：快取同一錯誤，不逐框重試
-批次 preflight 失敗：頁面處理次數為 0
-CLI：只輸出一次可讀錯誤，不輸出成功摘要
-```
-
-測試使用可控的模擬 Transformers backend；目前容器未下載完整 Hugging Face OCR 權重，因此沒有宣稱完成線上模型的真實推論。
-
-## 七、成品封裝驗證要求
-
-正式 ZIP 封裝後另執行：
-
-```text
-ZIP 完整性檢查
-從 ZIP 重新解壓
-67 項測試
-compileall
-config.yaml 解析
-wheel build
-敏感字串掃描
-```
-
-最終結果與 SHA-256 記錄於交付訊息。
+依 `plan.md`，本次沒有建立或刷新 G0～G5、全樹 fingerprint、fresh CI、conda-lock、SBOM、wheel／release ZIP、release evidence schema、30-page corpus 或舊 P3/P4/P5／release infrastructure，也沒有 merge、push 或建立 release。

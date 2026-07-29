@@ -146,7 +146,13 @@ def test_adaptive_mode_compares_mask_even_when_raw_text_looks_valid(monkeypatch)
             return candidate("今日はどうしたの", 0.88, source)
         return candidate("今日はどうしたの", 0.86, source)
 
-    monkeypatch.setattr(ocr_module, "_make_candidate", fake_make_candidate)
+    monkeypatch.setattr(
+        ocr_module,
+        "_make_candidates_batch",
+        lambda requests, cfg: [
+            fake_make_candidate(image, source, cfg) for image, source in requests
+        ],
+    )
     result = ocr_module.ocr_group_detailed(
         image,
         group,
@@ -161,6 +167,37 @@ def test_adaptive_mode_compares_mask_even_when_raw_text_looks_valid(monkeypatch)
 
     assert any(source.endswith(":mask") for source in calls)
     assert result.text == "今日はどうしたの"
+
+
+def test_region_fallback_batches_all_views_in_source_order(monkeypatch) -> None:
+    image = np.full((80, 100, 3), 220, dtype=np.uint8)
+    local_mask = np.full((30, 24), 255, dtype=np.uint8)
+    region = TextRegion(id="r0", x=20, y=20, w=24, h=30, local_mask=local_mask)
+    batches: list[list[str]] = []
+
+    def fake_batch(requests, _cfg: OCRConfig) -> list[OCRCandidate]:
+        sources = [source for _image, source in requests]
+        batches.append(sources)
+        return [candidate("日本語", 0.8, source) for source in sources]
+
+    monkeypatch.setattr(ocr_module, "_make_candidates_batch", fake_batch)
+
+    result = ocr_module._ocr_single_region(
+        image,
+        region,
+        OCRConfig(),
+        namespace="region:g0:0",
+    )
+
+    assert result is not None
+    assert batches == [
+        [
+            "region:g0:0:raw",
+            "region:g0:0:mask",
+            "region:g0:0:contrast",
+            "region:g0:0:threshold",
+        ]
+    ]
 
 
 def test_region_combiner_treats_whole_sentence_and_column_fragments_as_alternatives() -> None:

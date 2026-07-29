@@ -562,6 +562,29 @@ def _make_candidate(image: np.ndarray, source: str, cfg: OCRConfig) -> OCRCandid
     )
 
 
+def _make_candidates_batch(
+    requests: list[tuple[np.ndarray, str]],
+    cfg: OCRConfig,
+) -> list[OCRCandidate]:
+    if not requests:
+        return []
+    prepared = [
+        _upscale_for_ocr(image, cfg) if cfg.pre_upscale else image
+        for image, _source in requests
+    ]
+    with profile_span("ocr_view_batch", view_count=len(prepared)):
+        texts = ocr_regions_batch(prepared)
+    return [
+        OCRCandidate(
+            text=text,
+            normalized=normalize_ocr_text(text, weak=False),
+            quality=ocr_quality_score(text),
+            source=source,
+        )
+        for text, (_image, source) in zip(texts, requests, strict=True)
+    ]
+
+
 def _candidate_similarity(a: OCRCandidate, b: OCRCandidate) -> float:
     a_norm = normalize_ocr_text(a.text, weak=True)
     b_norm = normalize_ocr_text(b.text, weak=True)
@@ -679,33 +702,31 @@ def _ocr_single_region(
 ) -> OCRCandidate | None:
     bbox = _expanded_bbox(region.bbox, image.shape[:2], cfg)
     crop = _crop_bbox(image, bbox)
-    candidates = [_make_candidate(crop, f"{namespace}:raw", cfg)]
+    requests = [(crop, f"{namespace}:raw")]
 
     crop_mask = _crop_region_mask(region, bbox)
     if crop_mask is not None and cfg.use_mask_isolation:
-        candidates.append(
-            _make_candidate(
+        requests.append(
+            (
                 _mask_isolated_variant(crop, crop_mask),
                 f"{namespace}:mask",
-                cfg,
             )
         )
     if cfg.use_contrast_variant:
-        candidates.append(
-            _make_candidate(
+        requests.append(
+            (
                 _contrast_variant(crop),
                 f"{namespace}:contrast",
-                cfg,
             )
         )
     if cfg.use_threshold_variant:
-        candidates.append(
-            _make_candidate(
+        requests.append(
+            (
                 _threshold_variant(crop, crop_mask),
                 f"{namespace}:threshold",
-                cfg,
             )
         )
+    candidates = _make_candidates_batch(requests, cfg)
     return _select_best_candidate(candidates)
 
 
@@ -887,30 +908,29 @@ def ocr_group_detailed(
     crop = _crop_bbox(image, bbox)
     crop_mask = _crop_group_mask(group, bbox, image.shape[:2])
 
-    candidates: list[OCRCandidate] = []
-    raw_candidate = _make_candidate(crop, f"group:{group.id}:raw", cfg)
-    candidates.append(raw_candidate)
-
     regions = _ordered_group_regions(group, regions_by_id)
     has_fallback_region = any(region.source == "mask_fallback" for region in regions)
     has_duplicate_region = any(region.candidate_duplicate for region in regions)
 
     # adaptive 也固定比較一次 mask-isolated OCR。單靠「像不像日文」的分數
     # 無法辨識「結果很合理、但只讀到半句」；raw 與 mask 互相比較才有機會發現。
-    mask_candidate: OCRCandidate | None = None
     compare_mask = (
         cfg.ensemble_mode in {"adaptive", "always"}
         and crop_mask is not None
         and np.any(crop_mask)
         and cfg.use_mask_isolation
     )
+    initial_requests = [(crop, f"group:{group.id}:raw")]
     if compare_mask:
-        mask_candidate = _make_candidate(
-            _mask_isolated_variant(crop, crop_mask),
-            f"group:{group.id}:mask",
-            cfg,
+        initial_requests.append(
+            (
+                _mask_isolated_variant(crop, crop_mask),
+                f"group:{group.id}:mask",
+            )
         )
-        candidates.append(mask_candidate)
+    candidates = _make_candidates_batch(initial_requests, cfg)
+    raw_candidate = candidates[0]
+    mask_candidate = candidates[1] if compare_mask else None
 
     raw_mask_similarity = (
         _candidate_similarity(raw_candidate, mask_candidate)
@@ -941,22 +961,22 @@ def ocr_group_detailed(
         )
     )
 
+    enhanced_requests: list[tuple[np.ndarray, str]] = []
     if needs_enhanced_ensemble and cfg.use_contrast_variant:
-        candidates.append(
-            _make_candidate(
+        enhanced_requests.append(
+            (
                 _contrast_variant(crop),
                 f"group:{group.id}:contrast",
-                cfg,
             )
         )
     if needs_enhanced_ensemble and cfg.use_threshold_variant:
-        candidates.append(
-            _make_candidate(
+        enhanced_requests.append(
+            (
                 _threshold_variant(crop, crop_mask),
                 f"group:{group.id}:threshold",
-                cfg,
             )
         )
+    candidates.extend(_make_candidates_batch(enhanced_requests, cfg))
 
     primary_best = _select_best_candidate(candidates)
     primary_quality = primary_best.quality if primary_best is not None else 0.0

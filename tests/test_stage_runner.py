@@ -20,10 +20,14 @@ from manga_translator.stages.base import (
     StageOutputs,
     StageSpec,
 )
-from manga_translator.stages.fingerprint import select_relevant_config, stage_fingerprint
-from manga_translator.stages.runner import STAGE_DAG, StageRunner
+from manga_translator.stages.fingerprint import (
+    callable_code_revision,
+    select_relevant_config,
+    stage_fingerprint,
+)
+from manga_translator.stages.runner import STAGE_DAG, StageRunner, downstream_of
 from manga_translator.storage import ArtifactStore, JobStore
-from manga_translator.storage.job_store import PageRunClaimLostError
+from manga_translator.storage.job_store import MissingArtifactError, PageRunClaimLostError
 
 
 def _provider_claim_process_worker(
@@ -116,6 +120,156 @@ def _specs(calls: Counter[StageName]) -> dict[StageName, StageSpec]:
             ),
         )
     return result
+
+
+def test_callable_code_revision_tracks_code_but_not_captured_config() -> None:
+    def make_runner(config_value):
+        def runner():
+            return config_value
+
+        return runner
+
+    def changed_runner():
+        return "changed"
+
+    first = make_runner("config-a")
+    second = make_runner("config-b")
+
+    assert callable_code_revision(first) == callable_code_revision(first)
+    assert callable_code_revision(first) == callable_code_revision(second)
+    assert callable_code_revision(first) != callable_code_revision(changed_runner)
+
+
+def test_callable_code_mutation_changes_only_the_owning_stage_revision() -> None:
+    def common_runner():
+        return "common"
+
+    def mutated_runner():
+        return "mutated"
+
+    before = {stage: callable_code_revision(common_runner) for stage in StageName}
+    after = dict(before)
+    after[StageName.OCR] = callable_code_revision(mutated_runner)
+
+    assert {
+        stage for stage in StageName if before[stage] != after[stage]
+    } == {StageName.OCR}
+
+
+@pytest.mark.parametrize(
+    ("mutation", "stage"),
+    (
+        ("source", StageName.SOURCE),
+        ("code", StageName.OCR),
+        ("config", StageName.OCR),
+        ("model", StageName.OCR),
+        ("font", StageName.LAYOUT),
+        ("prompt", StageName.TRANSLATE),
+        ("schema", StageName.DETECT),
+        ("glossary", StageName.TRANSLATE),
+    ),
+)
+def test_each_fingerprint_input_invalidates_only_its_stage_and_downstream(
+    persisted_job, mutation: str, stage: StageName
+) -> None:
+    store, page_id = persisted_job
+    calls: Counter[StageName] = Counter()
+    specs = _specs(calls)
+    config = {
+        "font": "font-a",
+        "glossary_revision": "g1",
+        "ocr": {"language": "ja"},
+    }
+    _runner(store, page_id, specs, config).run()
+    before = calls.copy()
+    changed_specs = dict(specs)
+    changed_config = config
+    spec = changed_specs[stage]
+    dependencies = spec.fingerprint_dependencies
+    if mutation == "source":
+        def changed_source(_context, _inputs):
+            calls[StageName.SOURCE] += 1
+            return StageOutputs(
+                (ArtifactPayload(b"changed-source", "application/test", "primary"),)
+            )
+
+        changed_specs[stage] = replace(
+            spec, run=changed_source, code_revision="source-code-v2"
+        )
+    elif mutation == "code":
+        changed_specs[stage] = replace(spec, code_revision="code-v2")
+    elif mutation == "config":
+        changed_config = {**config, "ocr": {"language": "zh"}}
+    elif mutation == "model":
+        changed_specs[stage] = replace(
+            spec,
+            fingerprint_dependencies=replace(
+                dependencies, model_hashes=("changed-model",)
+            ),
+        )
+    elif mutation == "font":
+        changed_specs[stage] = replace(
+            spec,
+            fingerprint_dependencies=replace(
+                dependencies, font_hashes=("changed-font",)
+            ),
+        )
+    elif mutation == "prompt":
+        changed_specs[stage] = replace(
+            spec,
+            fingerprint_dependencies=replace(
+                dependencies, prompt_revision="prompt-v2"
+            ),
+        )
+    elif mutation == "schema":
+        changed_specs[stage] = replace(
+            spec,
+            fingerprint_dependencies=replace(
+                dependencies, schema_revision="schema-v2"
+            ),
+        )
+    elif mutation == "glossary":
+        changed_specs[stage] = replace(
+            spec,
+            fingerprint_dependencies=replace(
+                dependencies, glossary_revision="glossary-v2"
+            ),
+        )
+
+    _runner(store, page_id, changed_specs, changed_config).run()
+    rerun = {name for name in StageName if calls[name] > before[name]}
+
+    assert rerun == downstream_of(stage)
+
+
+def test_stage_success_and_page_document_checkpoint_commit_atomically(
+    persisted_job,
+) -> None:
+    store, page_id = persisted_job
+    original = store.load_page_document(job_id="job", page_id=page_id)
+    assert original is not None
+    missing_source = ArtifactRef(
+        sha256="f" * 64,
+        media_type="image/png",
+        size_bytes=6,
+    )
+
+    with pytest.raises(MissingArtifactError, match="not registered"):
+        StageRunner(
+            store=store,
+            job_id="job",
+            page_id=page_id,
+            specs=_specs(Counter()),
+            config={},
+            checkpoint=lambda _stage, _outcomes: _document(missing_source),
+        ).run(target=StageName.SOURCE)
+
+    status = store.connection.execute(
+        "SELECT status FROM stage_runs WHERE job_id='job' AND page_id=? AND stage='source'",
+        (page_id,),
+    ).fetchone()[0]
+    assert status == "failed"
+    assert store.load_page_document(job_id="job", page_id=page_id) == original
 
 
 @pytest.fixture

@@ -260,6 +260,26 @@ class OCRRecord(DomainModel):
         return self
 
 
+class GroupOCRRecord(DomainModel):
+    """One durable OCR result shared by every revision in a detected group."""
+
+    group_id: str = Field(min_length=1)
+    member_revision_ids: tuple[Sha256, ...] = Field(min_length=1)
+    candidates: tuple[OCRCandidate, ...]
+    selected_index: int | None = Field(default=None, ge=0)
+    model_id: str = Field(default="kha-white/manga-ocr-base", min_length=1)
+    model_revision: str = Field(min_length=1)
+    preprocess_version: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def selected_candidate_exists(self) -> GroupOCRRecord:
+        if self.selected_index is not None and self.selected_index >= len(self.candidates):
+            raise ValueError("selected_index outside candidates")
+        if len(set(self.member_revision_ids)) != len(self.member_revision_ids):
+            raise ValueError("group OCR record has duplicate member revisions")
+        return self
+
+
 class StyleFingerprint(DomainModel):
     region_id: UUID
     revision_id: Sha256
@@ -288,6 +308,24 @@ class TranslationRecord(DomainModel):
     issues: tuple[Issue, ...] = ()
 
 
+class GroupTranslationRecord(DomainModel):
+    """One provider result linked to all revisions in a detected group."""
+
+    group_id: str = Field(min_length=1)
+    member_revision_ids: tuple[Sha256, ...] = Field(min_length=1)
+    request_item_id: str = Field(min_length=1)
+    raw_response_ref: ArtifactRef
+    validated_text: str
+    entities: tuple[str, ...] = ()
+    issues: tuple[Issue, ...] = ()
+
+    @model_validator(mode="after")
+    def member_revisions_are_unique(self) -> GroupTranslationRecord:
+        if len(set(self.member_revision_ids)) != len(self.member_revision_ids):
+            raise ValueError("group translation record has duplicate member revisions")
+        return self
+
+
 class ShapedRun(DomainModel):
     text: str
     font_sha256: Sha256
@@ -314,6 +352,21 @@ class LayoutPlan(DomainModel):
     position: Point
     alpha_mask_ref: ArtifactRef
     constraint_scores: dict[str, float] = Field(default_factory=dict)
+
+
+class GroupLayoutRecord(DomainModel):
+    """One durable layout-plan artifact linked to every revision in a group."""
+
+    group_id: str = Field(min_length=1)
+    member_revision_ids: tuple[Sha256, ...] = Field(min_length=1)
+    plan_ref: ArtifactRef
+    plan_key: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def member_revisions_are_unique(self) -> GroupLayoutRecord:
+        if len(set(self.member_revision_ids)) != len(self.member_revision_ids):
+            raise ValueError("group layout record has duplicate member revisions")
+        return self
 
 
 class StageRecord(DomainModel):
@@ -362,6 +415,9 @@ class PageDocument(DomainModel):
     region_identities: tuple[RegionIdentity, ...] = ()
     region_revisions: tuple[RegionRevision, ...] = ()
     group_geometries: tuple[GroupGeometry, ...] = ()
+    group_ocr_records: tuple[GroupOCRRecord, ...] = ()
+    group_translations: tuple[GroupTranslationRecord, ...] = ()
+    group_layout_records: tuple[GroupLayoutRecord, ...] = ()
     ocr_records: tuple[OCRRecord, ...] = ()
     style_fingerprints: tuple[StyleFingerprint, ...] = ()
     translations: tuple[TranslationRecord, ...] = ()
@@ -491,6 +547,26 @@ class PageDocument(DomainModel):
                     raise ValueError("group mask lineage must reference its union mask")
                 if lineage.source_revision_id not in group.member_revision_ids:
                     raise ValueError("group mask lineage references a non-member revision")
+        groups = {group.group_id: group for group in self.group_geometries}
+        if len(groups) != len(self.group_geometries):
+            raise ValueError("duplicate group geometry ID")
+        for name, records in (
+            ("OCR", self.group_ocr_records),
+            ("translation", self.group_translations),
+            ("layout", self.group_layout_records),
+        ):
+            if len({record.group_id for record in records}) != len(records):
+                raise ValueError(f"duplicate group {name} record")
+            for record in records:
+                geometry = groups.get(record.group_id)
+                if geometry is None:
+                    raise ValueError(f"group {name} record references unknown group")
+                if set(record.member_revision_ids) != set(geometry.member_revision_ids):
+                    raise ValueError(
+                        f"group {name} member revisions must match group geometry"
+                    )
+                if any(revision_id not in revisions for revision_id in record.member_revision_ids):
+                    raise ValueError(f"group {name} record references unknown revision")
         for record in (
             *self.ocr_records,
             *self.style_fingerprints,
@@ -513,5 +589,15 @@ class PageDocument(DomainModel):
                     raise ValueError("translation issue references a different source page")
                 if issue.region_id is not None and issue.region_id != translation.region_id:
                     raise ValueError("translation issue references a different region")
+        for translation in self.group_translations:
+            member_region_ids = {
+                revisions[revision_id].region_id
+                for revision_id in translation.member_revision_ids
+            }
+            for issue in translation.issues:
+                if issue.page_id is not None and issue.page_id != self.source.page_id:
+                    raise ValueError("translation issue references a different source page")
+                if issue.region_id is not None and issue.region_id not in member_region_ids:
+                    raise ValueError("translation issue references a different group")
         self.mapping_artifact_references()
         return self

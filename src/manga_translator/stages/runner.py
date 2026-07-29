@@ -11,7 +11,7 @@ from time import sleep
 from typing import Any
 
 from ..domain.issues import StageName
-from ..domain.models import ArtifactRef
+from ..domain.models import ArtifactRef, PageDocument
 from ..storage.job_store import (
     JobStore,
     PageRunClaim,
@@ -61,6 +61,11 @@ class StageFailureContext:
     partial_outcomes: Mapping[StageName, StageOutcome]
 
 
+StageCheckpoint = Callable[
+    [StageName, Mapping[StageName, StageOutcome]], PageDocument
+]
+
+
 def downstream_of(stage: StageName) -> set[StageName]:
     result = {stage}
     changed = True
@@ -98,6 +103,7 @@ class StageRunner:
         provider_response_poll_seconds: float = DEFAULT_PROVIDER_RESPONSE_POLL_SECONDS,
         page_run_lease_seconds: float = DEFAULT_PAGE_RUN_LEASE_SECONDS,
         page_run_poll_seconds: float = DEFAULT_PAGE_RUN_POLL_SECONDS,
+        checkpoint: StageCheckpoint | None = None,
     ) -> None:
         missing = set(STAGE_DAG) - set(specs)
         if missing:
@@ -122,6 +128,7 @@ class StageRunner:
         self.provider_response_poll_seconds = provider_response_poll_seconds
         self.page_run_lease_seconds = page_run_lease_seconds
         self.page_run_poll_seconds = page_run_poll_seconds
+        self.checkpoint = checkpoint
 
     def _acquire_page_run_claim(self) -> PageRunClaim:
         while True:
@@ -416,6 +423,12 @@ class StageRunner:
                     )
                     for index, payload in enumerate(produced.artifacts)
                 )
+                outcome = StageOutcome(fingerprint, artifacts, False)
+                checkpoint_document = (
+                    self.checkpoint(name, {**outcomes, name: outcome})
+                    if self.checkpoint is not None
+                    else None
+                )
                 self.store.finish_stage(
                     job_id=self.job_id,
                     page_id=self.page_id,
@@ -423,6 +436,7 @@ class StageRunner:
                     fingerprint=fingerprint,
                     output_hashes=tuple(item.sha256 for item in artifacts),
                     claim=claim,
+                    document=checkpoint_document,
                 )
             except Exception as error:
                 self.store.fail_stage(
@@ -445,5 +459,5 @@ class StageRunner:
                     partial_outcomes=dict(outcomes),
                 )
                 raise
-            outcomes[name] = StageOutcome(fingerprint, artifacts, False)
+            outcomes[name] = outcome
         return outcomes

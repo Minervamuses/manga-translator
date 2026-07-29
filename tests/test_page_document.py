@@ -11,6 +11,8 @@ from manga_translator.domain.models import (
     ArtifactRef,
     BoundingBox,
     EntityRecord,
+    GroupGeometry,
+    GroupOCRRecord,
     Lineage,
     OCRCandidate,
     OCRRecord,
@@ -251,6 +253,57 @@ def test_records_must_reference_a_revision_owned_by_the_same_region() -> None:
                     preprocess_version="preprocess",
                 ),
             ),
+        )
+
+
+def test_group_records_must_match_one_unique_group_geometry() -> None:
+    document = _document()
+    geometry = GroupGeometry(
+        group_id="group:one",
+        member_revision_ids=(SHA_B,),
+        bbox=BoundingBox(x=10.0, y=20.0, width=30.0, height=40.0),
+    )
+    candidate = OCRCandidate(
+        raw_text="text",
+        normalized_text="text",
+        confidence=0.9,
+        confidence_kind="model",
+        source_view="original",
+    )
+    record = GroupOCRRecord(
+        group_id=geometry.group_id,
+        member_revision_ids=geometry.member_revision_ids,
+        candidates=(candidate,),
+        selected_index=0,
+        model_revision="model",
+        preprocess_version="preprocess",
+    )
+    valid = PageDocument(
+        source=document.source,
+        region_identities=document.region_identities,
+        region_revisions=document.region_revisions,
+        group_geometries=(geometry,),
+        group_ocr_records=(record,),
+    )
+    assert valid.group_ocr_records == (record,)
+
+    with pytest.raises(ValidationError, match="member revisions must match"):
+        PageDocument(
+            source=document.source,
+            region_identities=document.region_identities,
+            region_revisions=document.region_revisions,
+            group_geometries=(geometry,),
+            group_ocr_records=(
+                record.model_copy(update={"member_revision_ids": (SHA_C,)}),
+            ),
+        )
+    with pytest.raises(ValidationError, match="duplicate group OCR"):
+        PageDocument(
+            source=document.source,
+            region_identities=document.region_identities,
+            region_revisions=document.region_revisions,
+            group_geometries=(geometry,),
+            group_ocr_records=(record, record),
         )
 
 

@@ -43,6 +43,9 @@ from .domain.models import (
     BoundingBox,
     EntityRecord,
     GroupGeometry,
+    GroupLayoutRecord,
+    GroupOCRRecord,
+    GroupTranslationRecord,
     MaskLineage,
     OCRCandidate,
     OCRRecord,
@@ -2625,6 +2628,25 @@ def _raw_response_artifact(group: TextGroup) -> ArtifactRef:
     )
 
 
+def _layout_plan_artifact(group: TextGroup) -> ArtifactRef | None:
+    layout = group.mapping_chain.get("layout_plan")
+    if not isinstance(layout, dict):
+        return None
+    payload = layout.get("artifact")
+    if not isinstance(payload, dict):
+        return None
+    return ArtifactRef(
+        sha256=str(payload["sha256"]),
+        media_type=str(payload["media_type"]),
+        size_bytes=int(payload["size_bytes"]),
+    )
+
+
+def _durable_group_id(page_id: str, member_revision_ids: tuple[str, ...]) -> str:
+    material = "|".join((page_id, *sorted(member_revision_ids)))
+    return "group:" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+
+
 def _document_from_page_result(
     *,
     previous: PageDocument,
@@ -2749,6 +2771,8 @@ def _document_from_page_result(
     current_revision_ids = {
         revision.revision_id for revision in reconciled.current_revisions
     }
+    # Legacy per-region results remain readable, but current production results
+    # are represented exactly once at group scope below.
     ocr_records: list[OCRRecord] = [
         record
         for record in previous.ocr_records
@@ -2760,49 +2784,71 @@ def _document_from_page_result(
         if record.revision_id not in current_revision_ids
     ]
     group_issues: list[Issue] = []
-    recorded_ocr: set[str] = set()
-    recorded_translation: set[str] = set()
+    group_ocr_records: list[GroupOCRRecord] = []
+    group_translations: list[GroupTranslationRecord] = []
+    group_layout_records: list[GroupLayoutRecord] = []
     for group in page.groups:
-        for legacy_region_id in group.region_ids:
-            revision = revision_by_legacy_id.get(legacy_region_id)
-            if revision is None:
-                continue
-            if group.ocr_text and revision.revision_id not in recorded_ocr:
-                candidate = OCRCandidate(
-                    raw_text=group.ocr_text,
-                    normalized_text=group.ocr_text_norm,
-                    confidence=max(0.0, min(1.0, float(group.ocr_confidence))),
-                    confidence_kind="ensemble",
-                    source_view=group.ocr_source or "legacy",
+        member_pairs = tuple(
+            sorted(
+                (
+                    (legacy_id, revision_by_legacy_id[legacy_id])
+                    for legacy_id in group.region_ids
+                    if legacy_id in revision_by_legacy_id
+                ),
+                key=lambda pair: pair[1].revision_id,
+            )
+        )
+        if not member_pairs:
+            continue
+        member_revision_ids = tuple(
+            revision.revision_id for _, revision in member_pairs
+        )
+        durable_group_id = _durable_group_id(page.page_id, member_revision_ids)
+        if group.ocr_text:
+            candidate = OCRCandidate(
+                raw_text=group.ocr_text,
+                normalized_text=group.ocr_text_norm,
+                confidence=max(0.0, min(1.0, float(group.ocr_confidence))),
+                confidence_kind="ensemble",
+                source_view=group.ocr_source or "legacy",
+            )
+            group_ocr_records.append(
+                GroupOCRRecord(
+                    group_id=durable_group_id,
+                    member_revision_ids=member_revision_ids,
+                    candidates=(candidate,),
+                    selected_index=0,
+                    model_revision=f"{DEFAULT_MODEL_ID}:{DEFAULT_MODEL_REVISION}",
+                    preprocess_version="v0.3.2-ensemble.1",
                 )
-                ocr_records.append(
-                    OCRRecord(
-                        region_id=revision.region_id,
-                        revision_id=revision.revision_id,
-                        candidates=(candidate,),
-                        selected_index=0,
-                        model_revision=f"{DEFAULT_MODEL_ID}:{DEFAULT_MODEL_REVISION}",
-                        preprocess_version="v0.3.2-ensemble.1",
+            )
+        if group.translation_valid:
+            request_item = group.mapping_chain.get("request_item")
+            if not isinstance(request_item, str) or not request_item:
+                raise ValueError(
+                    f"translated group {group.id} has no durable request item identity"
+                )
+            group_translations.append(
+                GroupTranslationRecord(
+                    group_id=durable_group_id,
+                    member_revision_ids=member_revision_ids,
+                    request_item_id=request_item,
+                    raw_response_ref=_raw_response_artifact(group),
+                    validated_text=group.translation,
+                )
+            )
+            layout_ref = _layout_plan_artifact(group)
+            if layout_ref is not None:
+                group_layout_records.append(
+                    GroupLayoutRecord(
+                        group_id=durable_group_id,
+                        member_revision_ids=member_revision_ids,
+                        plan_ref=layout_ref,
+                        plan_key=group.id,
                     )
                 )
-                recorded_ocr.add(revision.revision_id)
-            if group.translation_valid and revision.revision_id not in recorded_translation:
-                request_item = group.mapping_chain.get("request_item")
-                if not isinstance(request_item, str) or not request_item:
-                    raise ValueError(
-                        f"translated group {group.id} has no durable request item identity"
-                    )
-                translations.append(
-                    TranslationRecord(
-                        region_id=revision.region_id,
-                        revision_id=revision.revision_id,
-                        request_item_id=request_item,
-                        raw_response_ref=_raw_response_artifact(group),
-                        validated_text=group.translation,
-                    )
-                )
-                recorded_translation.add(revision.revision_id)
-            elif not group.translation_valid:
+        elif group.skip_reason:
+            for _, revision in member_pairs:
                 legacy_code: str | None = None
                 severity = IssueSeverity.WARNING
                 if group.status == "ocr_failed":
@@ -2840,9 +2886,14 @@ def _document_from_page_result(
     source_by_id = {region.id: region.mask_source for region in page.regions}
     for group in page.groups:
         member_pairs = tuple(
-            (legacy_id, revision_by_legacy_id[legacy_id])
-            for legacy_id in group.region_ids
-            if legacy_id in revision_by_legacy_id
+            sorted(
+                (
+                    (legacy_id, revision_by_legacy_id[legacy_id])
+                    for legacy_id in group.region_ids
+                    if legacy_id in revision_by_legacy_id
+                ),
+                key=lambda pair: pair[1].revision_id,
+            )
         )
         if not member_pairs:
             continue
@@ -2895,7 +2946,10 @@ def _document_from_page_result(
             )
         group_geometries.append(
             GroupGeometry(
-                group_id=group.id,
+                group_id=_durable_group_id(
+                    page.page_id,
+                    tuple(revision.revision_id for _, revision in member_pairs),
+                ),
                 member_revision_ids=tuple(revision.revision_id for _, revision in member_pairs),
                 bbox=BoundingBox(
                     x=float(group.x),
@@ -2967,11 +3021,14 @@ def _document_from_page_result(
     )
     mapping_entities: list[EntityRecord] = []
     for index, snapshot in enumerate(page.mapping_chains):
-        snapshot_revisions = [
-            revision_by_legacy_id[legacy_region_id]
-            for legacy_region_id in snapshot.region_ids
-            if legacy_region_id in revision_by_legacy_id
-        ]
+        snapshot_revisions = sorted(
+            (
+                revision_by_legacy_id[legacy_region_id]
+                for legacy_region_id in snapshot.region_ids
+                if legacy_region_id in revision_by_legacy_id
+            ),
+            key=lambda revision: revision.revision_id,
+        )
         durable_region_ids = [
             str(revision.region_id) for revision in snapshot_revisions
         ]
@@ -2982,8 +3039,12 @@ def _document_from_page_result(
         attributes["region_ids"] = durable_region_ids
         attributes["revision_ids"] = durable_revision_ids
         chain = dict(attributes["chain"])
+        durable_group_id = _durable_group_id(
+            page.page_id, tuple(durable_revision_ids)
+        )
         chain["region"] = {
             "mapping_region_key": snapshot.chain.get("region"),
+            "group_id": durable_group_id,
             "region_ids": durable_region_ids,
             "revision_ids": durable_revision_ids,
         }
@@ -3001,6 +3062,9 @@ def _document_from_page_result(
         region_identities=reconciled.identities,
         region_revisions=reconciled.revisions,
         group_geometries=tuple(group_geometries),
+        group_ocr_records=tuple(group_ocr_records),
+        group_translations=tuple(group_translations),
+        group_layout_records=tuple(group_layout_records),
         style_fingerprints=tuple(domain_styles),
         ocr_records=tuple(ocr_records),
         translations=tuple(translations),
@@ -3099,6 +3163,10 @@ def _page_result_from_document(
         for record in document.translations
         if record.revision_id in active_revision_ids
     }
+    group_ocr_by_id = {record.group_id: record for record in document.group_ocr_records}
+    group_translation_by_id = {
+        record.group_id: record for record in document.group_translations
+    }
     groups: list[TextGroup] = []
     for snapshot in mappings:
         revisions = [
@@ -3112,28 +3180,39 @@ def _page_result_from_document(
         y1 = min(revision.bbox.y for revision in revisions)
         x2 = max(revision.bbox.right for revision in revisions)
         y2 = max(revision.bbox.bottom for revision in revisions)
-        ocr_record = next(
-            (
-                ocr_by_revision[revision.revision_id]
-                for revision in revisions
-                if revision.revision_id in ocr_by_revision
-            ),
-            None,
+        region_chain = snapshot.chain.get("region")
+        durable_group_id = (
+            str(region_chain.get("group_id", ""))
+            if isinstance(region_chain, dict)
+            else ""
         )
-        translation_record = next(
-            (
-                translation_by_revision[revision.revision_id]
-                for revision in revisions
-                if revision.revision_id in translation_by_revision
-            ),
-            None,
-        )
+        ocr_record = group_ocr_by_id.get(durable_group_id)
+        translation_record = group_translation_by_id.get(durable_group_id)
+        # Backward-compatible projection for documents written before group
+        # records became authoritative. New documents never use this path.
+        if ocr_record is None:
+            ocr_record = next(
+                (
+                    ocr_by_revision[revision.revision_id]
+                    for revision in revisions
+                    if revision.revision_id in ocr_by_revision
+                ),
+                None,
+            )
+        if translation_record is None:
+            translation_record = next(
+                (
+                    translation_by_revision[revision.revision_id]
+                    for revision in revisions
+                    if revision.revision_id in translation_by_revision
+                ),
+                None,
+            )
         candidate = (
             ocr_record.candidates[ocr_record.selected_index]
             if ocr_record is not None and ocr_record.selected_index is not None
             else None
         )
-        region_chain = snapshot.chain.get("region")
         mapping_region_key = (
             str(region_chain.get("mapping_region_key", ""))
             if isinstance(region_chain, dict)
@@ -3172,6 +3251,38 @@ def _page_result_from_document(
                 mapping_chain=snapshot.chain,
             )
         )
+    if document.group_ocr_records:
+        projected_ocr_results = [
+            record.candidates[record.selected_index].raw_text
+            for record in document.group_ocr_records
+            if record.selected_index is not None
+            and any(
+                revision_id in active_revision_ids
+                for revision_id in record.member_revision_ids
+            )
+        ]
+    else:
+        projected_ocr_results = [
+            record.candidates[record.selected_index].raw_text
+            for record in document.ocr_records
+            if record.selected_index is not None
+            and record.revision_id in active_revision_ids
+        ]
+    if document.group_translations:
+        projected_translations = [
+            record.validated_text
+            for record in document.group_translations
+            if any(
+                revision_id in active_revision_ids
+                for revision_id in record.member_revision_ids
+            )
+        ]
+    else:
+        projected_translations = [
+            record.validated_text
+            for record in document.translations
+            if record.revision_id in active_revision_ids
+        ]
     return PageResult(
         page_id=document.source.page_id,
         source_path=Path(document.source.source_path),
@@ -3179,17 +3290,8 @@ def _page_result_from_document(
         image=image,
         source_image=source_image,
         regions=regions,
-        ocr_results=[
-            record.candidates[record.selected_index].raw_text
-            for record in document.ocr_records
-            if record.selected_index is not None
-            and record.revision_id in active_revision_ids
-        ],
-        translations=[
-            record.validated_text
-            for record in document.translations
-            if record.revision_id in active_revision_ids
-        ],
+        ocr_results=projected_ocr_results,
+        translations=projected_translations,
         groups=groups,
         style_fingerprints={
             str(fingerprint.region_id): fingerprint
@@ -3216,6 +3318,74 @@ def _page_result_from_document(
             if entity is not None and entity.attributes.get("stage_failure") is not None
             else None
         ),
+    )
+
+
+def _checkpoint_page_result(
+    *,
+    image_path: Path,
+    page_id: str,
+    store: JobStore,
+    outcomes: dict[StageName, StageOutcome],
+) -> PageResult:
+    """Project stage-local adapters into the current durable document revision."""
+
+    for stage in (
+        StageName.INPAINT_RENDER,
+        StageName.LAYOUT,
+        StageName.TRANSLATE,
+        StageName.OCR,
+        StageName.ORDER,
+        StageName.SAFE_REGION,
+        StageName.STYLE,
+        StageName.DETECT,
+    ):
+        outcome = outcomes.get(stage)
+        if outcome is None:
+            continue
+        state = decode_pipeline_state(
+            outcome.outputs,
+            expected_stage=stage,
+            read_bytes=store.artifacts.read_bytes,
+        )
+        break
+    else:
+        raise ValueError("a document checkpoint after source requires detector state")
+    source_image = _decode_source_image(store, _source_ref_from_extras(state.extras))
+    style_fingerprints = _style_fingerprints_from_extras(state.extras)
+    style_outcome = outcomes.get(StageName.STYLE)
+    if not style_fingerprints and style_outcome is not None:
+        style_state = decode_pipeline_state(
+            style_outcome.outputs,
+            expected_stage=StageName.STYLE,
+            read_bytes=store.artifacts.read_bytes,
+        )
+        style_fingerprints = _style_fingerprints_from_extras(style_state.extras)
+    groups = list(state.detection.groups)
+    return PageResult(
+        page_id=page_id,
+        source_path=image_path,
+        status="succeeded",
+        source_image=source_image,
+        regions=state.detection.regions_post,
+        ocr_results=[group.ocr_text for group in groups],
+        translations=[group.translation for group in groups],
+        groups=groups,
+        style_fingerprints=style_fingerprints,
+        mapping_chains=(
+            _mapping_snapshots_from_extras(state.extras)
+            or [GroupMappingSnapshot.from_group(group) for group in groups]
+        ),
+        issues=[
+            ResultIssue(
+                code=issue.code,
+                message=issue.message,
+                stage=("style" if issue.code.startswith("style_") else "detect"),
+                page_id=page_id,
+                details=issue.details,
+            )
+            for issue in state.detection.issues
+        ],
     )
 
 
@@ -3315,12 +3485,50 @@ def process_single_page_staged(
         glossary_revision=glossary_revision,
         runners=runners,
     )
+    checkpoint_document = previous
+
+    def checkpoint(
+        stage: StageName, stage_outcomes: dict[StageName, StageOutcome]
+    ) -> PageDocument:
+        nonlocal checkpoint_document
+        outcomes_snapshot = dict(stage_outcomes)
+        if stage is StageName.SOURCE:
+            checkpoint_document = PageDocument(
+                source=previous.source,
+                stages=_stage_records(outcomes_snapshot),
+                panel_overrides=previous.panel_overrides,
+                reading_order_overrides=previous.reading_order_overrides,
+            )
+            return checkpoint_document
+        if stage is StageName.ENCODE:
+            checkpoint_page = _page_result_from_stage_outcomes(
+                image_path=image_path,
+                store=store,
+                outcomes=outcomes_snapshot,
+            )
+        else:
+            checkpoint_page = _checkpoint_page_result(
+                image_path=image_path,
+                page_id=page_id,
+                store=store,
+                outcomes=outcomes_snapshot,
+            )
+        checkpoint_document = _document_from_page_result(
+            previous=checkpoint_document,
+            page=checkpoint_page,
+            outcomes=outcomes_snapshot,
+            store=store,
+            job_id=job_id,
+        )
+        return checkpoint_document
+
     runner = StageRunner(
         store=store,
         job_id=job_id,
         page_id=page_id,
         specs=specs,
         config=config_payload,
+        checkpoint=checkpoint,
     )
     try:
         outcomes = runner.run(resume=resume, force_stage=force_stage)
@@ -3335,8 +3543,9 @@ def process_single_page_staged(
             failure=failure,
             error=error,
         )
+        current_document = store.load_page_document(job_id=job_id, page_id=page_id)
         document = _document_with_stage_failure(
-            previous=previous,
+            previous=current_document or previous,
             page=page,
             store=store,
             job_id=job_id,
@@ -3351,14 +3560,9 @@ def process_single_page_staged(
         store=store,
         outcomes=outcomes,
     )
-    document = _document_from_page_result(
-        previous=previous,
-        page=page,
-        outcomes=outcomes,
-        store=store,
-        job_id=job_id,
-    )
-    store.store_page_document(job_id, document)
+    document = store.load_page_document(job_id=job_id, page_id=page_id)
+    if document is None:
+        raise RuntimeError("encode stage succeeded without a durable PageDocument checkpoint")
     page = _page_result_from_document(
         document,
         outcomes[StageName.ENCODE].outputs[0],

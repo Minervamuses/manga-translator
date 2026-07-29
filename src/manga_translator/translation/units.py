@@ -105,6 +105,16 @@ def build_translation_units(
         if key in ocr_by_revision:
             raise ValueError("duplicate OCR record for a region revision")
         ocr_by_revision[key] = record
+    revision_by_id = {
+        revision.revision_id: revision for revision in document.region_revisions
+    }
+    for record in document.group_ocr_records:
+        for revision_id in record.member_revision_ids:
+            revision = revision_by_id[revision_id]
+            key = (revision.region_id, revision_id)
+            if key in ocr_by_revision:
+                raise ValueError("duplicate OCR result for a region revision")
+            ocr_by_revision[key] = record
     units: list[TranslationUnit] = []
     for ordered in order.regions:
         revision = active_revisions[ordered.region_id]

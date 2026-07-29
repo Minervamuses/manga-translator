@@ -24,7 +24,7 @@ from manga_translator.contracts.mapping import (
 from manga_translator.detector import DetectionResult, MaskSource, TextGroup, TextRegion
 from manga_translator.domain.issues import IssueCode, StageName, StageStatus
 from manga_translator.domain.models import ArtifactRef
-from manga_translator.domain.serialization import canonical_document_bytes
+from manga_translator.domain.serialization import canonical_document_bytes, parse_document
 from manga_translator.manga_ocr_runtime import DEFAULT_MODEL_ID, DEFAULT_MODEL_REVISION
 from manga_translator.ocr import OCRCandidate, OCRResult
 from manga_translator.stages.state import decode_pipeline_state
@@ -123,6 +123,25 @@ def _detection() -> DetectionResult:
         groups=groups,
         mask=np.full((40, 60), 255, dtype=np.uint8),
         raw_mask=np.full((40, 60), 255, dtype=np.uint8),
+    )
+
+
+def _multi_region_detection() -> DetectionResult:
+    detection = _detection()
+    return DetectionResult(
+        regions_raw=detection.regions_raw,
+        regions_post=detection.regions_post,
+        groups=[
+            TextGroup(
+                id="detected-combined",
+                region_ids=["r2", "r1"],
+                bbox=(4, 5, 42, 18),
+                vertical=True,
+                mask=np.full((18, 42), 255, dtype=np.uint8),
+            )
+        ],
+        mask=detection.mask,
+        raw_mask=detection.raw_mask,
     )
 
 
@@ -255,6 +274,21 @@ def test_default_batch_and_single_page_entrypoints_persist_page_documents(
     source = _source(config)
     _install_component_fakes(monkeypatch, config)
     durable_root = config.paths.output_dir / ".manga-translator"
+    checkpoints: list[tuple[str, ArtifactRef | None, tuple[StageName, ...]]] = []
+    real_finish_stage = JobStore.finish_stage
+
+    def finish_stage_spy(self, **kwargs):
+        document = kwargs.get("document")
+        checkpoints.append(
+            (
+                str(kwargs["stage"]),
+                document.source.original_artifact if document is not None else None,
+                tuple(record.stage for record in document.stages) if document else (),
+            )
+        )
+        return real_finish_stage(self, **kwargs)
+
+    monkeypatch.setattr(JobStore, "finish_stage", finish_stage_spy)
 
     batch = pipeline_module.run_pipeline(config)
     page_id = batch.pages[0].page_id
@@ -263,6 +297,13 @@ def test_default_batch_and_single_page_entrypoints_persist_page_documents(
     assert batch.status == single.status == "succeeded"
     assert not hasattr(pipeline_module, "_process_single_page_impl")
     assert (durable_root / "jobs.sqlite3").is_file()
+    assert {stage for stage, _source, _records in checkpoints} == {
+        stage.value for stage in StageName
+    }
+    assert all(source is not None for _stage, source, _records in checkpoints)
+    assert all(
+        StageName(stage) in records for stage, _source, records in checkpoints
+    )
     with JobStore(
         durable_root / "jobs.sqlite3", ArtifactStore(durable_root / "artifacts")
     ) as store:
@@ -378,7 +419,11 @@ def test_component_stages_resume_without_reloading_models_or_provider(
     first_document = _open_document(state, page_id)
     assert first_document is not None
     first_bytes = canonical_document_bytes(first_document)
-    assert len(first_document.translations) == 1
+    assert not first_document.ocr_records
+    assert not first_document.translations
+    assert len(first_document.group_ocr_records) == 1
+    assert len(first_document.group_translations) == 1
+    assert len(first_document.group_layout_records) == 1
     assert first_document.region_revisions[0].angle_degrees == 6.5
     assert first_document.region_revisions[0].line_polygons
     assert first_document.region_revisions[0].mask_lineage[0].source_revision_id == (
@@ -416,10 +461,10 @@ def test_component_stages_resume_without_reloading_models_or_provider(
     assert all(revision.mask_refs for revision in second_document.region_revisions)
     assert all(
         record.model_revision == f"{DEFAULT_MODEL_ID}:{DEFAULT_MODEL_REVISION}"
-        for record in second_document.ocr_records
+        for record in second_document.group_ocr_records
     )
-    assert len(second_document.translations) == 1
-    raw_ref = second_document.translations[0].raw_response_ref
+    assert len(second_document.group_translations) == 1
+    raw_ref = second_document.group_translations[0].raw_response_ref
     assert ArtifactStore(state / "artifacts").read_bytes(raw_ref.sha256) == provider_payloads[0]
     assert len(second.pages[0].mapping_chains) == 2
     assert all(
@@ -448,6 +493,67 @@ def test_component_stages_resume_without_reloading_models_or_provider(
         assert ArtifactStore(state / "artifacts").exists(
             artifact["sha256"], expected_size=artifact["size_bytes"]
         )
+
+
+def test_multi_region_group_is_persisted_once_and_replays_by_durable_group_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = _config(tmp_path)
+    _source(config)
+    state = tmp_path / "state"
+    _install_component_fakes(monkeypatch, config)
+    monkeypatch.setattr(
+        pipeline_module,
+        "detect_text_regions",
+        lambda *_args, **_kwargs: _multi_region_detection(),
+    )
+
+    result = pipeline_module.run_pipeline(
+        config, job_id="job-1", state_dir=state, resume=True
+    )
+    page_id = result.pages[0].page_id
+    document = _open_document(state, page_id)
+    assert document is not None
+    assert not document.ocr_records
+    assert not document.translations
+    assert len(document.group_geometries) == 1
+    assert len(document.group_ocr_records) == 1
+    assert len(document.group_translations) == 1
+    assert len(document.group_layout_records) == 1
+    geometry = document.group_geometries[0]
+    assert len(geometry.member_revision_ids) == 2
+    assert document.group_ocr_records[0].member_revision_ids == geometry.member_revision_ids
+    assert document.group_translations[0].member_revision_ids == geometry.member_revision_ids
+    assert document.group_layout_records[0].member_revision_ids == geometry.member_revision_ids
+
+    payload = document.model_dump(mode="json")
+    mapping = next(
+        entity for entity in payload["entities"] if entity["kind"] == "mapping_snapshot"
+    )
+    mapping["attributes"]["region_ids"].reverse()
+    mapping["attributes"]["revision_ids"].reverse()
+    mapping["attributes"]["chain"]["region"]["region_ids"].reverse()
+    mapping["attributes"]["chain"]["region"]["revision_ids"].reverse()
+    reordered = parse_document(json.dumps(payload, ensure_ascii=False))
+
+    with JobStore(state / "jobs.sqlite3", ArtifactStore(state / "artifacts")) as store:
+        encode_record = next(
+            record for record in document.stages if record.stage is StageName.ENCODE
+        )
+        encoded_bytes = store.artifacts.read_bytes(encode_record.output_hashes[0])
+        replayed = pipeline_module._page_result_from_document(
+            reordered,
+            ArtifactRef(
+                sha256=encode_record.output_hashes[0],
+                media_type="image/png",
+                size_bytes=len(encoded_bytes),
+            ),
+            store,
+        )
+
+    assert len(replayed.groups) == 1
+    assert replayed.groups[0].ocr_text == document.group_ocr_records[0].candidates[0].raw_text
+    assert replayed.groups[0].translation == document.group_translations[0].validated_text
 
 
 def test_font_and_glossary_mutations_invalidate_only_true_downstream_components(

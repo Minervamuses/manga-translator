@@ -295,8 +295,10 @@ class JobStore:
                 if group.union_mask_ref is not None
             ),
             *(record.raw_response_ref for record in document.translations),
+            *(record.raw_response_ref for record in document.group_translations),
             *(plan.font_ref for plan in document.layout_plans),
             *(plan.alpha_mask_ref for plan in document.layout_plans),
+            *(record.plan_ref for record in document.group_layout_records),
             *document.mapping_artifact_references(),
         )
         for reference in references:
@@ -336,49 +338,61 @@ class JobStore:
 
     def store_page_document(self, job_id: str, document: PageDocument) -> ArtifactRef:
         data = canonical_document_bytes(document)
-        owner_id = f"{job_id}:{document.source.page_id}:document"
+        artifact = self.artifacts.put_bytes(data, media_type="application/json")
+        if not self.artifacts.exists(
+            artifact.sha256, expected_size=artifact.size_bytes
+        ):
+            raise RuntimeError("PageDocument artifact did not become durable")
         with self.transaction() as connection:
-            member_hashes = self._require_page_document_members(connection, document)
-            artifact = self.artifacts.put_bytes(data, media_type="application/json")
-            if not self.artifacts.exists(
-                artifact.sha256, expected_size=artifact.size_bytes
-            ):
-                raise RuntimeError("PageDocument artifact did not become durable")
-            self._insert_artifact(connection, artifact)
-            connection.execute(
-                "DELETE FROM artifact_references WHERE owner_type='page_document' AND owner_id=?",
-                (owner_id,),
+            self._store_page_document_in_transaction(
+                connection, job_id=job_id, document=document, artifact=artifact
             )
-            connection.execute(
-                """
-                DELETE FROM artifact_references
-                WHERE owner_type='page_document_member' AND owner_id=?
-                """,
-                (owner_id,),
-            )
-            connection.execute(
-                """
-                INSERT INTO pages(job_id, page_id, document_artifact_sha256)
-                VALUES (?, ?, ?)
-                ON CONFLICT(job_id, page_id) DO UPDATE SET
-                    document_artifact_sha256=excluded.document_artifact_sha256,
-                    updated_at=CURRENT_TIMESTAMP
-                """,
-                (job_id, document.source.page_id, artifact.sha256),
-            )
-            connection.execute(
-                "INSERT INTO artifact_references(owner_type, owner_id, sha256) VALUES (?, ?, ?)",
-                ("page_document", owner_id, artifact.sha256),
-            )
-            for member_hash in member_hashes:
-                connection.execute(
-                    """
-                    INSERT INTO artifact_references(owner_type, owner_id, sha256)
-                    VALUES ('page_document_member', ?, ?)
-                    """,
-                    (owner_id, member_hash),
-                )
         return artifact
+
+    def _store_page_document_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        job_id: str,
+        document: PageDocument,
+        artifact: ArtifactRef,
+    ) -> None:
+        owner_id = f"{job_id}:{document.source.page_id}:document"
+        member_hashes = self._require_page_document_members(connection, document)
+        self._insert_artifact(connection, artifact)
+        connection.execute(
+            "DELETE FROM artifact_references WHERE owner_type='page_document' AND owner_id=?",
+            (owner_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM artifact_references
+            WHERE owner_type='page_document_member' AND owner_id=?
+            """,
+            (owner_id,),
+        )
+        connection.execute(
+            """
+            INSERT INTO pages(job_id, page_id, document_artifact_sha256)
+            VALUES (?, ?, ?)
+            ON CONFLICT(job_id, page_id) DO UPDATE SET
+                document_artifact_sha256=excluded.document_artifact_sha256,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (job_id, document.source.page_id, artifact.sha256),
+        )
+        connection.execute(
+            "INSERT INTO artifact_references(owner_type, owner_id, sha256) VALUES (?, ?, ?)",
+            ("page_document", owner_id, artifact.sha256),
+        )
+        for member_hash in member_hashes:
+            connection.execute(
+                """
+                INSERT INTO artifact_references(owner_type, owner_id, sha256)
+                VALUES ('page_document_member', ?, ?)
+                """,
+                (owner_id, member_hash),
+            )
 
     def load_page_document(self, *, job_id: str, page_id: str) -> PageDocument | None:
         row = self.connection.execute(
@@ -916,8 +930,22 @@ class JobStore:
         fingerprint: str,
         output_hashes: tuple[str, ...],
         claim: PageRunClaim,
+        document: PageDocument | None = None,
     ) -> None:
         self._require_claim_scope(claim, job_id=job_id, page_id=page_id)
+        document_artifact = None
+        if document is not None:
+            if document.source.page_id != page_id:
+                raise ValueError("stage checkpoint document belongs to a different page")
+            data = canonical_document_bytes(document)
+            document_artifact = self.artifacts.put_bytes(
+                data, media_type="application/json"
+            )
+            if not self.artifacts.exists(
+                document_artifact.sha256,
+                expected_size=document_artifact.size_bytes,
+            ):
+                raise RuntimeError("stage checkpoint document did not become durable")
         with self.transaction() as connection:
             self._require_page_run_claim(connection, claim)
             cursor = connection.execute(
@@ -938,6 +966,13 @@ class JobStore:
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("running stage record disappeared before completion")
+            if document is not None and document_artifact is not None:
+                self._store_page_document_in_transaction(
+                    connection,
+                    job_id=job_id,
+                    document=document,
+                    artifact=document_artifact,
+                )
 
     def fail_stage(
         self,

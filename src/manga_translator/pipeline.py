@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import math
 import re
 import shutil
 from difflib import SequenceMatcher
@@ -119,6 +118,7 @@ from .translator import (
 )
 from .typesetter import (
     TextLayoutPlan,
+    _preferred_group_font_size,
     layout_plan_block_bbox,
     plan_text_layout,
     render_text_into_group,
@@ -1263,9 +1263,15 @@ def _preflight_raqm_layout_plans(
             for region_id in group.region_ids
             if region_id in regions_by_id
         ]
-        source_font_size = max(
-            [float(region.font_size_hint) for region in member_regions if region.font_size_hint > 0]
-            or [float(min(group.w, group.h) * 0.42)]
+        estimated = _preferred_group_font_size(group, regions_by_id)
+        if estimated is None:
+            estimated = float(min(group.w, group.h) * 0.42)
+        source_font_size = float(
+            np.clip(
+                estimated,
+                config.typesetting.font_size_min,
+                config.typesetting.font_size_max,
+            )
         )
         source_angle = (
             sum(region.angle_degrees for region in member_regions) / len(member_regions)
@@ -1307,9 +1313,11 @@ def _preflight_raqm_layout_plans(
             source_font_size=source_font_size,
             source_center=source_center,
             source_angle_degrees=source_angle,
-            hard_font_floor=max(
-                config.typesetting.font_size_min,
-                math.ceil(source_font_size * 0.90),
+            hard_font_floor=config.typesetting.font_size_min,
+            minimum_source_font_scale=(
+                config.typesetting.min_font_scale
+                if config.typesetting.reject_unreadable_layout
+                else config.typesetting.hard_min_font_scale
             ),
             max_lines=source_line_count + 1,
             source_direction=primary_direction,
@@ -1319,6 +1327,7 @@ def _preflight_raqm_layout_plans(
             source_text_bbox=source_bbox,
             directions=(primary_direction,),
             line_gap_options=source_line_gap_options(source_line_gap_em),
+            tracking_options=(0.0,),
             neighbor_mask=occupied[top : top + height, left : left + width],
             minimum_containment=0.995,
         )

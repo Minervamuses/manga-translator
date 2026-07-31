@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from itertools import product
 from typing import Protocol
@@ -154,7 +154,23 @@ def _geometry_ratios(
     )
 
 
-def _candidate_score(request: LayoutRequest, candidate: LayoutCandidate, alpha: np.ndarray) -> float:
+def _line_break_preferences(request: LayoutRequest) -> dict[int, int]:
+    return {
+        item.index: item.preference
+        for item in analyze_line_breaks(
+            request.text,
+            preferred_grapheme_breaks=request.preferred_grapheme_breaks,
+        ).opportunities
+    }
+
+
+def _candidate_score(
+    request: LayoutRequest,
+    candidate: LayoutCandidate,
+    alpha: np.ndarray,
+    *,
+    break_preferences: Mapping[int, int] | None = None,
+) -> float:
     bbox = _mask_bbox(alpha)
     center = (
         (bbox[0] + bbox[2] / 2.0, bbox[1] + bbox[3] / 2.0)
@@ -163,14 +179,12 @@ def _candidate_score(request: LayoutRequest, candidate: LayoutCandidate, alpha: 
     )
     lengths = [len(grapheme_clusters(chunk)) for chunk in candidate.chunks]
     imbalance = (max(lengths) - min(lengths)) if lengths else 0
-    break_preferences = {
-        item.index: item.preference
-        for item in analyze_line_breaks(
-            request.text,
-            preferred_grapheme_breaks=request.preferred_grapheme_breaks,
-        ).opportunities
-    }
-    semantic_reward = sum(break_preferences.get(index, 0) for index in candidate.break_indices)
+    preferences = (
+        break_preferences
+        if break_preferences is not None
+        else _line_break_preferences(request)
+    )
+    semantic_reward = sum(preferences.get(index, 0) for index in candidate.break_indices)
     geometry = _geometry_ratios(request, candidate, alpha)
     geometry_cost = 0.0
     if geometry is not None:
@@ -315,6 +329,7 @@ def solve_layout(request: LayoutRequest, rasterizer: CandidateRasterizer) -> Lay
         raise ValueError("neighbor_mask must share the safe-region ROI-local shape")
 
     rejected: Counter[str] = Counter()
+    break_preferences: dict[int, int] | None = None
     feasible: list[
         tuple[
             float,
@@ -374,7 +389,14 @@ def solve_layout(request: LayoutRequest, rasterizer: CandidateRasterizer) -> Lay
             if center_offset_ratio > request.maximum_center_offset_ratio:
                 rejected["text_block_off_center"] += 1
                 continue
-        score = _candidate_score(request, candidate, raster.alpha)
+        if break_preferences is None:
+            break_preferences = _line_break_preferences(request)
+        score = _candidate_score(
+            request,
+            candidate,
+            raster.alpha,
+            break_preferences=break_preferences,
+        )
         feasible.append(
             (
                 score,

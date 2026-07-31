@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+import pytest
 
+from manga_translator.typography import solver as solver_module
 from manga_translator.typography.fonts import FontRole
 from manga_translator.typography.layout import (
     AcceptedLayout,
@@ -184,6 +186,25 @@ def test_candidate_score_uses_text_block_bbox_not_glyph_pixel_density() -> None:
     assert _candidate_score(request, candidate, solid) == _candidate_score(
         request, candidate, sparse
     )
+
+
+def test_solver_reuses_line_break_preferences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    original = solver_module.analyze_line_breaks
+
+    def counted_analysis(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(solver_module, "analyze_line_breaks", counted_analysis)
+
+    result = solve_layout(_request(), RectangleRasterizer())
+
+    assert isinstance(result, AcceptedLayout)
+    assert calls == 1
 
 
 def test_source_line_count_uses_secondary_block_axis() -> None:

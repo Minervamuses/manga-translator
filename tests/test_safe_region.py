@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import pytest
 
+from manga_translator.typography import safe_region as safe_region_module
 from manga_translator.typography.safe_region import (
     build_safe_region,
     decode_safe_region_artifacts,
@@ -117,6 +118,38 @@ def test_alpha_containment_rejects_pixels_outside_eroded_render_mask() -> None:
 
     alpha[0, 0] = 255
     assert not artifacts.accepts_alpha(alpha, minimum=1.0)
+
+
+def test_render_erosion_preserves_detector_backed_text_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = np.full((80, 100, 3), 230, dtype=np.uint8)
+    text = np.zeros((80, 100), dtype=np.uint8)
+    text[18:63:4, 48] = 255
+
+    def dense_edge_barrier(
+        _roi: np.ndarray,
+        seed: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        protected = np.ones_like(seed, dtype=np.uint8)
+        protected[cv2.dilate(seed, np.ones((3, 3), dtype=np.uint8)) > 0] = 0
+        return protected, np.zeros_like(seed, dtype=np.uint8)
+
+    monkeypatch.setattr(safe_region_module, "_edge_barrier", dense_edge_barrier)
+
+    artifacts = build_safe_region(
+        image,
+        text,
+        render_erosion=2,
+    )
+
+    expected_clearance = cv2.dilate(
+        text,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+    )
+    assert artifacts.strategy == "connected_background"
+    assert np.all(artifacts.render_mask[text > 0] == 255)
+    assert np.all(artifacts.render_mask[expected_clearance > 0] == 255)
 
 
 def test_masks_must_be_roi_local_and_original_mask_must_be_real() -> None:

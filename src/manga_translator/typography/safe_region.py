@@ -225,6 +225,10 @@ def build_safe_region(
     other = _dilate(other, 2)
 
     protected, raw_edges = _edge_barrier(roi, seed)
+    # Source glyph edges will be removed by inpainting, so they are not protected
+    # artwork.  Clear enough of their halo to survive the later render erosion.
+    source_clearance = max(1, render_erosion + 1)
+    protected[_dilate(seed, source_clearance) > 0] = 0
     protected[other > 0] = 1
     seed_ring = _dilate(seed, 5)
     seed_ring[_dilate(seed, 1) > 0] = 0
@@ -291,6 +295,10 @@ def build_safe_region(
         strategy = "connected_background"
 
     render = _erode(safe, max(0, render_erosion))
+    # Erosion protects the inferred background boundary, but the detector-backed
+    # source geometry is already trusted render evidence.  Preserve that seed so
+    # thin glyph strokes and line polygons do not disappear from the render mask.
+    render[seed > 0] = 1
     render[protected > 0] = 0
     render[other > 0] = 0
     return SafeRegionArtifacts(

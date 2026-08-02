@@ -1,726 +1,303 @@
-# `manga-translator` v0.3.2 第三方審查與升級簡報
+# `manga-translator` v0.3.2 兩種實作方法、效果與已知問題
 
-> 分析快照：2026-08-02。目標讀者無法存取 repository。本文提供足以做架構選擇、
-> 風險排序與驗證設計的上下文；它不是逐行程式碼審查的替代品。沒有附出的程式、
-> 圖片、trace 或環境資訊一律視為未知，不應以猜測補齊。
+本文整理 `main` 與 `repair` 兩個版本實際做了什麼、目前可確認的效果，以及各自已知問題
+與風險，供無法查看程式庫的第三方理解與評估。內容來自指定版本的程式、設定、測試與
+既有報告；本文沒有重新呼叫付費翻譯服務，也不預設應保留哪個版本或採取哪種升級方式。
 
-本文只分析兩個固定的程式碼快照，沒有呼叫付費 OpenRouter API，也沒有把歷史報告
-寫成這次重新執行的結果。文中的「已確認」代表能由快照內的 production call path、
-設定或測試直接支持，不代表第三方已獨立重現。
+分析日期為 2026-08-02，對象是以下兩個固定版本：
 
-## 快速導覽
-
-- [1. 委託目標與期待交付](#1-委託目標與期待交付)
-- [2. 分析範圍、證據與術語](#2-分析範圍證據與術語)
-- [3. 產品契約、共同流程與關鍵設定](#3-產品契約共同流程與關鍵設定)
-- [4. 一頁式分支比較](#4-一頁式分支比較與暫定判斷)
-- [5. 兩個 production 方法](#5-兩個-production-方法)
-- [6. 現有驗證證據](#6-現有驗證證據與不能外推的部分)
-- [7. 依優先級整理的 findings](#7-依優先級整理的-findings)
-- [8. 需要先建立的診斷與驗證資料](#8-需要先建立的診斷與驗證資料)
-- [9. 第三方技術問題](#9-請第三方優先回答的技術問題)
-- [附錄 A：最小示意 excerpts](#附錄-a關鍵行為的最小示意-excerpts)
-- [附錄 B：程式位置索引](#附錄-b索取後續-excerpttrace-時的程式位置)
-
-## 1. 委託目標與期待交付
-
-### 1.1 主要決策
-
-請判斷下一版應採哪一種升級路徑，並說明理由：
-
-1. 以 `repair` 的 durable pipeline 為唯一 production 基線，補齊目前未接線與未驗證部分。
-2. 以 `main` 為基線，只回補必要的 mapping、RAQM 與 atomic render 能力。
-3. 提出更好的第三種遷移方案。
-
-暫定假說是：產品的首要不變條件是「不確定就不擦原文」，因此具備 strict mapping、
-stage state 與逐 ROI rollback 的 `repair` 較適合作為長期基線；但在重新量測真實寫回率前，
-不能把它視為可發布版本。請把這個假說當成可反駁的起點，不是預設答案。
-
-由於第 1.4 節的 owner 參數仍未決，請提出**條件式決策**：明列哪些時程、相容性、硬體、
-成本或品質門檻會讓建議從 `repair` 改成 `main` 或第三種方案。
-
-### 1.2 第三方應交付的內容
-
-請依下列格式回答：
-
-1. **決策摘要**：建議的基線／遷移方案、三個主要理由、主要反對理由、切換條件與信心等級。
-2. **前五項工作**：每項列優先級、影響、修改範圍、依賴、風險、rollback 與驗證方式。
-3. **低寫回率診斷方案**：定義漏斗、telemetry、匿名化 evidence 與判定根因的方法；
-   現有資料不足時，不要直接猜是哪個 gate。
-4. **分階段 roadmap**：先修 correctness／observability，再修 quality／performance；標明哪些
-   dormant 元件應接線、刪除或延後。
-5. **release gate**：提出 corpus 規模、成功／失敗指標、格式與硬體矩陣；區分 owner 必須
-   決定的門檻與工程上不可妥協的不變條件。
-6. **補件清單**：列出還需要的 source excerpt、trace、fixture 或環境資料，以及缺少它時
-   哪一項結論無法成立。
-
-每個重要判斷請標明本文第 2.2 節的證據等級。若提出 code-level 修改，請以本文件已提供的
-excerpt、檔案／symbol 或明確假設為依據；不要假裝看過未提供的程式碼。
-
-### 1.3 範圍與非目標
-
-- 本次要決定 CLI 圖片翻譯 pipeline 的升級方向，不包含 GUI、Web service、其他語言或模型重訓。
-- 不以放寬「不確定就保留來源像素」來換取較高寫回率。
-- 未經明確批准，不執行付費 API 測試；圖片本身不得送給翻譯 provider。
-- repository 中「有 class／有 tests」不等於 `manga-translate run` 已使用；只以 production call
-  path 判定是否接線。
-- 本文可以支持架構審查與驗證設計；若要逐行修補，第三方仍需索取最小必要 source excerpt。
-
-### 1.4 尚未由 owner 指定的決策參數
-
-以下資訊不在現有 repository 證據中。第三方應列出假設或要求補件，不應自行宣稱已有答案：
-
-| 缺少的參數 | 已知下限／限制 |
-|---|---|
-| 可接受的 ROI 寫回率 | 未定；不能靠降低來源保護換取 |
-| false erase／錯區譯文容忍度 | 產品不變條件要求已標註 release corpus 為 0 |
-| 翻譯人工品質門檻 | 未定；需包含台灣繁中、語意、角色一致性 |
-| Linux distro／glibc、GPU driver／CUDA、CPU-only 支援、VRAM 與每頁延遲 | 未定；checked-in 設定使用 CUDA 12.8、雙尺度 FP32 |
-| 每頁 API 成本與使用額度 | 未定 |
-| PNG alpha、EXIF、ICC 與 metadata 保留政策 | 未定；兩個快照目前都不完整保留 |
-| durable state 保存期限與磁碟預算 | 未定；`repair` 只有手動 GC |
-| 模型／字型的下載、離線安裝與更新政策 | 未定；wheel 不包含根目錄 runtime assets |
-| CLI、config、SQLite state 向後相容要求 | 未定 |
-| 時程與可接受的 migration 範圍 | 未定 |
-
-## 2. 分析範圍、證據與術語
-
-### 2.1 固定程式碼快照
-
-| 本文名稱 | Git ref / commit | 定位 |
+| 本文名稱 | 分析版本 | 說明 |
 |---|---|---|
-| `main` | `origin/main@ba0e3a46d5d864cca12166dbbbbd674e1c767154` | 單體、記憶體內 production pipeline |
-| `repair` | `repair@2953d0401319cb905bee78e3c597b05deeeda43f` | durable stages、RAQM、可重播狀態 |
+| `main` | `ba0e3a46d5d864cca12166dbbbbd674e1c767154` | 較早、較單純的整頁處理方法 |
+| `repair` | `2953d0401319cb905bee78e3c597b05deeeda43f` | 加入中間狀態、較完整排版與局部失敗復原的重構版本 |
 
-兩個快照的 merge base 是 `eb606f3aed1f0bc235c0c0d2d426c4a87930c7ae`。以表列快照計算，
-`main` 有 1 個、`repair` 有 142 個相對 merge base 的獨有 commits；兩個 endpoint tree 有
-654 個檔案差異。Git ancestry 證明 `repair` 不是 `main` 的直接後裔；兩邊最後各自加入內容相同
-的 `AGENTS.md`，所以 endpoint diff 不會列出該檔，這不改變 ancestry。`main` 在上述程式碼
-快照之後的本地 commits 只處理本審查文件，不納入程式分析。
+`repair` 的最後一份完整驗證報告實際記錄的是較早版本 `1e58b46`，不是本文分析的
+`2953d04`。本文會把程式中可直接確認的行為、歷史執行結果，以及尚未實測的風險分開敘述。
 
-`repair/VALIDATION_REPORT.md` 所寫的 branch `repair_p0_p4_completion` 與 implementation
-`1e58b46` 是歷史驗證身分，不是本文的 `repair@2953d04`。所有「目前」敘述都改用明確 SHA，
-避免文件隨 branch 移動而失真。
+## 1. 專案要做什麼
 
-未追蹤的兩份 review logs 以及 `build/`、`dist/` 沒有完整 branch、SHA、命令和逐 gate 統計，
-因此未當作可追溯成功證據。
+這個專案把日本漫畫圖片中的日文轉成台灣繁體中文。圖片的文字偵測、文字辨識、背景修補
+與排版都在本機執行；外部翻譯服務只收到辨識後的文字，不應收到漫畫圖片。
 
-### 2.2 證據等級與優先級
+兩個版本都遵守同一個核心安全原則：
 
-finding 中的事實與風險推論分別使用以下證據等級；同一 finding 若並列多個等級，必須明說
-各自對應哪個命題：
+> 文字辨識、翻譯、可清除範圍或排版只要不夠可靠，就保留原圖該處。不能先擦掉原文，
+> 再因為後面的步驟失敗而留下空白框、破損畫面或錯置譯文。
 
-- **F（confirmed fact）**：表列快照的 production code、設定或 tests 可直接確認。
-- **H（historical run）**：已提交報告記錄過，但不是在本次分析或目標快照重新執行。
-- **R（risk inference）**：由資料流或演算法合理推導，仍需專門樣本驗證實際發生率。
-- **U（unknown / missing evidence）**：現有材料不足，不能下結果性結論。
+文字偵測器有時會把同一句話拆成多個框，也可能在兩次偵測中找到重複內容。本文把程式整理
+後當成同一段處理的範圍稱為「文字區」。本文所說的「成功寫回」，是指程式已安全清除該文字區
+的日文、補好背景並寫入中文；只有產生排版計畫，不算成功寫回。
 
-優先級定義：
+## 2. 兩個版本共有的處理流程
 
-- **P0**：阻擋基線選擇、release，或可能違反來源保護、mapping、隱私與結果誠實性。
-- **P1**：顯著影響品質、可重現性、可操作性或維護正確性。
-- **P2**：效能、發布治理與長期維護項目；不表示可以永久忽略。
-
-### 2.3 術語
-
-| 術語 | 本文定義 |
-|---|---|
-| region | detector 產生的一個文字候選及其 bbox，並可能帶 pixel mask |
-| group | 一個或多個 regions 合成的 OCR、翻譯與排版單位 |
-| ROI | 最終局部 inpaint／render transaction 的矩形區域 |
-| production path | `manga-translate run` 實際可到達的呼叫路徑 |
-| fixed visual | 固定 boundary 與譯文的排版 fixture；不等於 live E2E |
-| live | 使用實際 detector、OCR 與 provider 的 pipeline 路徑 |
-| accepted | 通過某 stage gate；必須註明是 OCR、translation 或 layout |
-| 寫回成功 | ROI 完成 inpaint、render、驗證並套用到工作頁；不用 `commit`，以免和 Git 混淆 |
-| rollback | ROI 失敗後保留該區域來源像素 |
-| no-op page | 頁面流程成功結束，但沒有任何 ROI 寫回成功 |
-| source-preserved | 因 blocking failure 輸出來源檔副本；不等同 no-op page |
-| utility | 真實輸入能完成多少正確且安全的翻譯寫回，不只是不出錯 |
-| CTD | comic-text-detector，本專案的文字區域與 mask detector |
-| RAQM | Pillow 使用的複雜文字 shaping/layout 引擎，依賴 HarfBuzz、FriBiDi 等 native libraries |
-| CLREQ | 中文排版需求；本文的 `CLREQ-like` 只表示採用部分換行／禁則原則 |
-| ZDR | zero data retention；只有實際 request 落實後才能視為 provider contract |
-| IoM | intersection over minimum area，用於 bbox／mask containment 類比較 |
-| SFX | 漫畫擬聲字或效果字 |
-| E2E | end-to-end，從真實輸入經 production path 到最終輸出 |
-| MAD | mean absolute difference，本文用於比較輸入與重新編碼輸出的像素差 |
-| false erase | 未有通過驗證的寫回，卻使來源文字或非文字畫面像素被擦除／破壞 |
-
-## 3. 產品契約、共同流程與關鍵設定
-
-### 3.1 產品契約
-
-版本為 0.3.2，目標是把本機日本漫畫圖片中的日文轉為台灣繁體中文。CTD 偵測與
-`manga-ocr` 在本機執行；翻譯只把 OCR 後的文字送到 OpenRouter，圖片不應離開本機。
-
-最高優先不變條件是：
-
-> OCR、翻譯、遮罩或排版只要不夠可靠，就保留該區域的來源像素；不可先擦除原文，
-> 再因後段失敗留下空白框或錯位譯文。
-
-共同概念流程：
+兩者的大方向相同：
 
 ```text
-decode image
-  → comic-text-detector：regions + pixel mask
-  → grouping / deduplication / reading order
-  → manga-ocr：Japanese text
-  → OpenRouter：Taiwan Traditional Chinese text
-  → layout preflight / validation
-  → inpaint only the regions that will be rendered
-  → render
-  → encode output and evidence
+讀取圖片
+  → 找出文字位置與實際字形範圍
+  → 合併重複或破碎的文字區，決定閱讀順序
+  → 辨識日文
+  → 把辨識出的文字送去翻譯
+  → 確認中文能安全放回原位置
+  → 只清除確定會寫入中文的原文字形
+  → 寫入中文並輸出圖片
 ```
 
-`repair` 另在 render 後驗證每個 ROI，失敗就 rollback；`main` 只有 render 前 layout preflight，
-沒有同等的 post-render transaction validation。
+共同使用的主要元件包括：
 
-主要技術棧是 Python 3.11、PyTorch、Transformers、OpenCV、NumPy、Pillow、httpx、
-Pydantic 與 Click。正式 target 是 Linux；Windows 開發必須使用 WSL Bash。權威環境政策是
-Conda 管 interpreter／native runtime、Poetry 管 project packages／lock，不能以 repository
-`.venv`、pip 或 uv 取代。
+- `comic-text-detector`：找文字框、文字線與像素遮罩（標出哪些像素屬於文字）。
+- `manga-ocr`：把裁下來的漫畫文字辨識成日文。
+- OpenRouter：把日文文字翻成台灣繁體中文；分析版本中的設定使用
+  `x-ai/grok-4.5`，本文沒有驗證該模型目前是否仍可用。
+- OpenCV：讀寫圖片、處理遮罩、修補被清除文字後的背景。
+- Pillow：載入字型並把中文畫回圖片。
 
-### 3.2 安全與行為相關的設定快照
+為了避免誤擦人物或線稿，文字偵測預設跑兩個解析度，再合併結果；精修後的文字遮罩還必須
+得到原始偵測遮罩支持。從分割遮罩回收未形成文字框的候選，以及缺少可靠像素遮罩時使用整個
+矩形清除，預設都關閉。這會犧牲部分翻譯完成率，但比較符合「不確定就保留原圖」的原則。
 
-| 區塊 | 兩者共同值 | `repair` 的差異／注意事項 |
+文字辨識會比較原始裁圖、只保留文字遮罩的裁圖，以及視需要產生的增強、黑白和個別小區域
+版本。程式再以文字種類、長度、重複模式和不同裁圖是否一致來判斷結果可不可信。這個分數是
+人工規則，不是模型本身給出的機率。
+
+## 3. 兩個版本共有的問題與風險
+
+以下限制在兩個分析版本中都存在。
+
+### 3.1 文字偵測器的可信度分數被丟失
+
+底層偵測器原本有每個文字框的可信度，但轉成專案內部資料時沒有保存，後面看到的值幾乎固定
+為 `1.0`。因此程式、報告和後續重構都無法依真實可信度排序、調整門檻或分析誤判。`repair`
+雖然保存了更多中間資料，保存的仍是這個失真的分數。
+
+### 3.2 文字辨識的接受標準仍是人工規則
+
+兩個版本實際使用的正式流程都逐一處理文字區，並用字元種類和多張裁圖的一致性決定是否接受。
+較長的日文通常容易取得高分，短英文擬聲字則較容易低於門檻。看起來像漢字的線稿誤認也可能
+得到偏高分。這些都是由規則可推導的風險，尚未用足夠的人工標註圖片量測實際比例。
+
+### 3.3 閱讀順序不理解漫畫分鏡
+
+兩個版本實際執行時都只依文字區在整頁上的中心座標排序。直排漫畫大致採右到左、上到下，
+橫排則採上到下、左到右，但沒有真正辨識分鏡、對話框關係或人工指定順序。跨分鏡頁面可能
+把上下文送錯順序，進而影響翻譯。
+
+### 3.4 文字區合併可能受中間候選牽連
+
+文字框只要兩兩符合距離、重疊或包含條件，就會被併在一起。若 A 接近 B、B 又接近 C，三者
+可能全部被合併，即使 A 和 C 原本屬於不同對話。程式尚未用分鏡或完整對話框再次確認整組結果。
+一旦錯誤合併仍通過後續檢查，辨識、翻譯和清除範圍都可能一起受影響。
+
+### 3.5 設定檔拼錯欄位不會報錯
+
+兩個版本的設定載入都會忽略未認識的欄位。使用者若拼錯參數名稱，程式可能正常啟動但完全
+沒有採用該設定。設定檔中的翻譯服務金鑰欄位又必須存在；若把整個欄位刪掉，即使環境變數
+已有金鑰，設定仍可能先驗證失敗。
+
+### 3.6 圖片格式與發布包不完整
+
+主要圖片流程最後以 OpenCV 的彩色格式重新編碼，不能完整保留 PNG/WebP 透明度、EXIF 方向、
+ICC 色彩描述與一般圖片資訊。兩個版本建立的 Python 安裝包也只包含程式碼，沒有根目錄的
+模型、字型、預設設定與詞彙表；換到另一個目錄安裝可能找不到執行所需檔案。兩個分析版本
+都沒有自動建置與測試流程可證明乾淨環境會一直通過，模型下載也缺少固定檢查碼驗證。
+
+## 4. 方法一：`main`
+
+### 4.1 怎麼運作
+
+`main` 以一個較短的整頁流程完成工作。圖片、文字區、辨識結果、翻譯和排版計畫主要保留在
+記憶體中；一頁處理完才寫出圖片。中途中斷後沒有可直接接續的工作狀態。
+
+它的主要做法是：
+
+1. 用 1024 與 1536 兩種尺寸偵測文字，再合併重複框與像素遮罩。
+2. 把整句大框與零碎欄位視為不同辨識假設，避免把同一句重複串接。
+3. 依文字區在整頁上的位置排序，逐區執行多種裁圖的文字辨識。
+4. 小頁通常把整頁辨識文字一起送去翻譯；大頁才拆成批次或上下文視窗。
+5. 從原文字形估算字級、欄數、間距、中心和占用範圍，再尋找中文排版方式。
+6. 只有已通過翻譯與排版檢查、且不和其他譯文重疊的文字區才會清除原文。
+7. 依同一份排版計畫畫回中文；若字型缺字，會嘗試繁中字型備援。
+
+它的直排引擎由程式自己逐字安排，主要用接近等長的方式分欄，只針對少數標點做直排替換。
+亮色、近純色的對話框可以向外利用留白；深色、漸層或網點背景通常比較難擴張排版空間。
+
+翻譯結果在寫回前會清理可疑的分隔線、額外省略號、破折號、亂碼與長重複內容。例如原日文
+沒有長線時，程式會避免把模型產生的長破折號當成譯文畫回圖片。
+
+### 4.2 目前效果
+
+歷史驗證報告記錄 67 項單元或模擬測試通過，內容涵蓋遮罩保護、重複框處理、辨識失敗、
+翻譯清理、排版拒絕、字型備援與碰撞檢查。
+
+歷史報告另記錄 5 張真實問題頁的固定排版測試：報告稱使用真實圖片、文字偵測和遮罩，但譯文
+由測試事先指定，沒有呼叫 OpenRouter，也沒有證明真實文字辨識模型的品質。總共 38 個文字區
+都產生了可讀的排版計畫；預計字級約為原字估計的 98.7%–102.9%，沒有計畫中的文字碰撞，也
+沒有退回整個矩形擦除。本次因缺少完整腳本與輸入，沒有獨立重現這些結果。
+
+這個結果證明的是：在已知文字位置與固定譯文下，`main` 的排版方法能處理那 5 頁。它不等於
+38 個文字區完成了真實辨識、翻譯、背景修補與寫回，也不能代表一般漫畫頁的完整成功率。
+
+`main` 的另一個實際優點是流程短。從文字偵測到輸出大多沿一條路徑執行，較容易理解某一步
+如何影響下一步，也較少出現「程式碼存在但正式命令沒有使用」的情況。
+
+### 4.3 已知問題
+
+1. **安裝方式互相矛盾。** 專案規範要求 Conda 管 Python 與原生套件、Poetry 管 Python
+   相依套件；`main` 的 README、環境檔和建置設定卻仍使用 pip 與 setuptools，也沒有 Poetry
+   相依版本鎖定檔。第三方無法只照程式庫文件重建唯一環境。
+2. **翻譯與原文的配對較寬鬆。** 翻譯服務可回傳多種結構化格式、清單或純文字；缺少識別碼時，
+   程式還可能按回傳位置配對。文字區識別碼又會隨重新分組或排序改變，也沒有保存原文指紋。
+3. **部分失敗看起來像成功。** 整頁流程中的個別頁面失敗時，程式會把原圖重新編碼後放到一般
+   成功檔名，整批命令仍可能以成功狀態結束。文字辨識模型初始化失敗有明確非零處理，但進入
+   逐頁迴圈後的頁面失敗仍可能讓整批回傳成功；沒有輸入、單張測試找不到圖和只做偵測時解碼
+   失敗也有相同缺口。
+4. **沒有可續跑與重播的狀態。** 中途失敗只能重跑整頁；翻譯服務的原始回覆沒有持久保存，
+   重跑可能再次付費並得到不同結果，也難以重建某次寫回的完整決策過程。
+5. **部分公開設定沒有作用或語意不符。** 數個直排、字距、字型量測與裁切選項沒有被正式流程
+   使用；開啟半精度偵測也存在輸入與模型精度不一致的缺口，雖然預設是關閉。
+6. **字級下限可被絕對上限繞過。** 很大的原文字會先被限制到最高 180 px，再判斷可接受的縮放
+   比例，因此實際文字可能比原字縮得更多，卻仍被當成符合最低比例。
+7. **排版預演與實際字形不完全相同。** 預演主要用主字型和理論矩形估算，實際畫字時可能改用
+   備援字型；描邊和字形邊界也未全部納入碰撞判斷。`main` 沒有寫入後逐區驗證與復原。
+8. **文字辨識模型在處理頁面前就載入。** 即使頁面沒有文字或所有文字都缺可靠遮罩，整批仍先
+   載入完整模型。辨識也逐區、逐種裁圖執行，沒有真正的整頁批次處理。
+
+### 4.4 風險
+
+- 寬鬆的翻譯回覆解析可能把格式正確的譯文放回錯誤文字區；目前沒有標註資料可量測發生率。
+- 事前排版認為可行、實際備援字型卻越界或碰撞時，沒有逐區撤回機制。
+- 保守遮罩可減少誤擦，但原始偵測漏掉的字形也無法由後段補回，可能形成中日文字混排。
+- 中斷、外部服務格式變化或重跑時缺少可追溯狀態，問題較難復現，也較難區分偵測、辨識、
+  翻譯或排版哪一步造成結果。
+
+## 5. 方法二：`repair`
+
+### 5.1 怎麼運作
+
+`repair` 保留 `main` 的文字偵測、多裁圖辨識與部分翻譯邏輯，但把整頁流程拆成十個可保存的
+步驟：保存原圖、偵測文字、分析原字外觀、尋找安全可用範圍、辨識文字、決定順序、翻譯、
+排版、清除並寫字、輸出。
+
+每一步的輸入、輸出、錯誤、設定摘要和相關檔案都會記錄到 SQLite 資料庫與依內容指紋保存的
+中間檔。
+流程可以從已完成步驟接續、指定某一步重跑，也可以不用再次呼叫模型或網路，離線取回已保存
+的執行紀錄與最終輸出；離線重放不會重新計算排版或寫回。
+
+每個文字區有較穩定的身分和變更歷史。送翻譯時，每段文字都有請求識別、項目識別和原文指紋；
+回覆必須全部對得上才接受，不再依清單位置猜測。重新分組、改變幾何或重新排序仍可能使識別
+資料改變；相較於 `main`，它多保存了可核對原文與請求的資料。
+
+排版前，程式會依背景、邊線、其他文字和原始遮罩估計可安全清除與放字的範圍。預設的新排版
+使用 Pillow 的 RAQM 引擎安排實際字形，另搭配 Unicode 與部分中文換行／禁則規則。每個候選
+方案都用實際畫出的像素檢查缺字、越界、碰撞、字級和是否落在安全範圍內。
+
+在預設的新排版路徑中，清除與寫字改成逐文字區處理：先複製該區，在副本上清除原文、補背景、
+畫入中文並再次檢查；全部通過才套回整頁。某一區失敗時只保留該區原圖，不會先把它擦成空白，
+也不必撤銷其他已成功文字區。`repair` 仍保留可手動切換的舊排版路徑；舊路徑沒有同等的逐區
+寫入後復原。
+
+### 5.2 目前效果
+
+從程式行為可直接確認，`repair` 比 `main` 多出以下能力：
+
+- 中斷後續跑，以及只重跑受影響步驟。
+- 保存每次翻譯服務的原始回覆，方便重播與查錯。
+- 原文、文字區、翻譯、排版與最終結果之間有較完整的對應紀錄。
+- 翻譯識別或原文指紋不一致時拒絕結果，不按位置猜測。
+- 預設新排版中的每個文字區都在副本上完成並檢查後才套回頁面。
+- 會使該頁停止的失敗通常會讓主命令回傳非零狀態，並把未修改來源另放到失敗輸出資料夾。
+- 環境檔與建置方式已改成符合 Conda + Poetry 的專案規範，並加入 RAQM 所需原生文字套件。
+
+歷史驗證報告記錄 516 項測試通過、2 項失敗、1 項跳過、2 項排除。兩項失敗是舊環境摘要與
+新環境不一致；後續以針對性測試隔離，但沒有重新跑完整測試取得全綠結果。
+
+固定文字邊界與固定譯文的 38 個排版案例，報告記錄使用者全部偏好 `repair` 的新排版結果。
+這個評估沒有提供盲評規則，也沒有使用正式流程當下偵測出的文字區和辨識長度，因此只能說
+新排版在那組固定案例被偏好。
+
+同一份歷史報告的真實完整流程結果明顯不同：
+
+- 前 5 頁共有 59 個文字區，只有 2 個成功清除原文並寫入中文。
+- 其餘 57 個中，51 個被排版檢查拒絕、3 個因位置碰撞拒絕、2 個因文字辨識拒絕、1 個因安全
+  範圍可信度不足拒絕。
+- 另一張不同用途的頁面有 17 個文字區，0 個成功寫回；其中 15 個排版拒絕、1 個碰撞拒絕、
+  1 個文字辨識拒絕。
+
+兩批相加是 2/76，但用途與樣本不同，不應把 2/76 當成一套正式測試集的通用成功率。低寫回
+證明當時的檢查很保守；歷史報告記錄被拒區域保留來源，但這些數字本身不能證明所有可能的
+局部復原路徑都執行過，也不能證明兩個成功寫回區域的翻譯與視覺品質完全正確。
+
+歷史測試對應的是 `1e58b46`。之後有三次程式修改改變排版要求、安全範圍起點和效能，本文
+分析的 `2953d04` 沒有找到相同規模的完整測試與真實頁重跑。因此目前版本的實際寫回率未知，
+不能直接沿用 2/59、0/17，也不能假定後續修改已改善結果。
+
+### 5.3 已知問題
+
+1. **排版拒絕原因仍太籠統。** 歷史 66 個排版拒絕使用同一個名稱，實際可能是字距、安全範圍、
+   最低字級、行數、幾何限制或真正的字形處理失敗。特別大的文字又會先受 180 px 上限限制，
+   可能被縮得比宣稱比例更多。現有紀錄不足以分辨主要原因。
+2. **許多新增能力沒有被正式命令使用。** 程式中已有整頁批次辨識、模型分數校準、分鏡式閱讀
+   順序、人工順序調整、要求翻譯服務回固定格式、重用網路連線、翻譯記憶與依畫面風格選字型
+   等設計，但使用者執行 `manga-translate run` 時仍不會走到它們。正式排序仍只看全頁座標，
+   實際字型家族也仍固定為中性黑體類型。
+3. **正式辨識仍大量沿用 `main`。** 設定檔新增了模型名稱、固定版本、批次大小和最大輸出長度，
+   但建立辨識模型時沒有讀取這四項。分析版本中的值剛好和程式預設一致；日後改設定可能只
+   改變快取判斷，實際模型行為卻不變。模型能產生的更細可信度資訊也沒有完整保存。
+4. **翻譯服務的隱私與固定格式選項沒有送出。** 程式的設定模型提供「拒絕資料收集」與「零資料
+   保留」欄位，預設為啟用，但正式請求只含模型、文字、溫度和長度限制，也沒有要求服務端依
+   固定資料結構回覆。支援這些功能的新版翻譯元件目前沒有接入正式命令。
+5. **完成狀態、失敗副本與快取都有不一致。** 即使沒有任何文字寫回，頁面仍可能標成成功並
+   重新編碼；部分單張命令遇到輸入錯誤也可能以成功狀態結束。失敗副本從輸入路徑當下的檔案
+   複製，不一定和一開始保存的原圖指紋相同。部分快取判斷又沒有完整納入圖片與排版套件版本，
+   升級後可能誤用舊結果。
+6. **文件與資料保存政策不完整。** `repair` 的第一層譯文清理只做基本整理，可能保留額外線條、
+   省略號和破折號，與部分說明文件和測試名稱不同；後續驗證仍會拒絕長重複內容、照抄原文、
+   過多日文與亂碼。原圖、遮罩、中間圖片、翻譯回覆和資料庫也只有手動清理功能，可能長期
+   留在磁碟或備份；保存位置預設在輸出目錄下，但可另行指定。
+
+### 5.4 風險
+
+- 最後一份可追溯真實測試顯示安全檢查非常保守，但目前版本沒有重跑；系統可能仍然安全卻
+  幾乎不完成翻譯，也可能已改變而沒有證據。
+- 正式流程與「程式中已存在但未使用」的新版元件並存，容易讓維護者修錯路徑，或把單元測試
+  通過誤認為使用者實際命令已改善；多套重複實作也容易讓設定、文件和測試彼此不一致。
+- 嚴格的翻譯配對能避免悄悄錯配，但一筆回覆有缺少、重複或未知識別時，可能使整批翻譯失敗，
+  而不是只隔離有問題的項目；逐區成功或失敗也可能讓同一頁同時存在中文與日文。
+- 可續跑與重播需要保存更多資料；若沒有明確清理與權限政策，會增加隱私、磁碟和備份風險。
+
+## 6. 兩種方法的直接比較
+
+| 面向 | `main` | `repair` |
 |---|---|---|
-| OpenRouter | model `x-ai/grok-4.5`；batch 20；temperature `.2`；timeout 90 s；小頁優先 page mode（最多 6000 chars／120 items） | schema 有 `data_collection=deny`、`zdr=true`，production payload 未送出 |
-| detector | `comictextdetector.pt`；CUDA；1024 + 1536；FP16 off；NMS `.35`；confidence `.30`；mask `.30` | 增加 durable identity 與 typed issue，但底層 confidence 遺失仍存在 |
-| mask safety | raw support threshold 30、dilate 2；segmentation／bbox fallback 預設 off | 再加 edge/flood-fill safe region，production confidence gate `.48` |
-| OCR | 多視圖 group OCR；一般 `.46`、短文 `.66`、fallback `.74`、agreement `.70` | config 新增 pinned revision、batch 4、max length 300，但四個 runtime 欄位未傳入 `_get_model()` |
-| layout | 方向 auto；10–180 px；一般 floor `.85`、hard floor `.62`；bubble expand `.72` | 預設 RAQM；safe containment `.995`；逐 ROI atomic render |
-| inpaint | hybrid；mask dilation 1；Telea radius 2；只處理有合法譯文與 layout 的 groups | 逐 ROI copy → inpaint → render → verify → 最後寫回 |
-| assets | `Iansui-Regular.ttf`、`NotoSansCJKtc-Regular.otf`、CTD model、manga-ocr weights | 有 font-role framework，但 production 候選固定 neutral sans |
-
-外部 model 名稱與可用性只代表 checked-in config；本文沒有驗證 provider 在分析日仍提供該模型。
-
-## 4. 一頁式分支比較與暫定判斷
-
-| 面向 | `main@ba0e3a4` | `repair@2953d04` |
-|---|---|---|
-| orchestration | 單體 `process_single_page()` | 固定 10-stage DAG + `StageRunner` |
-| 中間狀態 | process memory；debug JSON／圖為輔 | SQLite + content-addressed artifacts + `PageDocument` |
-| resume / replay | 無 | cache、resume、force-stage、provider response artifact、offline replay |
-| identity / mapping | 排序後短 ID；response 接受位置 fallback | region UUID/revision + request/item/source hash exact mapping |
-| OCR | 多視圖 heuristic；逐 group | production 仍是多視圖逐 group；較新的頁級 batching／calibration 未接線 |
-| reading order | 全頁中心座標排序 | production 仍相同；panel-aware 模組未接線 |
-| typesetting | Pillow 逐 glyph 手排 | Pillow RAQM、Unicode/CLREQ-like breaker、actual raster verification |
-| render transaction | 全部 active groups inpaint 後逐 group render | 每個 ROI 驗證成功後才寫回，可個別 rollback |
-| status / failure output | OCR preflight exception 可非零；部分 page-loop／no-input／子命令仍 exit 0，page failure 以正常檔名重編碼 | `run` 的 blocking failure 可 exit 1 並寫到 `output/failed/`；部分子命令仍有 exit-0 缺口 |
-| 已知證據 | 固定 38 groups 可產生 layout plan；不是 live E2E 寫回率 | 歷史 live 前五頁 2/59，額外頁 0/17；`2953d04` 未重跑 |
-| 主要優點 | call path 短、較容易理解 | mapping、狀態、rollback、稽核與重播較完整 |
-| 主要風險 | 重現、status、mapping、typography、provenance 弱 | 系統複雜、production 與 dormant code 分裂、真實可用率未知 |
-
-暫定判斷：若以來源保護與錯誤 mapping 為硬性條件，`repair` 的架構較接近可長期維護的
-production 基線；但要先以 `repair@2953d04` 重新量測完整漏斗，找出 layout／OCR／safe-region
-的主要拒絕原因。不能用 tests 數量或固定 fixture 的結果替代這一步。
-
-## 5. 兩個 production 方法
-
-### 5.1 `main@ba0e3a4`
-
-實際 call chain：
-
-```text
-cli.run()
-  → AppConfig.from_yaml()
-  → run_pipeline()
-     → initialize_ocr_model()          # 在逐頁 try/except 外
-     → process_single_page()
-        → read_image()
-        → detect_text_regions()
-        → ocr_group_detailed()         # 每個 group
-        → merge duplicates / refresh order
-        → translate groups
-        → resolve collisions
-        → preflight layout plans
-        → inpaint_regions()
-        → render_text_into_group()      # 每個通過的 group
-        → dump debug artifacts
-     → write_image()
-```
-
-偵測使用 vendored comic-text-detector，先跑 1024，再跑 1536，合併 bbox／mask。refined mask
-必須落在 thresholded raw segmentation 的鄰域內；segmentation component 與 bbox fallback 預設
-關閉。這會偏向漏翻，而不是冒險擦除線稿。grouping 與 OCR dedup 主要依 bbox IoM／containment、
-中心距離、方向、mask overlap 與文字相似度做 pairwise union。
-
-OCR 使用固定 `kha-white/manga-ocr-base`，比較 raw、mask-isolated、contrast、threshold 與
-leaf-region views。`OCRCandidate.quality` 是字元腳本、長度與重複模式 heuristic，不是模型
-probability。全頁 reading order 只有中心座標排序：直排為 `(-center_x, center_y)`，沒有 panel、
-bubble graph 或人工 override。
-
-一般小頁優先整頁送 OpenRouter。parser 接受 dict、list、純字串、編號行與位置 fallback；
-group ID 會隨重新 grouping／sorting 改變，也沒有 durable source hash。這提高 provider 格式錯誤
-被錯配到另一 group 的風險。
-
-legacy typesetter 從 source mask 估字級與行／欄，先產生 layout plan，通過 collision 檢查後才
-進 inpaint。這個「先排版、後擦除」順序已接入 production，是 `main` 的重要安全措施；但 fit
-計算主要用主字體與理論 bbox，實畫時可能切 fallback font，且直排按 codepoint 分欄，不是完整
-CJK typography。
-
-### 5.2 `repair@2953d04`
-
-固定 10-stage DAG：
-
-```text
-SOURCE → DETECT ─┬→ STYLE ───────┐
-                 ├→ SAFE_REGION ─┼→ LAYOUT ─────────────┐
-                 ├→ OCR ─────┐   │                      │
-                 └→ ORDER ───┴→ TRANSLATE ──────────────┼→ INPAINT_RENDER → ENCODE
-SOURCE ──────────────────────────────────────────────────┘
-DETECT ──────────────────────────────────────────────────┘
-```
-
-`JobStore` 以 SQLite 保存 job/page/stage、fingerprint、issues、leases 與 `PageDocument`；
-`ArtifactStore` 以 SHA-256 content addressing、atomic replace 與 read-time hash verification 保存
-artifact。stage fingerprint、checkpoint、`--resume`、`--force-stage` 與 provider-response lease
-使流程可續跑，也降低同一 request 重複付費的機率。
-
-region 具有 UUID identity、revision SHA 與 merge/split lineage；translation request 又有 request
-ID、item ID 與 source SHA，response 必須 exact mapping，不能依 list position 猜測。request hash
-仍包含當次 units 順序與 geometry key，所以尚未做到跨 regroup／reorder 完全穩定。
-
-STYLE 從 source mask 周圍抽樣 fill、stroke、shadow、angle 等；SAFE_REGION 用 edge barrier、
-protected text 與 flood-fill 建 safe mask。LAYOUT 用 `regex` grapheme、`uniseg`/CLREQ-like break
-與 Pillow RAQM 做 deterministic search，每個 candidate 實際 shape/raster 後檢查 glyph、clipping、
-safe containment、neighbor collision 與原幾何比例。
-
-INPAINT_RENDER 採逐 ROI transaction：先複製原 ROI，在副本 inpaint、render、驗證，成功才套用
-到工作頁。這是 per-ROI atomic，不是整頁 all-or-nothing；較早 ROI 可以寫回成功、較晚 ROI 可以
-rollback。
-
-#### 已接線與未接線邊界
-
-| 子系統 | `manga-translate run` 狀態 |
-|---|---|
-| durable 10 stages、store、cache、resume、replay | 已接線 |
-| region revision、strict mapping、raw provider response artifact | 已接線 |
-| safe region、RAQM solver、atomic ROI render | 已接線且預設啟用 |
-| `stages.ocr.PageOCRStager` 頁級 batching／view cache | 未接線；production 使用 legacy group OCR |
-| OCR token calibration framework | 未接線且沒有 fitted calibration artifact |
-| panel detection、panel-aware order、manual override | 未接線 |
-| `StructuredTranslationClient` 與 provider-side JSON schema | 未接線；production 使用 `translator.py` |
-| job-level HTTP connection reuse | 未接線 |
-| EntityLedger、translation memory、visual escalation、repair coordinator | 關閉或未接線 |
-| style-driven font role selection | 未接線；production 固定 neutral sans |
-
-### 5.3 Failure 與輸出語意
-
-`main` 在 batch 前初始化 OCR，而且在逐頁 try/except 外；初始化失敗會中止整批，CLI 會把
-`OCRInitializationError` 轉成非零的 `ClickException`。進入 page loop 後的例外則會把來源圖片
-decode 後重新 encode 到正常輸出檔名，`run` 只印 failed count 而不 raise，所以這些頁面失敗時
-orchestrator 可能看到 exit 0、正常檔名與已改變的 JPEG bytes；no-input、`test` 與 `detect-only`
-另有各自的 exit-0 缺口。
-
-`repair` 的 `run` 把 blocking failure 反映到 `PageResult`／`BatchResult`，未使用 `--allow-partial`
-時可 exit 1。它會把來源路徑當下的檔案以 `shutil.copyfile` 複製到
-`output/failed/<stem>.source-preserved.<ext>`，並移除正常輸出；通常可 byte-for-byte 保留來源，
-但不是從已雜湊的 SOURCE artifact materialize。若輸入在執行中被替換，副本可能與已記錄的
-source SHA 不一致。
-
-`layout_rejected` 與 `layout_collision_rejected` 在 `repair` 被列為 non-blocking；即使 0 個 ROI
-寫回成功，頁面仍可能 `succeeded` 並重新 encode JPEG。`test` 找不到檔與 `detect-only` 解碼失敗
-也仍直接 return，留下 exit 0。故「batch succeeded」只能表示沒有 blocking failure，不能表示
-完成翻譯或媒體 byte-identical。
-
-## 6. 現有驗證證據與不能外推的部分
-
-先區分每組 evidence 實際涵蓋的元件；「報告稱 real」只表示歷史報告如此記錄，本次沒有獨立
-重現：
-
-| Evidence | CTD | OCR | provider／譯文 | 人工評估 |
-|---|---|---|---|---|
-| `main` unit tests | 無真 CTD forward | fake backend／synthetic | 無付費 API；固定資料 | 無正式評估 |
-| `main` fixed visual | 報告稱真 input／CTD／mask | 真模型未證明 | 固定譯文；未呼叫 OpenRouter | 報告內視覺檢查，無盲評 rubric |
-| 歷史 `repair` tests | model／API／GPU markers 預設排除 | 主要 unit／contract | 主要 synthetic | 無正式評估 |
-| 歷史 `repair` fixed visual | fixed boundaries | fixed text，不測 live OCR | 固定譯文 | 報告記錄使用者核准；無盲評 rubric |
-| 歷史 `repair` 前五頁 | 報告稱 real | 報告稱 real | 報告稱 real provider | 無正式盲評 |
-| 歷史 `repair` 第六頁 | 報告稱 real | 報告稱 real | report 記錄 real provider，含一次 retry | 無正式盲評 |
-
-| 對象 | 已提交結果 | 可支持的窄結論 | 不可支持的結論 |
-|---|---|---|---|
-| `main@ba0e3a4` tests | `compileall` passed；67 tests passed | unit／synthetic cases 曾通過 | 乾淨 Conda + Poetry 可重現、真模型／API 品質 |
-| `main` fixed visual | 5 頁、38 groups 全有 layout plan；字級比 `.987–1.029`；collision 0 | 固定 boundary／譯文下 legacy layout planning 可行 | live OCR、provider、E2E 寫回率；它不是 38/38 production writeback |
-| 歷史 `repair@1e58b46` tests | 516 passed / 2 failed / 1 skipped / 2 deselected | 多數 unit／contract 有覆蓋 | `repair@2953d04` 全綠 |
-| 歷史 `repair` fixed visual | 報告記錄使用者核准 38/38 `new_better` | 該固定 corpus 的偏好記錄 | 盲評或一般化品質；評分 rubric 未提供 |
-| 歷史 `repair` 前五頁 | 59 groups 中 2 個 ROI 寫回成功 | safety gates 拒絕 57 groups；報告記錄拒絕區保留來源 | post-render rollback 分支被觸發、false erase 為 0、兩個寫回皆正確、`2953d04` 寫回率 |
-| 歷史 `repair` 額外第六頁 | 17 groups 中 0 個寫回；JPEG MAD `.0479`、max diff `3` | no-op 能完成 stages；重新編碼仍改 bytes | 與前五頁是同質 corpus、byte-exact 或所有 ROI rollback 路徑已覆蓋 |
-
-前五頁的 2/59 與額外頁的 0/17 可以算成總計 2/76，但兩組用途不同，不能把 2/76 當成
-單一同質 benchmark。74 個未寫回 groups 的歷史分類是 66 layout、4 collision、3 OCR、
-1 safe-confidence；其中 `LayoutOverflow:shaping_failed` 又把 tracking、safe mask、font floor、
-geometry constraint 與真 shaping error 混在同一 reason，尚不足以判定根因。
-
-歷史報告測的是 `1e58b46`。其後 `4b78fcd`、`a1938c6`、`d59a3de` 修改 RAQM request、safe seed
-與 solver performance，但沒有找到 `repair@2953d04` 的完整 tests + live visual 重跑。因此只能說
-目標快照的真實寫回率是 **U（未知）**，不能沿用 2/76，也不能假定後續 commits 已修好。
-
-`main` 的真實 inputs 被 ignore，完整 validation script 不在 tree；歷史 OCR 測試使用 fake
-backend。`repair` 的真實頁面與 provider run 也沒有整理成可分享、匿名化、可由第三方重跑的
-evidence pack。現有材料缺少一致的全漏斗統計：
-
-```text
-detected
-  → grouped
-  → OCR accepted
-  → translation mapped and validated
-  → safe region accepted
-  → layout accepted
-  → ROI writeback succeeded / rolled back
-  → page succeeded / source-preserved
-```
-
-## 7. 依優先級整理的 findings
-
-### P0-1：`repair@2953d04` 尚無該 SHA 的 live E2E 證據
-
-- **證據：H + U。** 歷史 live 結果如第 6 節；目標 SHA 在三個會改變 layout 行為的 commits 後
-  沒有等價重跑。
-- **影響：** 目前無法量化 safety gate 是否過嚴，也無法比較 `main` 與 `repair` 的 production
-  utility；是否足以發布仍取決於 owner 尚未定義的 gate。
-- **需要：** 先凍結 corpus、環境、config 與 SHA，產生逐 stage funnel 和具體 rejection code，
-  再調任何 threshold。
-
-### P0-2：`main` 的權威環境政策與實作互相矛盾
-
-- **證據：F。** `AGENTS.md` 要 Conda + Poetry、禁止 pip；`main` 的 README／guide／
-  `environment.yml` 使用 pip，build backend 是 setuptools，沒有 `poetry.lock` 或真正的 dev
-  dependency group。
-- **影響：** 第三方無法從乾淨機器重建唯一環境，tests 與模型行為也無法可靠比較。
-- **需要：** 若保留 `main`，先完成與 `repair` 相同的 Conda-native + Poetry ownership、lock、
-  clean-room install 與 CI；否則它不應作為 release 基線。
-
-### P0-3：status 與檔名不能誠實代表結果
-
-- **證據：F。** `main` 的部分 page-loop 失敗可 exit 0，並把 fallback 放在正常檔名；`repair`
-  只改善 `run` 的 blocking status，其他子命令仍有 exit-0 缺口。`repair` 的 no-op page 又可標成
-  `succeeded`。
-- **影響：** CI、批次工具與使用者會把「流程沒 crash」誤認為「翻譯成功」。
-- **需要：** 分開報告 detected、translated、layout accepted、寫回成功、rollback、no-op、
-  source-preserved；所有 CLI fatal input／decode error 非零退出，且 failure output 不使用成功檔名。
-
-### P0-4：`main` 的翻譯 mapping 可能 fail open
-
-- **證據：F（mapping 行為）／R（實際錯配率）。** parser 接受多種鬆散格式與位置 fallback，
-  duplicate ID 可被覆寫，group ID 又不穩定且沒有 durable source hash。
-- **影響：** provider 格式錯誤可能把合法但錯誤的譯文寫到另一個 ROI，違反來源保護的精神。
-- **需要：** 不論基線選擇，都應保留 `repair` 的 exact request/item/source mapping 與 raw response
-  artifact；另評估 strict whole-request rejection 是否可安全縮小為 item-level retry。
-
-### P0-5：`repair` 的架構文件、tests 與 production path 分裂
-
-- **證據：F。** 第 5.2 節列出的 page OCR、calibration、panel order、structured client、font role
-  等模組存在但 production 未呼叫。
-- **影響：** 若依 dormant 能力選擇 `repair`，基線比較本身就會失真；維護者也可能修到錯的
-  subsystem，測試綠燈不代表 CLI 行為改變。
-- **需要：** 對每個 dormant 元件做「接線／刪除／明確延後」決策，建立 production-call-path
-  integration test，避免繼續增加平行抽象層。
-
-### P1-1：`repair` 公開的 provider 隱私／schema 設定未在 production 生效
-
-- **證據：F。** `OpenRouterConfig` 有 `data_collection="deny"`、`zdr=True`，production `_payload()`
-  只送 model、messages、temperature、max_tokens；沒有 provider-side `response_format` schema。
-  具備這些能力的 `StructuredTranslationClient` 未接線。
-- **影響：** checked-in 設定會讓維護者誤以為已有隱私與 schema guarantee；目前硬性契約只有
-  「圖片不送 provider」，ZDR／data collection deny 是否為 release requirement 仍需 owner 決定。
-- **需要：** 接線或刪除 dead contract，並以實際 request artifact 驗證；在此之前不能宣稱
-  ZDR／data collection policy 已落實。
-
-### P1-2：兩個快照都遺失 CTD confidence
-
-- **證據：F。** vendored `group_output()` 迴圈取得 `conf` 卻沒有存入 `TextBlock`；
-  `TextBlock.__init__` 固定 `self.prob = 1`，adapter 再把 `prob` 當 detector confidence。
-- **影響：** region reliability、durable detector score 與 manifest 幾乎固定 1.0，不能校準、排序
-  或解釋 false positive。
-- **需要：** 保留原 detector score，為 merge/split 定義 aggregation，並用真 positive／negative
-  corpus 校準；不要只改欄位名稱。
-
-### P1-3：production OCR 仍是 heuristic、逐 group，且 `repair` config 與 evidence 未接線
-
-- **證據：F。** 兩者 production 都逐 group 執行多 views；`repair._get_model()` 直接建立
-  `MangaOcrRuntime()`，沒有傳 `model_id`、`revision`、`batch_size`、`max_length`。checked-in 值目前
-  恰好等於 runtime defaults，但修改 config 只會改 fingerprint，不一定改行為。runtime 已能輸出
-  token logprob、entropy、margin、truncation，document 卻只保存 heuristic score。
-- **影響：** threshold 不能由模型證據校準，重複 inference 成為熱點，cache identity 也可能失真。
-- **補充更正：** 純 Latin 分數不是「最高 `.38`」。公式是 `.18 + .18 + length bonus`，`.38`
-  只是保底，長字串可到 `.46`；但常見短 Latin SFX 多數仍低於一般 `.46` gate，1–2 字又受
-  `.66` short gate，存在系統性漏收風險。
-- **需要：** 接線 page-level batching、保存 token evidence、建立人工 crop／no-text corpus，對日文、
-  短字、英文 SFX、furigana 分層校準。
-
-### P1-4：兩者 production reading order 都不理解漫畫分鏡
-
-- **證據：F（演算法）／R（品質影響）。** production 只有全頁中心座標排序；`repair` 的 panel
-  modules 與 override 未接線。
-- **影響：** 跨 panel 次序與 page-context translation 可能互相污染；實際比率尚無 annotated
-  corpus。
-- **需要：** 先建立 panel/order ground truth，再決定接線現有模組或重做；translation item
-  identity 不應因純 reorder 改變。
-
-### P1-5：pairwise grouping／dedup 可能形成 transitive bridge
-
-- **證據：F（union-find 行為）／R（錯誤合併率）。** A–B、B–C 各自通過 pairwise gate 時，
-  A／B／C 會形成同一 component，即使 A 與 C 其實分離；缺少 component-level bubble／panel
-  constraint。
-- **影響：** 錯誤但通過 gate 的 group 可能合併 OCR、translation 與 union mask；fail-safe 能保護
-  被拒 group，不能保護「錯誤但被接受」的 hypothesis。
-- **需要：** 保存 union edge／score trace，建立 split／merge ground truth，並在 component 完成後
-  再做 bubble、panel、mask 與 reading-order consistency validation。
-
-### P1-6：layout 的安全 gate 與真實 glyph／來源比例仍有落差
-
-- **證據：F（實作限制）／R（畫面發生率）。** `main` 以主字體與理論 bbox plan，render 時可切
-  fallback font；直排不是完整 CJK typography。`repair` 雖 actual-raster verify，但 production
-  固定 neutral sans，`shaping_failed` reason 過載。兩者都先以 absolute `font_size_max=180` 裁切
-  來源估計，再套 `.85` 比例：來源若估 240 px，`repair` 可接受 153 px，只有原估計的 63.75%。
-- **影響：** 可能錯誤接受過小字、錯誤拒絕可行 layout，或無法知道低寫回率是 safe mask、font
-  floor、line count、collision 還是真 shaping。
-- **需要：** 對每個 candidate 保存原始字級、未裁切比例、每道 constraint 結果、actual glyph
-  bbox 與 safe/occupied overlay；分離 rejection codes 後才調 threshold。
-
-### P1-7：公開 config 與 cache identity 仍有 no-op／漂移
-
-- **證據：F。** 兩個快照的 Pydantic models 都未設 `extra="forbid"`，拼錯 YAML key 會被忽略；
-  `api_key` 是 required，若整個 YAML key 缺失，即使環境變數存在也會先 validation fail。
-  `main` 另有多個未讀或語意不符的 typesetting fields。`repair` 的 stage fingerprint 對 OpenCV
-  package 名、STYLE／LAYOUT dependencies 與 native RAQM stack 記錄不完整。
-- **影響：** 使用者以為調參生效，或 dependency 升級後錯誤命中舊 cache。
-- **需要：** fail-fast schema、effective-config dump、每欄位 production read test，以及完整
-  code/config/model/font/package/native-library fingerprint。
-
-### P1-8：`repair` 的 sanitizer 行為與文件漂移
-
-- **證據：F。** production sanitizer 只做 display normalization，會保留線條、額外省略號／
-  破折號與長重複句；部分 README 與 test 名稱仍描述 `main` 的 source-aware 清理。
-- **影響：** 維護者可能依 test 名稱或 README 判斷錯誤的 production contract；是否造成畫面線條
-  regression 仍是 R，不能只由程式差異宣稱已重現。
-- **需要：** 先決定產品規則應屬 translation validator 或 typography，再同步 code、tests、名稱與
-  文件。
-
-### P1-9：媒體 fidelity 與失敗來源的一致性不足
-
-- **證據：F。** 兩者以 OpenCV color decode／encode，不能完整保留 PNG/WebP alpha、EXIF、ICC
-  與 metadata；`repair` 的成功 no-op JPEG 仍會改 bytes。blocking failure 又從 mutable source path
-  複製，而不是從已雜湊 artifact 回存。grayscale／BGRA 的下游相容性缺真實 fixtures。
-- **影響：** 無視覺修改的頁面仍可能改媒體；執行中來源被替換時，failed copy 可能與記錄的
-  source SHA 不同。
-- **需要：** no-op 與需保留來源的 failure 直接 materialize hash-pinned source；定義並測試
-  alpha／metadata policy 與 grayscale／BGRA fixtures。
-
-### P1-10：durable state 缺少 retention 政策
-
-- **證據：F。** `repair` 保存 source、masks、stage states、PNG、raw provider responses 與 SQLite，
-  只有手動 `cache gc`，沒有自動 retention policy。
-- **影響：** 私人漫畫與 provider response 可能在本機、備份或共用磁碟長期留存，磁碟也會持續
-  成長。
-- **需要：** owner 決定保存期限與稽核需求；實作 retention、secure delete、權限、容量 telemetry
-  與可驗證的 GC policy。
-
-### P1-11：build 與供應鏈證據不足
-
-- **證據：F。** 兩個 wheel 都只封裝 `src/manga_translator`，根目錄 models、fonts、config、
-  glossary 不在 wheel。`repair` 的歷史報告明載 wheel／release ZIP 驗證被取消。detector 權重由
-  `torch.load()` 讀 pickle，download path 缺 SHA-256／signature 驗證；兩個快照都沒有 CI workflow。
-- **影響：** 換目錄安裝可能找不到預設 assets，乾淨發布與供應鏈完整性無持續證據。
-- **需要：** 定義 asset acquisition／checksum、第三方授權與 notice、clean-room build、wheel/ZIP
-  smoke 和 CI。`repair` 已有 `THIRD_PARTY_NOTICES.md`，仍需驗證其涵蓋度；不能把 `main` 的缺口
-  誤寫成兩者完全相同。
-
-### P2：已知效能與維護成本
-
-- **證據：F；FP16 parity 數字為 H。** detector 預設雙尺度 FP32；歷史只有 5 頁 FP16 parity，
-  尚未形成 release gate。
-- **證據：F。** OCR 逐 group，translation 每頁建立 event loop／`AsyncClient`，多處 grouping／
-  collision 為 O(n²)。
-- **證據：F。** `repair` 約 705 tracked files，包含大量 benchmark 圖片與 profiler JSON；audit
-  價值與 clone／diff
-  成本尚未分層。
-- **證據：F。** legacy 與 RAQM、legacy translator 與 dormant structured client 同時存在，增加
-  contract 與 tests 漂移面積。
-
-這些項目影響延遲、資源與維護成本，但不應先於 P0/P1 的 correctness 與 observability。請在
-取得 stage timing、VRAM、API cost 與 corpus 規模後，再決定 FP16、batching、connection reuse、
-indexing 或 evidence 外置的順序。
-
-## 8. 需要先建立的診斷與驗證資料
-
-第三方目前沒有圖片、mask 或逐 candidate trace，不能直接判定歷史低寫回率的根因。建議先由
-maintainer 產出不含 API key、可分享或匿名化的 evidence pack。
-
-### 8.1 每頁與每 group 的最小 telemetry
-
-- snapshot SHA、effective config hash、environment fingerprint、source SHA、media type／尺寸。
-- detector pass、原始 confidence、region／group lineage、bbox／mask area 與 reading order。
-- OCR views、token evidence、heuristic score、accept／reject reason、是否 cache hit。
-- translation request/item/source hashes、provider attempt、mapping／validation result；譯文可匿名化。
-- safe-region confidence、mask support、protected pixels、edge／distance summary。
-- 每個 layout candidate 的原始與裁切字級、方向、line／column count、actual raster bbox、
-  containment、collision 與單一明確 rejection code。
-- ROI 寫回成功／rollback、殘留原字檢查是否實際執行、輸出像素／metadata 差異。
-- stage duration、peak VRAM／RAM、API request count／tokens／cost、artifact bytes 與 cache hit。
-
-### 8.2 最小 evidence pack
-
-1. 匿名化 source crop、detector mask、safe mask、occupied mask、最佳失敗 candidate 與 output crop。
-2. 每組歷史數字的 exact SHA、config、命令、input/artifact checksums 與 raw summary。
-3. 清楚標示每個 case 使用 real 或 fake CTD、OCR、provider、translation text。
-4. 至少包含：一般直排對白、橫排、英文 SFX、furigana、跨 panel、深色／網點背景、極大字、
-   fallback glyph、PNG alpha、grayscale、JPEG EXIF／ICC 與 blocking failure。
-5. 對 OCR、reading order、翻譯品質與 false erase 分別建立人工 ground truth；fixed layout corpus
-   不能代替 live E2E corpus。
-
-### 8.3 可重現性與最低 release 條件
-
-所有命令須在 `conda activate manga` 後執行：
-
-```bash
-poetry run manga-translate doctor --config config.yaml --strict-api-key
-poetry run pytest -q
-poetry run ruff check .
-poetry build
-poetry run manga-translate test --image <approved-fixture> --dump-json
-```
-
-在 owner 補上數值門檻前，至少應要求：
-
-- 表列 SHA 的 full suite、lint、build 與 clean-room install 全綠。
-- 已標註 corpus 中 false erase、跨 group mapping、glyph overflow 為 0。
-- no-op、partial success 與 blocking failure 有可區分的 status／輸出位置。
-- fatal error 非零退出；需要保留來源時由 hash-pinned artifact materialize。
-- 提供完整 funnel，而不是只報「pages succeeded」或 tests 數量。
-- 真模型／provider 測試與 fake／fixed fixture 分開報告；付費測試需事前批准。
-- owner 明確核准寫回率、人工翻譯品質、延遲、VRAM、API 成本與媒體 fidelity 門檻。
-
-## 9. 請第三方優先回答的技術問題
-
-### 必答：基線與 release blockers
-
-1. 應以哪個 snapshot／第三種方案為 canonical production path？請提出 migration sequence，
-   說明哪些 duplicate／dormant subsystem 應接線、刪除或延後，並列出使決策改變的 owner 參數。
-2. 如何用同一 corpus 在 `repair@2953d04` 重跑完整漏斗，產生新的 rejection taxonomy，再與
-   `1e58b46` 的 66 個歷史 layout rejects 對照？請拆分 safe mask、font floor、line count、
-   geometry、collision、glyph 與真 shaping 原因；現有 evidence 不足時，先設計量測。
-3. 從 P0 findings 選出前三個 release blockers，提出最小修復／驗證順序與 provisional gate；
-   同時標示哪些 gate 必須等待 owner 決策。
-
-### 選答／後續 workstreams
-
-4. OCR 如何接線頁級 batching 與 token evidence，並建立涵蓋短字、英文 SFX 與 furigana 的
-   calibration corpus？
-5. reading order 如何加入 panel／bubble graph 與 manual override，同時讓 translation identity
-   不因純 reorder 改變？
-6. translation 如何落實 provider-side schema、ZDR／data policy、connection reuse、raw replay 與
-   item-level recovery，而不削弱 exact mapping？sanitizer 規則應屬 validator 還是 typography？
-7. RAQM solver 如何在不大幅縮字或跨出 safe region 的前提下提高寫回率？請依新 telemetry 評估
-   safe morphology、font-role、CLREQ break、fallback glyph、outline、tate-chu-yoko 與 occupancy，
-   不要只調 beam size 或整體放寬 gate。
-8. 如何把環境、CI、asset checksum、license／notices、wheel／ZIP、media fidelity 與 durable
-   retention 納入 release gate？請指出哪些項目需要 owner 先決定政策。
-
-## 附錄 A：關鍵行為的最小示意 excerpts
-
-以下 excerpt 只讓無 repo 讀者看見關鍵條件，不是完整 caller／schema／error-path 證明；若要做
-line-level patch，仍須依所列 SHA、path、symbol 索取完整上下文。除 A.1 同時存在於兩個快照外，
-其餘皆來自 `repair@2953d0401319cb905bee78e3c597b05deeeda43f`。
-
-### A.1 兩者都遺失 detector confidence
-
-Path：`src/manga_translator/ctd/utils/textblock.py`，`TextBlock.__init__` 與 `group_output`
-（`repair` 約 lines 60、428–430；`main` 有相同行為）。
-
-```python
-# ctd/utils/textblock.py
-self.prob = 1
-
-for bbox, cls, conf in zip(*blks):
-    # conf is not passed to TextBlock
-    blk_list.append(TextBlock(bbox, language=LANG_LIST[cls]))
-```
-
-### A.2 `repair` 的 OCR config 未傳入 runtime
-
-Paths：`src/manga_translator/config.py:125–134`、`src/manga_translator/ocr.py:76–85`。
-
-```python
-# config.py
-class OCRConfig(BaseModel):
-    model_id: str = Field(default="kha-white/manga-ocr-base", min_length=1)
-    revision: str = Field(
-        default="aa6573bd10b0d446cbf622e29c3e084914df9741",
-        min_length=40,
-        max_length=40,
-        pattern=r"^[0-9a-f]{40}$",
-    )
-    batch_size: int = Field(default=4, ge=1, le=64)
-    max_length: int = Field(default=300, ge=2, le=1024)
-
-# ocr.py
-def _get_model() -> MangaOcrRuntime:
-    ...
-    model = MangaOcrRuntime()
-```
-
-### A.3 兩者 production OpenRouter payload 的有效欄位
-
-Paths：`src/manga_translator/config.py:13–28`、`src/manga_translator/translator.py:516–528`。
-
-```python
-# repair config.py
-data_collection: Literal["deny", "allow"] = "deny"
-zdr: bool = True
-
-# main and repair production translator.py
-return {
-    "model": cfg.model,
-    "messages": [{"role": "user", "content": prompt}],
-    "temperature": cfg.retry_temperature if retry else cfg.temperature,
-    "max_tokens": max_tokens,
-}
-```
-
-### A.4 `repair` 把 layout rejection 視為 non-blocking
-
-Path：`src/manga_translator/pipeline.py:1658–1660, 2669–2681`。
-
-```python
-def _first_blocking_group_issue(issues):
-    non_blocking = {"layout_rejected", "layout_collision_rejected"}
-    return next((issue for issue in issues if issue.code not in non_blocking), None)
-
-blocking = _first_blocking_group_issue(group_issues)
-return PageResult(
-    ...,
-    status="blocked" if blocking is not None else "succeeded",
-)
-```
-
-### A.5 `repair` 的失敗副本取自 mutable source path
-
-Path：`src/manga_translator/pipeline.py:4094–4100`。
-
-```python
-def _preserve_failed_source(page, output_dir):
-    fallback_path = _failed_output_path(output_dir, page.source_path)
-    (output_dir / page.source_path.name).unlink(missing_ok=True)
-    fallback_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(page.source_path, fallback_path)
-```
-
-## 附錄 B：索取後續 excerpt／trace 時的程式位置
-
-第三方無法直接使用這些路徑；它們的用途是精確指出 maintainer 應補哪段 excerpt 或 trace。
-
-| 主題 | `main` | `repair` |
-|---|---|---|
-| orchestration | `pipeline.py: run_pipeline, process_single_page` | `pipeline.py: _build_pipeline_stage_runners, process_single_page_staged` |
-| DAG / cache | 無 | `stages/runner.py: STAGE_DAG, StageRunner`; `stages/adapters.py` |
-| state / identity | 無 | `storage/`; `domain/models.py`; `domain/reconcile.py` |
-| detector / grouping | `detector.py`; `ctd/` | `detector.py`; `stages/detect.py`; `ctd/` |
-| production OCR | `ocr.py`; `manga_ocr_runtime.py` | 同左；dormant `stages/ocr.py`, `ocr_confidence.py` |
-| order | `pipeline.py: _refresh_group_order` | 同左；dormant `reading_order.py`, `order/panels.py` |
-| production translation | `translator.py` | `translator.py`; dormant `translation/client.py` |
-| layout | `typesetter.py` | `typography/layout.py`, `solver.py`, `safe_region.py`, `fonts.py` |
-| render / inpaint | `inpainter.py`; `typesetter.py` | `stages/render.py`; `typography/render.py` |
-| config / CLI | `config.py`; `cli.py` | `config.py`; `cli.py` |
+| 整體結構 | 一頁在記憶體中依序跑完，流程較短 | 分步保存，可續跑、指定重跑與重播 |
+| 文字區身分 | 依當次排序產生短編號，重跑可能改變 | 有較穩定身分、原文指紋與變更歷史 |
+| 翻譯配對 | 接受多種回覆格式，必要時按位置配對 | 識別與原文必須完全相符，否則拒絕 |
+| 閱讀順序 | 依全頁座標 | 正式命令仍依全頁座標 |
+| 排版 | 自製逐字排版，先做理論預演 | 預設使用 RAQM，以實際畫出的像素再次檢查 |
+| 清除與寫字 | 全部通過區域先清除，再逐區畫字 | 預設新路徑每區先在副本完成，成功才套回整頁 |
+| 個別區域失敗 | 沒有同等的寫入後逐區復原 | 預設新路徑不套用失敗區，其他區可繼續 |
+| 中斷與查錯 | 多半只能重跑整頁，原始翻譯回覆不持久保存 | 保存步驟、錯誤與回覆，可續跑與重播 |
+| 固定排版證據 | 5 頁、38 區都有排版計畫；不是完整流程 | 固定 38 區的新排版被偏好；不是完整流程 |
+| 真實完整流程證據 | 沒有可比較的完整寫回率 | 較早版本前 5 頁 2/59，另頁 0/17；目前版本未知 |
+| 主要已知問題 | 配對寬鬆、狀態可能誤報、無續跑、排版寫後不驗證 | 寫回率未知、拒絕原因過粗、許多新元件未接線、資料保存成本高 |
+
+## 7. 現有證據能說明到哪裡
+
+目前兩種方法沒有在相同圖片、相同環境、相同辨識結果、相同譯文與相同衡量方式下完成直接
+對照，因此不能用現有數字宣布哪一種整體較好。
+
+`main` 歷史五頁測試的原始輸入被排除在版本控制外，完整生成腳本也不在程式庫中；第三方無法
+只靠指定版本重跑同一份結果。`repair@2953d04` 則缺少與較早報告同規模的重新執行紀錄。
+
+可以確定的是：
+
+- `main` 的歷史報告顯示，固定文字位置與固定譯文時能產生接近原字級的排版，但 38/38 不是
+  完整流程的實際成功率。
+- `repair` 確實加入可續跑、嚴格翻譯配對，以及預設新排版的實際字形檢查與逐區失敗保護；
+  它的真實寫回紀錄很少且屬於較早版本，目前分析版本尚未重新量測。
+- 兩者仍共用文字偵測可信度遺失、人工規則式辨識判斷、簡化閱讀順序與圖片資訊保存不完整等
+  限制，也沒有同條件的直接比較。
+
+仍無法由程式庫現有證據確認的是：兩種方法在同一批真實漫畫上實際找出文字的比例、辨識
+正確率、翻譯品質、安全寫回率、人工視覺品質、速度、顯示卡記憶體、外部翻譯服務費用與
+長期穩定性。這些未知不代表結果一定差，只表示目前沒有足以支持結論的同條件資料。
